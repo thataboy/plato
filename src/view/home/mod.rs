@@ -278,13 +278,20 @@ impl Home {
     }
 
     fn go_to_neighbor(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        // luu let wraparound
         match dir {
-            CycleDir::Next if self.current_page < self.pages_count.saturating_sub(1) => {
-                self.current_page += 1;
-            },
-            CycleDir::Previous if self.current_page > 0 => {
-                self.current_page -= 1;
-            },
+            CycleDir::Next =>
+                if self.current_page < self.pages_count.saturating_sub(1) {
+                    self.current_page += 1;
+                } else {
+                    self.current_page = 0;
+                },
+            CycleDir::Previous =>
+                if self.current_page > 0 {
+                    self.current_page -= 1;
+                } else {
+                    self.current_page = self.pages_count.saturating_sub(1);
+                },
             _ => return,
         }
 

@@ -25,7 +25,9 @@ use crate::framebuffer::Framebuffer;
 use crate::device::CURRENT_DEVICE;
 
 // Font sizes in 1/64th of a point
-pub const FONT_SIZES: [u32; 3] = [349, 524, 629];
+// pub const FONT_SIZES: [u32; 3] = [349, 524, 629];
+// luu bigger title font
+pub const FONT_SIZES: [u32; 3] = [349, 524, 730];
 
 pub const KEYBOARD_FONT_SIZES: [u32; 2] = [337, 843];
 
@@ -38,7 +40,7 @@ pub const NORMAL_STYLE: Style = Style {
 };
 
 pub const SPECIAL_STYLE: Style = Style {
-    family: Family::SansSerif,
+    family: Family::Serif,
     variant: Variant::ITALIC,
     size: FONT_SIZES[1],
 };
@@ -71,7 +73,9 @@ lazy_static! {
                                                                  FONT_SIZES[2]);
         Style {
             family: Family::Serif,
-            variant: Variant::ITALIC,
+            // luu title not italic
+            // variant: Variant::ITALIC,
+            variant: Variant::REGULAR,
             size,
         }
     };
@@ -79,11 +83,13 @@ lazy_static! {
 
 pub const MD_AUTHOR: Style = Style {
     family: Family::Serif,
-    variant: Variant::REGULAR,
+    // luu italic author
+    // variant: Variant::REGULAR,
+    variant: Variant::ITALIC,
     size: FONT_SIZES[1],
 };
 
-pub const MD_YEAR: Style = NORMAL_STYLE;
+pub const MD_YEAR: Style = MD_SIZE;
 
 pub const MD_KIND: Style = Style {
     family: Family::SansSerif,

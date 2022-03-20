@@ -14,6 +14,7 @@ use crate::document::html::HtmlDocument;
 use crate::view::common::{locate_by_id, locate};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
+use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::Context;
 use crate::view::filler::Filler;
@@ -438,6 +439,27 @@ impl View for Dictionary {
                 }
                 true
             },
+            // luu
+            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
+                match code {
+                    ButtonCode::Backward =>
+                        if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
+                            self.go_to_neighbor(CycleDir::Previous, rq);
+                        } else {
+                            hub.send(Event::Back).ok();
+                        },
+                    ButtonCode::Forward =>
+                        if self.doc.resolve_location(Location::Next(self.location)).is_some() {
+                            self.go_to_neighbor(CycleDir::Next, rq);
+                        } else {
+                            // auto close view if at end
+                            hub.send(Event::Back).ok();
+                        },
+                    _ => (),
+                }
+                true
+            },
+
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 self.follow_link(center, rq, context);
                 true

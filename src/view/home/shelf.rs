@@ -11,7 +11,7 @@ use crate::document::open;
 use crate::framebuffer::{Framebuffer, UpdateMode};
 use crate::settings::{FirstColumn, SecondColumn};
 use crate::geom::{Rectangle, Dir, CycleDir, halves};
-use crate::color::{WHITE, SEPARATOR_NORMAL};
+use crate::color::{WHITE};
 use crate::gesture::GestureEvent;
 use crate::unit::scale_by_dpi;
 use crate::metadata::Info;
@@ -37,7 +37,7 @@ impl Shelf {
     pub fn new(rect: Rectangle, first_column: FirstColumn, second_column: SecondColumn, thumbnail_previews: bool) -> Shelf {
         let dpi = CURRENT_DEVICE.dpi;
         let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+        let thickness = 0;//scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let max_lines = ((rect.height() as i32 + thickness) / big_height) as usize;
         Shelf {
             id: ID_FEEDER.next(),
@@ -66,7 +66,7 @@ impl Shelf {
         self.children.clear();
         let dpi = CURRENT_DEVICE.dpi;
         let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+        let thickness = 0;//scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let (small_thickness, big_thickness) = halves(thickness);
         let max_lines = ((self.rect.height() as i32 + thickness) / big_height) as usize;
         let book_heights = divide(self.rect.height() as i32, max_lines as i32);
@@ -114,10 +114,12 @@ impl Shelf {
                                  preview_path);
             self.children.push(Box::new(book) as Box<dyn View>);
 
+            // luu remove separator
             if index < max_lines - 1 {
                 let separator = Filler::new(rect![self.rect.min.x, y_max,
                                                   self.rect.max.x, y_max + thickness],
-                                            SEPARATOR_NORMAL);
+                                            // SEPARATOR_NORMAL);
+                                            WHITE);
                 self.children.push(Box::new(separator) as Box<dyn View>);
             }
 

@@ -5,7 +5,7 @@ mod margin_cropper;
 mod chapter_label;
 mod results_label;
 
-use std::thread;
+use std::{thread, time};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering as AtomicOrdering;
@@ -40,7 +40,7 @@ use crate::view::search_bar::SearchBar;
 use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::notification::Notification;
-use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, SouthStripAction, WestStripAction, EastStripAction};
+use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction};
 use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::frontlight::LightLevels;
@@ -335,7 +335,7 @@ impl Reader {
 
             println!("{}", info.file.path.display());
 
-            hub.send(Event::Update(UpdateMode::Partial)).ok();
+            hub.send(Event::Update(UpdateMode::Full)).ok();
 
             Some(Reader {
                 id,
@@ -494,9 +494,8 @@ impl Reader {
 
             self.view_port.page_offset = pt!(0);
             self.current_page = location;
-            self.update(None, hub, rq, context);
-            self.update_bottom_bar(rq);
-
+            // self.update(None, hub, rq, context);
+            self.update_bottom_bar(hub, rq, context);
             if self.search.is_some() {
                 self.update_results_bar(rq);
             }
@@ -656,16 +655,17 @@ impl Reader {
 
         self.view_port.page_offset.y = next_top_offset;
         self.current_page = location;
-        self.update(None, hub, rq, context);
 
         if location_changed {
             if let Some(ref mut s) = self.search {
                 s.current_page = s.highlights.range(..=location).count().saturating_sub(1);
             }
-            self.update_bottom_bar(rq);
+            self.update_bottom_bar(hub, rq, context);
             if self.search.is_some() {
                 self.update_results_bar(rq);
             }
+        } else {
+            self.update(None, hub, rq, context);
         }
     }
 
@@ -777,8 +777,8 @@ impl Reader {
                 }
 
                 self.current_page = location;
-                self.update(None, hub, rq, context);
-                self.update_bottom_bar(rq);
+                // self.update(None, hub, rq, context);
+                self.update_bottom_bar(hub, rq, context);
 
                 if self.search.is_some() {
                     self.update_results_bar(rq);
@@ -827,8 +827,8 @@ impl Reader {
             self.view_port.page_offset = pt!(0, 0);
             self.current_page = location;
             self.update_results_bar(rq);
-            self.update_bottom_bar(rq);
-            self.update(None, hub, rq, context);
+            self.update_bottom_bar(hub, rq, context);
+            // self.update(None, hub, rq, context);
         }
     }
 
@@ -848,30 +848,55 @@ impl Reader {
             self.view_port.page_offset = pt!(0, 0);
             self.current_page = location;
             self.update_results_bar(rq);
-            self.update_bottom_bar(rq);
-            self.update(None, hub, rq, context);
+            self.update_bottom_bar(hub, rq, context);
+            // self.update(None, hub, rq, context);
         }
     }
 
-    fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
-        if let Some(index) = locate::<BottomBar>(self) {
+    fn update_bottom_bar(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
+        let mut update_mode = None;
+        {
             let current_page = self.current_page;
             let mut doc = self.doc.lock().unwrap();
             let rtoc = self.toc().or_else(|| doc.toc());
             let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(current_page, toc));
-            let title = chapter.map(|(c, _)| c.title.clone())
-                               .unwrap_or_default();
-            let progress = chapter.map(|(_, p)| p)
-                                  .unwrap_or_default();
-            let bottom_bar = self.children[index].as_mut().downcast_mut::<BottomBar>().unwrap();
-            let neighbors = Neighbors {
-                previous_page: doc.resolve_location(Location::Previous(current_page)),
-                next_page: doc.resolve_location(Location::Next(current_page)),
-            };
-            bottom_bar.update_chapter_label(title, progress, rq);
-            bottom_bar.update_page_label(self.current_page, self.pages_count, rq);
-            bottom_bar.update_icons(&neighbors, rq);
+            let mut progress = chapter.map(|(_, p)| p)
+                                      .unwrap_or(-1.0);
+            if progress == 0.0 { // at start of chapter
+                let refresh_rate = if context.fb.inverted() {
+                    if context.settings.reader.refresh_rate.inverted > 0 {
+                        context.settings.reader.refresh_rate.inverted
+                    } else {
+                        15
+                    }
+                } else {
+                    if context.settings.reader.refresh_rate.regular > 0 {
+                        context.settings.reader.refresh_rate.regular
+                    } else {
+                        30
+                    }
+                };
+                // this check prevents excessive refreshes on very short chapters
+                if self.page_turns > (refresh_rate as usize) / 3 {
+                    update_mode = Some(UpdateMode::Full);
+                }
+            } else if progress < 0.0 {
+                progress = 0.0; // no chapter, set progress to 0.0 for display purpose
+            }
+            if let Some(index) = locate::<BottomBar>(self) {
+                let title = chapter.map(|(c, _)| c.title.clone())
+                                   .unwrap_or_default();
+                let bottom_bar = self.children[index].as_mut().downcast_mut::<BottomBar>().unwrap();
+                let neighbors = Neighbors {
+                    previous_page: doc.resolve_location(Location::Previous(current_page)),
+                    next_page: doc.resolve_location(Location::Next(current_page)),
+                };
+                bottom_bar.update_chapter_label(title, progress, rq);
+                bottom_bar.update_page_label(self.current_page, self.pages_count, rq);
+                bottom_bar.update_icons(&neighbors, rq);
+            }
         }
+        self.update(update_mode, hub, rq, context);
     }
 
     fn update_tool_bar(&mut self, rq: &mut RenderQueue, context: &mut Context) {
@@ -971,6 +996,21 @@ impl Reader {
                 UpdateMode::Full
             }
         });
+
+        if update_mode == UpdateMode::Full {
+            self.page_turns = 0; // reset to 0 to indicate just did full refresh
+            if context.fb.inverted()
+                && context.settings.reader.prevent_refresh_flash
+                && context.settings.frontlight {
+                let hub1 = hub.clone();
+                thread::spawn(move || {
+                    hub1.send(Event::ToggleFrontlight).ok();
+                    let delay = time::Duration::from_millis(500);
+                    thread::sleep(delay);
+                    hub1.send(Event::ToggleFrontlight).ok();
+                });
+            }
+        }
 
         self.chunks.clear();
         let mut location = self.current_page;
@@ -1076,6 +1116,7 @@ impl Reader {
                 }
             });
         }
+
     }
 
     fn search(&mut self, text: &str, query: Regex, hub: &Hub, rq: &mut RenderQueue) {
@@ -2097,9 +2138,9 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        // self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        self.update_bottom_bar(hub, rq, context);
     }
 
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2128,9 +2169,9 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        // self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        self.update_bottom_bar(hub, rq, context);
     }
 
     fn set_font_family(&mut self, font_family: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2165,9 +2206,9 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        // self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        self.update_bottom_bar(hub, rq, context);
     }
 
     fn set_line_height(&mut self, line_height: f32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2196,9 +2237,9 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        // self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        self.update_bottom_bar(hub, rq, context);
     }
 
     fn set_margin_width(&mut self, width: i32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2247,9 +2288,9 @@ impl Reader {
 
         self.text.clear();
         self.cache.clear();
-        self.update(None, hub, rq, context);
+        // self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        self.update_bottom_bar(hub, rq, context);
     }
 
     fn toggle_bookmark(&mut self, rq: &mut RenderQueue) {
@@ -2645,8 +2686,24 @@ impl View for Reader {
                 match dir {
                     DiagDir::NorthWest => self.go_to_bookmark(CycleDir::Previous, hub, rq, context),
                     DiagDir::NorthEast => self.go_to_bookmark(CycleDir::Next, hub, rq, context),
-                    DiagDir::SouthEast => {
-                        hub.send(Event::Select(EntryId::ToggleDithered)).ok();
+                    DiagDir::SouthEast => match context.settings.reader.bottom_right_gesture {
+                        BottomRightGestureAction::ToggleDithered => {
+                            hub.send(Event::Select(EntryId::ToggleDithered)).ok();
+                        },
+                        BottomRightGestureAction::ToggleInverted => {
+                            hub.send(Event::Select(EntryId::ToggleInverted)).ok();
+                            if context.fb.inverted() {
+                                context.frontlight.set_intensity(40.0);
+                                context.frontlight.set_warmth(5.5);
+                                hub.send(Event::Select(
+                                    EntryId::SetFontFamily("Corpora".to_string()))).ok();
+                            } else {
+                                context.frontlight.set_intensity(60.0);
+                                context.frontlight.set_warmth(0.0);
+                                hub.send(Event::Select(
+                                    EntryId::SetFontFamily("Corporative".to_string()))).ok();
+                            }
+                        },
                     },
                     DiagDir::SouthWest => {
                         if context.settings.frontlight_presets.len() > 1 {

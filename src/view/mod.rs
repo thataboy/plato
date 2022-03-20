@@ -66,8 +66,9 @@ use crate::app::Context;
 
 // Border thicknesses in pixels, at 300 DPI.
 pub const THICKNESS_SMALL: f32 = 1.0;
-pub const THICKNESS_MEDIUM: f32 = 2.0;
-pub const THICKNESS_LARGE: f32 = 3.0;
+// luu less thickness
+pub const THICKNESS_MEDIUM: f32 = 1.5;
+pub const THICKNESS_LARGE: f32 = 2.0;
 
 // Border radii in pixels, at 300 DPI.
 pub const BORDER_RADIUS_SMALL: f32 = 6.0;

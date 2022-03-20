@@ -669,6 +669,22 @@ pub fn sort_added(i1: &Info, i2: &Info) -> Ordering {
     i1.added.cmp(&i2.added)
 }
 
+// luu
+
+pub fn sort_added_opened(i1: &Info, i2: &Info) -> Ordering {
+    match i2.reader.as_ref() {
+        Some(reader) => i1.added.cmp(&reader.opened),
+        None => Ordering::Greater,
+    }
+}
+
+pub fn sort_opened_added(i1: &Info, i2: &Info) -> Ordering {
+    match i1.reader.as_ref() {
+        Some(reader) => reader.opened.cmp(&i2.added),
+        None => Ordering::Less,
+    }
+}
+
 pub fn sort_pages(i1: &Info, i2: &Info) -> Ordering {
     i1.reader.as_ref().map(|r1| r1.pages_count)
       .cmp(&i2.reader.as_ref().map(|r2| r2.pages_count))
@@ -690,8 +706,11 @@ pub fn sort_status(i1: &Info, i2: &Info) -> Ordering {
         (SimpleStatus::New, SimpleStatus::New) => sort_added(i1, i2),
         (SimpleStatus::New, SimpleStatus::Finished) => Ordering::Greater,
         (SimpleStatus::Finished, SimpleStatus::New) => Ordering::Less,
-        (SimpleStatus::New, SimpleStatus::Reading) => Ordering::Less,
-        (SimpleStatus::Reading, SimpleStatus::New) => Ordering::Greater,
+        // luu make new greater
+        // (SimpleStatus::New, SimpleStatus::Reading) => Ordering::Less,
+        // (SimpleStatus::Reading, SimpleStatus::New) => Ordering::Greater,
+        (SimpleStatus::New, SimpleStatus::Reading) => sort_added_opened(i1, i2),
+        (SimpleStatus::Reading, SimpleStatus::New) => sort_opened_added(i1, i2),
         (SimpleStatus::Finished, SimpleStatus::Reading) => Ordering::Less,
         (SimpleStatus::Reading, SimpleStatus::Finished) => Ordering::Greater,
     }

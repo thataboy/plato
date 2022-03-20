@@ -3,7 +3,7 @@ use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
 use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, THICKNESS_SMALL};
 use crate::font::{MD_TITLE, MD_AUTHOR, MD_YEAR, MD_KIND, MD_SIZE};
-use crate::color::{BLACK, WHITE, READING_PROGRESS};
+use crate::color::{BLACK, GRAY02, GRAY08, GRAY10};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::gesture::GestureEvent;
 use crate::metadata::{Info, Status};
@@ -14,8 +14,12 @@ use crate::document::pdf::PdfOpener;
 use crate::font::{Fonts, font_from_style};
 use crate::geom::{Rectangle, CornerSpec, BorderSpec, halves};
 use crate::app::Context;
+use crate::document::BYTES_PER_PAGE;
 
-const PROGRESS_HEIGHT: f32 = 13.0;
+// luu
+const PROGRESS_HEIGHT: f32 = 7.0; // size of reading progress bars
+const LARGEST_BOOK: i32 = 2000;   // page count of largest book, arbitrarily
+const LARGEST_ARTICLE: i32 = 75;
 
 pub struct Book {
     id: Id,
@@ -102,27 +106,29 @@ impl View for Book {
             (filename, "")
         };
 
-        let year = &self.info.year;
         let file_info = &self.info.file;
 
         let (x_height, padding, baseline) = {
             let font = font_from_style(fonts, &MD_TITLE, dpi);
             let x_height = font.x_heights.0 as i32;
-            (x_height, font.em() as i32, (self.rect.height() as i32 - 2 * x_height) / 3)
+            (x_height, font.em() as i32, (self.rect.height() as i32 - 2 * x_height) / 3
+                + scale_by_dpi(6.0, dpi) as i32)
         };
 
         let (small_half_padding, big_half_padding) = halves(padding);
         let third_width = 6 * x_height;
-        let second_width = 8 * x_height;
+        // luu
+        // let second_width = 8 * x_height;
+        let second_width = scale_by_dpi(25.0, dpi) as i32; // x_height / 3;
         let first_width = self.rect.width() as i32 - second_width - third_width;
         let mut width = first_width - padding - small_half_padding;
         let mut start_x = self.rect.min.x + padding;
 
         // Preview
+
         if let Some(preview_path) = self.preview_path.as_ref() {
             let th = self.rect.height() as i32 - x_height;
             let tw = 3 * th / 4;
-
             if preview_path.exists() {
                 if let Some((pixmap, _)) = PdfOpener::new().and_then(|opener| {
                     opener.open(preview_path)
@@ -152,7 +158,7 @@ impl View for Book {
         let author_width = {
             let font = font_from_style(fonts, &MD_AUTHOR, dpi);
             let plan = font.plan(author, Some(width), None);
-            let pt = pt!(start_x, self.rect.max.y - baseline);
+            let pt = pt!(start_x, self.rect.max.y - baseline - x_height / 2);
             font.render(fb, scheme[1], &plan, pt);
             plan.width
         };
@@ -191,51 +197,72 @@ impl View for Book {
                 baseline + x_height
             };
 
-            let pt = pt!(start_x, self.rect.min.y + dy);
+            let pt = pt!(start_x, self.rect.min.y + dy - x_height / 2);
             font.render(fb, scheme[1], &plan, pt);
         }
 
-        // Year or Progress
-        match self.second_column {
-            SecondColumn::Year => {
-                let font = font_from_style(fonts, &MD_YEAR, dpi);
-                let plan = font.plan(year, None, None);
-                let dx = (second_width - padding - plan.width) / 2;
-                let dy = (self.rect.height() as i32 - font.x_heights.1 as i32) / 2;
-                let pt = pt!(self.rect.min.x + first_width + big_half_padding + dx,
-                             self.rect.max.y - dy);
-                font.render(fb, scheme[1], &plan, pt);
-            },
-            SecondColumn::Progress => {
-                let progress_height = scale_by_dpi(PROGRESS_HEIGHT, dpi) as i32;
+        // luu
+
+        match self.info.status() {
+            Status::New | Status::Finished => {
+                let circle_height = scale_by_dpi(17.0, dpi) as i32;
                 let thickness = scale_by_dpi(THICKNESS_SMALL, dpi) as u16;
-                let (small_radius, big_radius) = halves(progress_height);
-                let center = pt!(self.rect.min.x + first_width + second_width / 2,
-                                 self.rect.min.y + self.rect.height() as i32 / 2);
-                match self.info.status() {
-                    Status::New | Status::Finished => {
-                        let color = if self.info.reader.is_none() { WHITE } else { BLACK };
-                        fb.draw_rounded_rectangle_with_border(&rect![center - pt!(small_radius, small_radius),
-                                                                     center + pt!(big_radius, big_radius)],
-                                                              &CornerSpec::Uniform(small_radius),
-                                                              &BorderSpec { thickness, color: BLACK },
-                                                              &color);
-                    },
-                    Status::Reading(progress) => {
-                        let progress_width = 2 * (second_width - padding) / 3;
-                        let (small_progress_width, big_progress_width) = halves(progress_width);
-                        let x_offset = center.x - progress_width / 2 +
-                                       (progress_width as f32 * progress.min(1.0)) as i32;
-                        fb.draw_rounded_rectangle_with_border(&rect![center - pt!(small_progress_width, small_radius),
-                                                                     center + pt!(big_progress_width, big_radius)],
-                                                              &CornerSpec::Uniform(small_radius),
-                                                              &BorderSpec { thickness, color: BLACK },
-                                                              &|x, _| if x < x_offset { READING_PROGRESS } else { WHITE });
-                    }
+                let (small_radius, big_radius) = halves(circle_height);
+                let center_x;
+                let color;
+                if self.info.reader.is_none() {
+                    center_x = start_x - padding / 2;
+                    color = BLACK;
+                } else {
+                    center_x = self.rect.min.x + first_width + second_width / 2;
+                    color = GRAY08;
+                };
+                let center = pt!(center_x, self.rect.min.y + self.rect.height() as i32 / 2);
+                fb.draw_rounded_rectangle_with_border(&rect![center - pt!(small_radius, small_radius),
+                                                             center + pt!(big_radius, big_radius)],
+                                                      &CornerSpec::Uniform(small_radius),
+                                                      &BorderSpec { thickness, color },
+                                                      &color);
+            },
+            Status::Reading(progress) => {
+                if let Some(ref reader) = &self.info.reader {
+                    let progress_height = scale_by_dpi(PROGRESS_HEIGHT, dpi) as i32;
+                    let largest_size = if self.info.identifier.is_empty() {
+                        LARGEST_BOOK
+                    } else {
+                        LARGEST_ARTICLE
+                    };
+                    let pages_size = (reader.pages_count as i32 / BYTES_PER_PAGE as i32
+                        * width / largest_size).clamp(width / 20, width);
+                    let curr_size = start_x + ((progress * pages_size as f32) as i32).max(2);
+                    let start_y = self.rect.max.y - x_height;
+                    fb.draw_rounded_rectangle_with_border(
+                            &rect![pt!(start_x, start_y),
+                                   pt!(start_x + pages_size, start_y + progress_height)],
+                            &CornerSpec::Uniform(2),
+                            &BorderSpec { thickness: 0, color: GRAY10 },
+                            &|x, _| if x < curr_size { GRAY02 } else { GRAY10 });
+
+                    let font = font_from_style(fonts, &MD_SIZE, dpi);
+                    let plan = font.plan(&format!("{:.0}%", progress * 100.0), None, None);
+                    let pt = pt!(start_x + pages_size.min(width) + scale_by_dpi(7.0, dpi) as i32, //self.rect.max.x - padding - plan.width,
+                                 start_y + x_height / 3);
+                    font.render(fb, scheme[1], &plan, pt);
                 }
             },
         }
 
+        // year
+
+        // luu some books set year as 0101 when undefined
+        let year_is_blank = self.info.year.is_empty() || self.info.year == "0101";
+        if !year_is_blank {
+            let font = font_from_style(fonts, &MD_YEAR, dpi);
+            let plan = font.plan(&self.info.year, None, None);
+            let pt = pt!(self.rect.max.x - padding - plan.width,
+                         self.rect.min.y + 6 * x_height / 3);
+            font.render(fb, scheme[1], &plan, pt);
+        }
         // File kind
         {
             let kind = file_info.kind.to_uppercase();
@@ -244,7 +271,7 @@ impl View for Book {
             let letter_spacing = scale_by_dpi(3.0, dpi) as i32;
             plan.space_out(letter_spacing);
             let pt = pt!(self.rect.max.x - padding - plan.width,
-                         self.rect.min.y + baseline + x_height);
+                         self.rect.min.y + (if year_is_blank {8} else {12}) * x_height / 3);
             font.render(fb, scheme[1], &plan, pt);
         }
 
@@ -254,7 +281,7 @@ impl View for Book {
             let font = font_from_style(fonts, &MD_SIZE, dpi);
             let plan = font.plan(&size, None, None);
             let pt = pt!(self.rect.max.x - padding - plan.width,
-                         self.rect.max.y - baseline);
+                         self.rect.min.y + (if year_is_blank {13} else {17}) * x_height / 3);
             font.render(fb, scheme[1], &plan, pt);
         }
     }
