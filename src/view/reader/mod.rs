@@ -2666,10 +2666,10 @@ impl View for Reader {
                         BottomRightGestureAction::ToggleInverted => {
                             hub.send(Event::Select(EntryId::ToggleInverted)).ok();
                             if context.fb.inverted() {
-                                context.frontlight.set_intensity(40.0);
-                                context.frontlight.set_warmth(5.5);
+                                context.frontlight.set_intensity(37.0);
+                                context.frontlight.set_warmth(10.0);
                                 hub.send(Event::Select(
-                                    EntryId::SetFontFamily("Corpora".to_string()))).ok();
+                                    EntryId::SetFontFamily("Corpo".to_string()))).ok();
                             } else {
                                 context.frontlight.set_intensity(60.0);
                                 context.frontlight.set_warmth(0.0);

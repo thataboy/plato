@@ -20,6 +20,7 @@ use super::html::layout::TextAlign;
 use super::html::style::StyleSheet;
 use super::html::css::CssParser;
 use super::html::xml::XmlParser;
+use crate::document::BYTES_PER_PAGE;
 
 const VIEWER_STYLESHEET: &str = "css/epub.css";
 const USER_STYLESHEET: &str = "css/epub-user.css";
@@ -675,6 +676,8 @@ impl Document for EpubDocument {
         }
     }
 
+    // luu for epub, return negative f32 to indicate number of 'pages' left in chapter,
+    // rather than progress %
     fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32)> {
         let next_offset = self.resolve_location(Location::Next(offset))
                               .unwrap_or(usize::MAX);
@@ -699,16 +702,14 @@ impl Document for EpubDocument {
                     } else {
                         self.size()
                     };
-                    let chap_offset = self.offset(i);
-                    let progress = (offset - chap_offset) as f32 / (end_offset - chap_offset) as f32;
-                    return chap.zip(Some(progress));
+                    return chap.zip(Some((end_offset - offset) as f32 / -BYTES_PER_PAGE as f32));
                 }
             }
             None
         } else {
             match (chap_after, chap_before) {
-                (Some(..), _) => chap_after.zip(Some(0.0)),
-                (None, Some(..)) => chap_before.zip(Some((offset - offset_before) as f32 / (end_offset - offset_before) as f32)),
+                (Some(..), _) => chap_after.zip(Some((end_offset - offset_after) as f32 / -BYTES_PER_PAGE as f32)),
+                (None, Some(..)) => chap_before.zip(Some((end_offset - offset) as f32 / -BYTES_PER_PAGE as f32)),
                 _ => None,
             }
         }

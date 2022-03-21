@@ -16,7 +16,6 @@ use crate::geom::{Rectangle, CornerSpec, BorderSpec, halves};
 use crate::app::Context;
 use crate::document::BYTES_PER_PAGE;
 
-// luu
 const PROGRESS_HEIGHT: f32 = 7.0; // size of reading progress bars
 const LARGEST_BOOK: i32 = 2000;   // page count of largest book, arbitrarily
 const LARGEST_ARTICLE: i32 = 75;
@@ -117,8 +116,6 @@ impl View for Book {
 
         let (small_half_padding, big_half_padding) = halves(padding);
         let third_width = 6 * x_height;
-        // luu
-        // let second_width = 8 * x_height;
         let second_width = scale_by_dpi(25.0, dpi) as i32; // x_height / 3;
         let first_width = self.rect.width() as i32 - second_width - third_width;
         let mut width = first_width - padding - small_half_padding;
@@ -200,8 +197,6 @@ impl View for Book {
             let pt = pt!(start_x, self.rect.min.y + dy - x_height / 2);
             font.render(fb, scheme[1], &plan, pt);
         }
-
-        // luu
 
         match self.info.status() {
             Status::New | Status::Finished => {
