@@ -41,11 +41,13 @@ impl BottomBar {
             children.push(Box::new(prev_icon) as Box<dyn View>);
         }
 
-        let (small_half_width, big_half_width) = halves(rect.width() as i32 - 2 * side);
+        // luu
+        let page_width = 2 * (rect.width() as i32 - 2 * side) / 5;
+        let chapter_width = (rect.width() as i32 - 2 * side) - page_width;
 
 
         let chapter_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                                 pt!(rect.min.x + side + small_half_width, rect.max.y)];
+                                 pt!(rect.min.x + side + chapter_width, rect.max.y)];
 
         let rtoc = toc.or_else(|| doc.toc());
         let chapter = rtoc.as_ref()
@@ -59,7 +61,7 @@ impl BottomBar {
                                               progress);
         children.push(Box::new(chapter_label) as Box<dyn View>);
 
-        let page_label = PageLabel::new(rect![pt!(rect.max.x - side - big_half_width, rect.min.y),
+        let page_label = PageLabel::new(rect![pt!(rect.max.x - side - page_width, rect.min.y),
                                               pt!(rect.max.x - side, rect.max.y)],
                                         current_page,
                                         pages_count,
@@ -152,13 +154,14 @@ impl View for BottomBar {
 
     fn resize(&mut self, rect: Rectangle, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let side = rect.height() as i32;
-        let (small_half_width, big_half_width) = halves(rect.width() as i32 - 2 * side);
+        let page_width = 2 * (rect.width() as i32 - 2 * side) / 5;
+        let chapter_width = (rect.width() as i32 - 2 * side) - page_width;
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
         let chapter_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                                 pt!(rect.min.x + side + small_half_width, rect.max.y)];
+                                 pt!(rect.min.x + side + chapter_width, rect.max.y)];
         self.children[1].resize(chapter_rect, hub, rq, context);
-        let page_label_rect = rect![pt!(rect.max.x - side - big_half_width, rect.min.y),
+        let page_label_rect = rect![pt!(rect.max.x - side - page_width, rect.min.y),
                                     pt!(rect.max.x - side, rect.max.y)];
         self.children[2].resize(page_label_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];

@@ -50,18 +50,24 @@ impl PageLabel {
         }
         let (current_page, pages_count, precision) = if self.synthetic {
             (self.current_page as f64 / BYTES_PER_PAGE,
-             self.pages_count as f64 / BYTES_PER_PAGE, 1)
+             (self.pages_count as f64 / BYTES_PER_PAGE).ceil(), 1)
         } else {
             (self.current_page as f64 + 1.0,
              self.pages_count as f64, 0)
         };
         let percent = 100.0 * self.current_page as f32 / self.pages_count as f32;
+        // luu
+        let percent = if (percent < 1.0 || percent > 99.0) && percent != 0.0 && percent != 100.0 {
+            format!("{:.1}", percent)
+        } else {
+            format!("{:.0}", percent.floor())
+        };
         match size {
-            0 => format!("Page {1:.0$} of {2:.0$} ({3:.1}%)", precision, current_page, pages_count, percent),
-            1 => format!("P. {1:.0$} of {2:.0$} ({3:.1}%)", precision, current_page, pages_count, percent),
-            2 => format!("{1:.0$}/{2:.0$} ({3:.1}%)", precision, current_page, pages_count, percent),
-            3 => format!("{1:.0$} ({2:.1}%)", precision, current_page, percent),
-            _ => format!("{:.1}%", percent),
+            0 => format!("Page {1:.0$} of {2:.0} ({3}%)", precision, current_page, pages_count, percent),
+            1 => format!("p {1:.0$} / {2:.0} ({3}%)", precision, current_page, pages_count, percent),
+            2 => format!("{1:.0$}/{2:.0} {3}%", precision, current_page, pages_count, percent),
+            3 => format!("p{1:.0$} {2}%", precision, current_page, percent),
+            _ => format!("{}%", percent),
         }
     }
 }
@@ -85,7 +91,7 @@ impl View for PageLabel {
     fn render(&self, fb: &mut dyn Framebuffer, _rect: Rectangle, fonts: &mut Fonts) {
         let dpi = CURRENT_DEVICE.dpi;
         let font = font_from_style(fonts, &NORMAL_STYLE, dpi);
-        let padding = font.em() as i32 / 2;
+        let padding = font.em() as i32 / 3;
         let max_width = self.rect.width().saturating_sub(2 * padding as u32) as i32;
         let mut plan = font.plan(&self.text(0), None, None);
         for size in 1..=4 {

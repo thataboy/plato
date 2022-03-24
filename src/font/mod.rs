@@ -406,7 +406,7 @@ extern {
     pub static _binary_resources_fonts_noto_NotoSerifTibetan_Regular_otf_start: [libc::c_uchar; 333516];
 }
 
-pub const SLIDER_VALUE: Style = MD_SIZE;
+pub const SLIDER_VALUE: Style = NORMAL_STYLE;
 
 pub struct FontFamily {
     pub regular: Font,

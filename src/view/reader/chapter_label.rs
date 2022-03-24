@@ -59,9 +59,9 @@ impl View for ChapterLabel {
         if !self.title.is_empty() {
             let dpi = CURRENT_DEVICE.dpi;
             let font = font_from_style(fonts, &NORMAL_STYLE, dpi);
-            let padding = font.em() as i32 / 2;
+            let padding = font.em() as i32 / 3;
             let max_width = self.rect.width().saturating_sub(2 * padding as u32) as i32;
-            let max_progress_width = max_width - font.ellipsis.width;
+            let max_progress_width = max_width; // - font.ellipsis.width;
             let progress_plan = if self.progress > 0.0 {
                                      font.plan(&format!(" ({:.1}%)", 100.0 * self.progress),
                                           Some(max_progress_width),
