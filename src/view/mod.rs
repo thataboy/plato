@@ -67,8 +67,8 @@ use crate::app::Context;
 // Border thicknesses in pixels, at 300 DPI.
 pub const THICKNESS_SMALL: f32 = 1.0;
 // luu less thickness
-pub const THICKNESS_MEDIUM: f32 = 1.5;
-pub const THICKNESS_LARGE: f32 = 2.0;
+pub const THICKNESS_MEDIUM: f32 = 2.0;
+pub const THICKNESS_LARGE: f32 = 3.0;
 
 // Border radii in pixels, at 300 DPI.
 pub const BORDER_RADIUS_SMALL: f32 = 6.0;
@@ -436,6 +436,7 @@ pub enum ViewId {
     TableOfContents,
     MessageNotif(Id),
     SubMenu(u8),
+    Scrubber,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -445,6 +446,7 @@ pub enum SliderId {
     LightWarmth,
     ContrastExponent,
     ContrastGray,
+    Scrubber,
 }
 
 impl SliderId {
@@ -455,6 +457,7 @@ impl SliderId {
             SliderId::FontSize => "Font Size".to_string(),
             SliderId::ContrastExponent => "Contrast Exponent".to_string(),
             SliderId::ContrastGray => "Contrast Gray".to_string(),
+            SliderId::Scrubber => "Scrubber".to_string(),
         }
     }
 }

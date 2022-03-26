@@ -44,7 +44,8 @@ use crate::geom::{Rectangle, Dir, DiagDir, CycleDir, halves};
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::device::CURRENT_DEVICE;
 use crate::unit::scale_by_dpi;
-use crate::color::BLACK;
+// luu remove separators
+use crate::color::WHITE;
 use crate::font::Fonts;
 use crate::app::Context;
 
@@ -112,7 +113,7 @@ impl Home {
 
         let separator = Filler::new(rect![rect.min.x, rect.min.y + small_height - small_thickness,
                                           rect.max.x, rect.min.y + small_height + big_thickness],
-                                    BLACK);
+                                    WHITE);
         children.push(Box::new(separator) as Box<dyn View>);
 
         let mut y_start = rect.min.y + small_height + big_thickness;
@@ -127,7 +128,7 @@ impl Home {
 
             let separator = Filler::new(rect![rect.min.x, y_start,
                                               rect.max.x, y_start + thickness],
-                                        BLACK);
+                                        WHITE);
             children.push(Box::new(separator) as Box<dyn View>);
             y_start += thickness;
             shelf_index += 2;
@@ -146,7 +147,7 @@ impl Home {
 
             let separator = Filler::new(rect![rect.min.x, y_start,
                                               rect.max.x, y_start + thickness],
-                                        BLACK);
+                                        WHITE);
             children.push(Box::new(separator) as Box<dyn View>);
             y_start += thickness;
             shelf_index += 2;
@@ -174,7 +175,7 @@ impl Home {
 
         let separator = Filler::new(rect![rect.min.x, rect.max.y - small_height - small_thickness,
                                           rect.max.x, rect.max.y - small_height + big_thickness],
-                                    BLACK);
+                                    WHITE);
         children.push(Box::new(separator) as Box<dyn View>);
 
         let bottom_bar = BottomBar::new(rect![rect.min.x, rect.max.y - small_height + big_thickness,
@@ -481,7 +482,7 @@ impl Home {
 
             let separator = Filler::new(rect![self.rect.min.x, kb_rect.min.y - thickness,
                                               self.rect.max.x, kb_rect.min.y],
-                                        BLACK);
+                                        WHITE);
             self.children.insert(index, Box::new(separator) as Box<dyn View>);
 
             let delta_y = kb_rect.height() as i32 + thickness;
@@ -553,7 +554,7 @@ impl Home {
 
             let sp_rect = *self.child(1).rect() + pt!(0, small_height);
 
-            let separator = Filler::new(sp_rect, BLACK);
+            let separator = Filler::new(sp_rect, WHITE);
             self.children.insert(2, Box::new(separator) as Box<dyn View>);
 
             let addr_bar = AddressBar::new(rect![self.rect.min.x,
@@ -631,7 +632,7 @@ impl Home {
             let sep_index = if context.settings.home.address_bar { 3 } else { 1 };
             let sp_rect = *self.child(sep_index).rect() + pt!(0, small_height);
 
-            let separator = Filler::new(sp_rect, BLACK);
+            let separator = Filler::new(sp_rect, WHITE);
             self.children.insert(sep_index+1, Box::new(separator) as Box<dyn View>);
 
             let mut nav_bar = NavigationBar::new(rect![self.rect.min.x,
@@ -706,7 +707,7 @@ impl Home {
                                             "", context);
             self.children.insert(self.shelf_index+1, Box::new(search_bar) as Box<dyn View>);
 
-            let separator = Filler::new(sp_rect, BLACK);
+            let separator = Filler::new(sp_rect, WHITE);
             self.children.insert(self.shelf_index+1, Box::new(separator) as Box<dyn View>);
 
             // Move the shelf's bottom edge.
