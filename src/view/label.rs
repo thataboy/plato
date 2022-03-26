@@ -46,6 +46,14 @@ impl Label {
             rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
         }
     }
+
+    // luu
+    pub fn fast_update(&mut self, text: &str, rq: &mut RenderQueue) {
+        if self.text != text {
+            self.text = text.to_string();
+            rq.add(RenderData::no_wait(self.id, self.rect, UpdateMode::FastMono));
+        }
+    }
 }
 
 impl View for Label {

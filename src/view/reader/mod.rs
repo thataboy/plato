@@ -1,4 +1,5 @@
 mod tool_bar;
+mod scrubber;
 mod bottom_bar;
 mod results_bar;
 mod margin_cropper;
@@ -30,6 +31,7 @@ use crate::font::family_names;
 use self::margin_cropper::{MarginCropper, BUTTON_DIAMETER};
 use super::top_bar::TopBar;
 use self::tool_bar::ToolBar;
+use self::scrubber::Scrubber;
 use self::bottom_bar::BottomBar;
 use self::results_bar::ResultsBar;
 use crate::view::common::{locate, rlocate, locate_by_id};
@@ -872,6 +874,29 @@ impl Reader {
             bottom_bar.update_page_label(self.current_page, self.pages_count, rq);
             bottom_bar.update_icons(&neighbors, rq);
         }
+        self.set_scrubber(self.current_page, rq);
+    }
+
+   fn page_to_loc(&self, page: f32) -> usize {
+        if self.synthetic {
+            (page * BYTES_PER_PAGE as f32) as usize
+        } else {
+            page as usize
+        }
+    }
+
+    fn set_scrubber(&mut self, loc: usize, rq: &mut RenderQueue) {
+        if let Some(index) = locate::<Scrubber>(self) {
+            let scrubber = self.children[index].as_mut().downcast_mut::<Scrubber>().unwrap();
+            scrubber.set_value(loc, rq);
+        }
+    }
+
+    fn update_scrubber(&mut self, page: f32, rq: &mut RenderQueue) {
+        if let Some(index) = locate::<Scrubber>(self) {
+            let scrubber = self.children[index].as_mut().downcast_mut::<Scrubber>().unwrap();
+            scrubber.update_value(page, rq);
+        }
     }
 
     fn update_tool_bar(&mut self, rq: &mut RenderQueue, context: &mut Context) {
@@ -977,9 +1002,9 @@ impl Reader {
             && context.fb.inverted()
             && context.settings.reader.prevent_refresh_flash
             && context.settings.frontlight {
+            hub.send(Event::ToggleFrontlight).ok();
             let hub1 = hub.clone();
             thread::spawn(move || {
-                hub1.send(Event::ToggleFrontlight).ok();
                 let delay = time::Duration::from_millis(500);
                 thread::sleep(delay);
                 hub1.send(Event::ToggleFrontlight).ok();
@@ -1184,7 +1209,7 @@ impl Reader {
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             } else {
                 self.children.drain(index - 1 ..= index);
-
+/*
                 let start_index = locate::<TopBar>(self).map(|index| index+2).unwrap_or(0);
                 let y_min = self.child(start_index).rect().min.y;
                 let delta_y = rect.height() as i32;
@@ -1195,7 +1220,7 @@ impl Reader {
                     rq.add(RenderData::new(self.child(i).id(), shifted_rect, UpdateMode::Gui));
                 }
 
-                let rect = rect![self.rect.min.x, y_min, self.rect.max.x, y_min + delta_y];
+                let rect = rect![self.rect.min.x, y_min, self.rect.max.x, y_min + delta_y];*/
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             }
 
@@ -1258,38 +1283,12 @@ impl Reader {
         }
     }
 
-    fn toggle_tool_bar(&mut self, enable: bool, rq: &mut RenderQueue, context: &mut Context) {
+    fn remove_tool_bar(&mut self, rq: &mut RenderQueue, context: &mut Context) {
         if let Some(index) = locate::<ToolBar>(self) {
-            if enable {
-                return;
-            }
-
             let mut rect = *self.child(index).rect();
-            rect.absorb(self.child(index - 1).rect());
-            self.children.drain(index - 1 ..= index);
+            rect.absorb(self.child(index + 1).rect());
+            self.children.drain(index ..= index + 1);
             rq.add(RenderData::expose(rect, UpdateMode::Gui));
-        } else {
-            if !enable {
-                return;
-            }
-
-            let dpi = CURRENT_DEVICE.dpi;
-            let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-            let tb_height = 2 * big_height;
-
-            let sp_rect = *self.child(2).rect() - pt!(0, tb_height as i32);
-
-            let tool_bar = ToolBar::new(rect![self.rect.min.x,
-                                              sp_rect.max.y,
-                                              self.rect.max.x,
-                                              sp_rect.max.y + tb_height as i32],
-                                        self.reflowable,
-                                        self.info.reader.as_ref(),
-                                        &context.settings.reader);
-            self.children.insert(2, Box::new(tool_bar) as Box<dyn View>);
-
-            let separator = Filler::new(sp_rect, BLACK);
-            self.children.insert(2, Box::new(separator) as Box<dyn View>);
         }
     }
 
@@ -1355,7 +1354,8 @@ impl Reader {
                 return;
             }
 
-            self.toggle_tool_bar(false, rq, context);
+            self.remove_tool_bar(rq, context);
+            self.remove_scrubber(rq, context);
 
             let dpi = CURRENT_DEVICE.dpi;
             let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
@@ -1422,7 +1422,7 @@ impl Reader {
             let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
             let (small_thickness, big_thickness) = halves(thickness);
             let (small_height, big_height) = (scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32,
-                                              scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32);
+                                              scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32);
 
             let mut doc = self.doc.lock().unwrap();
             let mut index = 0;
@@ -1485,23 +1485,43 @@ impl Reader {
                     index += 1;
                 }
             } else {
-                let tb_height = 2 * big_height;
-                let separator = Filler::new(rect![self.rect.min.x,
-                                                  self.rect.max.y - (small_height + tb_height) as i32 - small_thickness,
+                let mut y_top = self.rect.max.y - (2 * small_height) as i32 - big_thickness;
+                let scrubber = Scrubber::new(rect![self.rect.min.x,
+                                                  y_top,
                                                   self.rect.max.x,
-                                                  self.rect.max.y - (small_height + tb_height) as i32 + big_thickness],
+                                                  y_top + small_height as i32],
+                                             self.current_page, self.pages_count, self.synthetic);
+                self.children.insert(index, Box::new(scrubber) as Box<dyn View>);
+                index += 1;
+
+                y_top -= small_thickness;
+                let separator = Filler::new(rect![self.rect.min.x,
+                                                  y_top,
+                                                  self.rect.max.x,
+                                                  y_top + small_thickness],
                                             BLACK);
                 self.children.insert(index, Box::new(separator) as Box<dyn View>);
                 index += 1;
 
+                let tb_height = 2 * big_height;
+                y_top -= tb_height as i32;
                 let tool_bar = ToolBar::new(rect![self.rect.min.x,
-                                                  self.rect.max.y - (small_height + tb_height) as i32 + big_thickness,
+                                                  y_top,
                                                   self.rect.max.x,
-                                                  self.rect.max.y - small_height - small_thickness],
+                                                  y_top + tb_height],
                                             self.reflowable,
                                             self.info.reader.as_ref(),
                                             &context.settings.reader);
                 self.children.insert(index, Box::new(tool_bar) as Box<dyn View>);
+                index += 1;
+
+                y_top -= big_thickness + small_thickness;
+                let separator = Filler::new(rect![self.rect.min.x,
+                                                  y_top,
+                                                  self.rect.max.x,
+                                                  y_top + small_thickness + big_thickness],
+                                            BLACK);
+                self.children.insert(index, Box::new(separator) as Box<dyn View>);
                 index += 1;
             }
 
@@ -1624,6 +1644,15 @@ impl Reader {
         }
     }
 
+    fn remove_scrubber(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate::<Scrubber>(self) {
+            let mut rect = *self.child(index).rect();
+            rect.absorb(self.child(index + 1).rect());
+            self.children.drain(index ..= index + 1);
+            rq.add(RenderData::expose(rect, UpdateMode::Gui));
+        }
+    }
+
     fn toggle_go_to_page(&mut self, enable: Option<bool>, id: ViewId, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let (text, input_id) = if id == ViewId::GoToPage {
             ("Go to page", ViewId::GoToPageInput)
@@ -1636,7 +1665,7 @@ impl Reader {
                 return;
             }
 
-            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Partial));
             self.children.remove(index);
 
             if self.focus.map(|focus_id| focus_id == input_id).unwrap_or(false) {
@@ -1647,6 +1676,10 @@ impl Reader {
                 return;
             }
 
+            self.remove_tool_bar(rq, context);
+            //if id == ViewId::GoToResultsPageInput {
+                self.remove_scrubber(rq, context);
+            //}
             let go_to_page = NamedInput::new(text.to_string(), id, input_id, 4, context);
             rq.add(RenderData::new(go_to_page.id(), *go_to_page.rect(), UpdateMode::Gui));
             hub.send(Event::Focus(Some(input_id))).ok();
@@ -3344,6 +3377,18 @@ impl View for Reader {
             },
             Event::Slider(SliderId::ContrastGray, gray, FingerStatus::Up) => {
                 self.set_contrast_gray(gray, hub, rq, context);
+                true
+            },
+            Event::Slider(SliderId::Scrubber, page, FingerStatus::Down) => {
+                self.remove_tool_bar(rq, context);
+                true
+            },
+            Event::Slider(SliderId::Scrubber, page, FingerStatus::Up) => {
+                self.go_to_page(self.page_to_loc(page), true, hub, rq, context);
+                true
+            },
+            Event::Slider(SliderId::Scrubber, page, FingerStatus::Motion) => {
+                self.update_scrubber(page, rq);
                 true
             },
             Event::ToggleNear(ViewId::TitleMenu, rect) => {
