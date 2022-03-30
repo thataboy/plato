@@ -1209,18 +1209,6 @@ impl Reader {
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             } else {
                 self.children.drain(index - 1 ..= index);
-/*
-                let start_index = locate::<TopBar>(self).map(|index| index+2).unwrap_or(0);
-                let y_min = self.child(start_index).rect().min.y;
-                let delta_y = rect.height() as i32;
-
-                for i in start_index..index-1 {
-                    let shifted_rect = *self.child(i).rect() + pt!(0, delta_y);
-                    self.child_mut(i).resize(shifted_rect, hub, rq, context);
-                    rq.add(RenderData::new(self.child(i).id(), shifted_rect, UpdateMode::Gui));
-                }
-
-                let rect = rect![self.rect.min.x, y_min, self.rect.max.x, y_min + delta_y];*/
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             }
 
@@ -1677,9 +1665,7 @@ impl Reader {
             }
 
             self.remove_tool_bar(rq, context);
-            //if id == ViewId::GoToResultsPageInput {
-                self.remove_scrubber(rq, context);
-            //}
+            self.remove_scrubber(rq, context);
             let go_to_page = NamedInput::new(text.to_string(), id, input_id, 4, context);
             rq.add(RenderData::new(go_to_page.id(), *go_to_page.rect(), UpdateMode::Gui));
             hub.send(Event::Focus(Some(input_id))).ok();
