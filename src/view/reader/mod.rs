@@ -1422,7 +1422,7 @@ impl Reader {
             let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
             let (small_thickness, big_thickness) = halves(thickness);
             let (small_height, big_height) = (scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32,
-                                              scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32);
+                                              scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32);
 
             let mut doc = self.doc.lock().unwrap();
             let mut index = 0;
@@ -3961,7 +3961,7 @@ impl View for Reader {
             let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
             let (small_thickness, big_thickness) = halves(thickness);
             let (small_height, big_height) = (scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32,
-                                              scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32);
+                                              scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32);
             let mut floating_layer_start = 0;
 
             self.children.retain(|child| !child.is::<Menu>());
