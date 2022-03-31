@@ -9,6 +9,10 @@ use crate::settings::{IntermKind, LOGO_SPECIAL_PATH, COVER_SPECIAL_PATH};
 use crate::metadata::{SortMethod, BookQuery, sort};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::app::Context;
+use globset::{Glob, GlobBuilder};
+use walkdir::WalkDir;
+use std::fs::metadata;
+use chrono::Local;
 
 pub struct Intermission {
     id: Id,
@@ -42,7 +46,28 @@ impl Intermission {
                     Message::Text(kind.text().to_string())
                 }
             },
-            _ => Message::Image(path.clone()),
+            _ => {
+                if let Ok(md) = metadata(path) {
+                    if md.is_dir() {
+                        let glob = GlobBuilder::new("**/*.{png,jpeg,jpg}")
+                                                   .case_insensitive(true)
+                                                   .build().unwrap().compile_matcher();
+                        let mut images: Vec<PathBuf> = Vec::new();
+                        for entry in WalkDir::new(&path).min_depth(1).into_iter().filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if glob.is_match(path) {
+                                images.push(path.to_path_buf());
+                            }
+                        }
+                        let index = (Local::now().timestamp_nanos() as u64 % images.len() as u64) as usize;
+                        Message::Image(images[index].clone())
+                    } else {
+                        Message::Image(path.clone())
+                    }
+                } else {
+                    Message::Text(kind.text().to_string())
+                }
+            },
         };
         Intermission {
             id: ID_FEEDER.next(),
