@@ -293,7 +293,6 @@ impl Home {
                 } else {
                     self.current_page = self.pages_count.saturating_sub(1);
                 },
-            _ => return,
         }
 
         self.update_shelf(false, hub, rq, context);

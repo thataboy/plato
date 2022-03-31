@@ -1271,7 +1271,7 @@ impl Reader {
         }
     }
 
-    fn remove_tool_bar(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+    fn remove_tool_bar(&mut self, rq: &mut RenderQueue) {
         if let Some(index) = locate::<ToolBar>(self) {
             let mut rect = *self.child(index).rect();
             rect.absorb(self.child(index + 1).rect());
@@ -1342,8 +1342,8 @@ impl Reader {
                 return;
             }
 
-            self.remove_tool_bar(rq, context);
-            self.remove_scrubber(rq, context);
+            self.remove_tool_bar(rq);
+            self.remove_scrubber(rq);
 
             let dpi = CURRENT_DEVICE.dpi;
             let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
@@ -1632,7 +1632,7 @@ impl Reader {
         }
     }
 
-    fn remove_scrubber(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+    fn remove_scrubber(&mut self, rq: &mut RenderQueue) {
         if let Some(index) = locate::<Scrubber>(self) {
             let mut rect = *self.child(index).rect();
             rect.absorb(self.child(index + 1).rect());
@@ -1664,8 +1664,8 @@ impl Reader {
                 return;
             }
 
-            self.remove_tool_bar(rq, context);
-            self.remove_scrubber(rq, context);
+            self.remove_tool_bar(rq);
+            self.remove_scrubber(rq);
             let go_to_page = NamedInput::new(text.to_string(), id, input_id, 4, context);
             rq.add(RenderData::new(go_to_page.id(), *go_to_page.rect(), UpdateMode::Gui));
             hub.send(Event::Focus(Some(input_id))).ok();
@@ -3365,8 +3365,8 @@ impl View for Reader {
                 self.set_contrast_gray(gray, hub, rq, context);
                 true
             },
-            Event::Slider(SliderId::Scrubber, page, FingerStatus::Down) => {
-                self.remove_tool_bar(rq, context);
+            Event::Slider(SliderId::Scrubber, _page, FingerStatus::Down) => {
+                self.remove_tool_bar(rq);
                 true
             },
             Event::Slider(SliderId::Scrubber, page, FingerStatus::Up) => {

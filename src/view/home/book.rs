@@ -114,7 +114,7 @@ impl View for Book {
                 + scale_by_dpi(6.0, dpi) as i32)
         };
 
-        let (small_half_padding, big_half_padding) = halves(padding);
+        let (small_half_padding, _big_half_padding) = halves(padding);
         let third_width = 6 * x_height;
         let second_width = scale_by_dpi(25.0, dpi) as i32; // x_height / 3;
         let first_width = self.rect.width() as i32 - second_width - third_width;

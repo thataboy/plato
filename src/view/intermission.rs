@@ -9,7 +9,7 @@ use crate::settings::{IntermKind, LOGO_SPECIAL_PATH, COVER_SPECIAL_PATH};
 use crate::metadata::{SortMethod, BookQuery, sort};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::app::Context;
-use globset::{Glob, GlobBuilder};
+use globset::GlobBuilder;
 use walkdir::WalkDir;
 use std::fs::metadata;
 use chrono::Local;
