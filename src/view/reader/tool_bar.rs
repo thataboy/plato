@@ -208,7 +208,7 @@ impl ToolBar {
                               rect.max.x, rect.max.y];
         if context.settings.themes
                            .iter().filter(|t| !t.name.starts_with("__")).count() > 0 {
-            let theme_icon = Icon::new("presets",
+            let theme_icon = Icon::new("enclosed_menu",
                                        last_rect,
                                        Event::ToggleNear(ViewId::ThemeMenu, last_rect));
             children.push(Box::new(theme_icon) as Box<dyn View>);
