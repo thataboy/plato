@@ -323,6 +323,7 @@ pub enum Event {
     ToggleInputHistoryMenu(ViewId, Rectangle),
     ToggleBookMenu(Rectangle, usize),
     TogglePresetMenu(Rectangle, usize),
+    ApplyTheme(String),
     SubMenu(Rectangle, Vec<EntryKind>),
     ProcessLine(LineOrigin, String),
     History(CycleDir, bool),
@@ -437,6 +438,7 @@ pub enum ViewId {
     MessageNotif(Id),
     SubMenu(u8),
     Scrubber,
+    ThemeMenu,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -559,6 +561,7 @@ pub enum EntryId {
     SetLineHeight(i32),
     SetContrastExponent(i32),
     SetContrastGray(i32),
+    SetTheme(String),
     SetRotationLock(Option<RotationLock>),
     SetSearchTarget(Option<String>),
     SetInputText(ViewId, String),

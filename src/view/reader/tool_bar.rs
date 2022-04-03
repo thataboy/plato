@@ -25,12 +25,13 @@ pub struct ToolBar {
 }
 
 impl ToolBar {
-    pub fn new(rect: Rectangle, reflowable: bool, reader_info: Option<&ReaderInfo>, reader_settings: &ReaderSettings) -> ToolBar {
+    pub fn new(rect: Rectangle, reflowable: bool, reader_info: Option<&ReaderInfo>, context: &Context) -> ToolBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let side = (rect.height() as i32 + thickness) / 2 - thickness;
+        let reader_settings = &context.settings.reader;
 
         if reflowable {
             let mut remaining_width = rect.width() as i32 - 3 * side;
@@ -203,11 +204,20 @@ impl ToolBar {
                                     Event::Show(ViewId::SearchBar));
         children.push(Box::new(search_icon) as Box<dyn View>);
 
-        let toc_icon = Icon::new("toc",
-                                 rect![rect.max.x - side, rect.max.y - side,
-                                       rect.max.x, rect.max.y],
-                                 Event::Show(ViewId::TableOfContents));
-        children.push(Box::new(toc_icon) as Box<dyn View>);
+        let last_rect = rect![rect.max.x - side, rect.max.y - side,
+                              rect.max.x, rect.max.y];
+        if context.settings.themes
+                           .iter().filter(|t| !t.name.starts_with("__")).count() > 0 {
+            let theme_icon = Icon::new("presets",
+                                       last_rect,
+                                       Event::ToggleNear(ViewId::ThemeMenu, last_rect));
+            children.push(Box::new(theme_icon) as Box<dyn View>);
+        } else {
+            let toc_icon = Icon::new("toc",
+                                     last_rect,
+                                     Event::Show(ViewId::TableOfContents));
+            children.push(Box::new(toc_icon) as Box<dyn View>);
+        }
 
         ToolBar {
             id,

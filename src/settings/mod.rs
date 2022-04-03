@@ -112,6 +112,8 @@ pub struct Settings {
     pub date_format: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<LibrarySettings>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub themes: Vec<Theme>,
     pub intermissions: Intermissions,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub frontlight_presets: Vec<LightPreset>,
@@ -158,6 +160,53 @@ impl Default for LibrarySettings {
             second_column: SecondColumn::Progress,
             thumbnail_previews: true,
             hooks: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct Theme {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size_relative: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<TextAlign>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_width: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignore_document_css: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inverted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontlight: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontlight_levels: Option<LightLevels>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dismiss: Option<bool>,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme {
+            name: "Unnamed".to_string(),
+            font_family: None,
+            font_size: None,
+            font_size_relative: None,
+            text_align: None,
+            margin_width: None,
+            line_height: None,
+            ignore_document_css: None,
+            inverted: None,
+            frontlight: None,
+            frontlight_levels: None,
+            dismiss: None,
         }
     }
 }
@@ -501,6 +550,7 @@ impl Default for Settings {
                     .. Default::default()
                 },
             ],
+            themes: Vec::new(),
             keyboard_layout: "English".to_string(),
             frontlight: true,
             wifi: false,

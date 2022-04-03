@@ -63,6 +63,8 @@ const RECT_DIST_JITTER: f32 = 24.0;
 const ANNOTATION_DRIFT: u8 =  0x44;
 const HIGHLIGHT_DRIFT: u8 =  0x22;
 const MEM_SCHEME: &str = "mem:";
+const ON_INVERTED: &str = "__inverted";
+const ON_UNINVERTED: &str = "__uninverted";
 
 pub struct Reader {
     id: Id,
@@ -1473,16 +1475,17 @@ impl Reader {
                     index += 1;
                 }
             } else {
-                let mut y_top = self.rect.max.y - (big_height + small_height) as i32 - big_thickness;
+                let med_height = (small_height + big_height) / 2;
+                let mut y_top = self.rect.max.y - (med_height + small_height) as i32 - big_thickness;
                 let scrubber = Scrubber::new(rect![self.rect.min.x,
                                                   y_top,
                                                   self.rect.max.x,
-                                                  y_top + big_height as i32],
+                                                  y_top + med_height as i32],
                                              self.current_page, self.pages_count, self.synthetic);
                 self.children.insert(index, Box::new(scrubber) as Box<dyn View>);
                 index += 1;
 
-                let tb_height = 2 * big_height;
+                let tb_height = 2 * med_height;
                 y_top -= tb_height as i32;
                 let tool_bar = ToolBar::new(rect![self.rect.min.x,
                                                   y_top,
@@ -1490,7 +1493,7 @@ impl Reader {
                                                   y_top + tb_height],
                                             self.reflowable,
                                             self.info.reader.as_ref(),
-                                            &context.settings.reader);
+                                            context);
                 self.children.insert(index, Box::new(tool_bar) as Box<dyn View>);
                 index += 1;
 
@@ -1960,6 +1963,34 @@ impl Reader {
         }
     }
 
+    fn toggle_theme_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::ThemeMenu) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+
+            if context.settings.themes.len() == 0 {
+                return;
+            }
+            let entries = context.settings.themes.iter()
+                             .filter(|x| !x.name.starts_with("__"))
+                             .map(|x| { EntryKind::Command(format!("{}", x.name.clone()),
+                                                           EntryId::SetTheme(x.name.clone()))
+            }).collect();
+            let theme_menu = Menu::new(rect, ViewId::ThemeMenu, MenuKind::Contextual, entries, context);
+            rq.add(RenderData::new(theme_menu.id(), *theme_menu.rect(), UpdateMode::Gui));
+
+            self.children.push(Box::new(theme_menu) as Box<dyn View>);
+        }
+    }
+
     fn toggle_margin_width_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
         if let Some(index) = locate_by_id(self, ViewId::MarginWidthMenu) {
             if let Some(true) = enable {
@@ -2123,6 +2154,67 @@ impl Reader {
         self.update(None, hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
+    }
+
+    fn apply_theme(&mut self, theme_name: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(theme) = context.settings.themes.iter().find(|x| x.name == theme_name) {
+            let theme = theme.clone(); // make borrow checker happy
+            if theme.dismiss.unwrap_or(true) {
+                self.toggle_bars(Some(false), hub, rq, context);
+            }
+            if let Some(ref v) = theme.font_family {
+                self.set_font_family(v, hub, rq, context);
+            }
+            if let Some(v) = theme.font_size {
+                let v = if v < 0.0 || theme.font_size_relative.unwrap_or(false) {
+                    let font_size = self.info.reader.as_ref().and_then(|r| r.font_size)
+                                        .unwrap_or(context.settings.reader.font_size);
+                    v + font_size
+                } else {
+                    v
+                };
+                let min_font_size = context.settings.reader.font_size / 2.0;
+                let max_font_size = 3.0 * context.settings.reader.font_size / 2.0;
+                self.set_font_size(v.clamp(min_font_size, max_font_size), hub, rq, context);
+            }
+            if let Some(v) = theme.text_align {
+                self.set_text_align(v, hub, rq, context);
+            }
+            if let Some(v) = theme.margin_width {
+                let min_margin_width = context.settings.reader.min_margin_width;
+                let max_margin_width = context.settings.reader.max_margin_width;
+                let mw = v.clamp(min_margin_width, max_margin_width);
+                self.set_margin_width(mw, hub, rq, context);
+            }
+            if let Some(v) = theme.line_height {
+                self.set_line_height(v.clamp(0.5, 2.0), hub, rq, context);
+            }
+            if let Some(v) = theme.frontlight {
+                if context.settings.frontlight != v {
+                    hub.send(Event::ToggleFrontlight).ok();
+                }
+            }
+            if let Some(ref v) = theme.frontlight_levels {
+                context.frontlight.set_intensity(v.intensity);
+                context.frontlight.set_warmth(v.warmth);
+            }
+            if let Some(v) = theme.inverted {
+                if v != context.fb.inverted()
+                   && theme.name != ON_INVERTED && theme.name != ON_UNINVERTED {
+                    hub.send(Event::Select(EntryId::ToggleInverted)).ok();
+                }
+            }
+            if let Some(v) = theme.ignore_document_css {
+                {
+                    let mut doc = self.doc.lock().unwrap();
+                    doc.set_ignore_document_css(v);
+                }
+                self.cache.clear();
+                self.text.clear();
+                self.update(None, hub, rq, context);
+                self.update_bottom_bar(rq);
+            }
+        }
     }
 
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2673,18 +2765,12 @@ impl View for Reader {
                             hub.send(Event::Select(EntryId::ToggleDithered)).ok();
                         },
                         BottomRightGestureAction::ToggleInverted => {
+                            let inverted = !context.fb.inverted();
                             hub.send(Event::Select(EntryId::ToggleInverted)).ok();
-                            if context.fb.inverted() {
-                                context.frontlight.set_intensity(37.0);
-                                context.frontlight.set_warmth(10.0);
-                                hub.send(Event::Select(
-                                    EntryId::SetFontFamily("Corpo".to_string()))).ok();
-                            } else {
-                                context.frontlight.set_intensity(60.0);
-                                context.frontlight.set_warmth(0.0);
-                                hub.send(Event::Select(
-                                    EntryId::SetFontFamily("Corporative".to_string()))).ok();
-                            }
+                            hub.send(Event::ApplyTheme(
+                                        if inverted { ON_INVERTED.to_string() }
+                                        else { ON_UNINVERTED.to_string() })
+                                    ).ok();
                         },
                     },
                     DiagDir::SouthWest => {
@@ -3367,6 +3453,10 @@ impl View for Reader {
                 self.update_scrubber(page, rq);
                 true
             },
+            Event::ApplyTheme(ref theme) => {
+                self.apply_theme(theme, hub, rq, context);
+                true
+            },
             Event::ToggleNear(ViewId::TitleMenu, rect) => {
                 self.toggle_title_menu(rect, None, rq, context);
                 true
@@ -3417,6 +3507,10 @@ impl View for Reader {
             },
             Event::ToggleNear(ViewId::ContrastGrayMenu, rect) => {
                 self.toggle_contrast_gray_menu(rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::ThemeMenu, rect) => {
+                self.toggle_theme_menu(rect, None, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::PageMenu, rect) => {
@@ -3753,8 +3847,17 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::ToggleInverted) => {
-                self.update_noninverted_regions(!context.fb.inverted());
+                let inverted = !context.fb.inverted();
+                self.update_noninverted_regions(inverted);
+                hub.send(Event::ApplyTheme(
+                            if inverted { ON_INVERTED.to_string() }
+                            else { ON_UNINVERTED.to_string() })
+                        ).ok();
                 false
+            },
+            Event::Select(EntryId::SetTheme(ref r)) => {
+                hub.send(Event::ApplyTheme(r.to_string())).ok();
+                true
             },
             Event::Reseed => {
                 self.reseed(rq, context);
