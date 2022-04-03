@@ -500,7 +500,7 @@ pub enum TextKind {
 
 #[derive(Debug, Clone)]
 pub enum EntryKind {
-    Message(String),
+    Message(String, Option<String>),
     Command(String, EntryId),
     CheckBox(String, EntryId, bool),
     RadioButton(String, EntryId, bool),
@@ -592,7 +592,7 @@ impl EntryKind {
 
     pub fn text(&self) -> &str {
         match *self {
-            EntryKind::Message(ref s) |
+            EntryKind::Message(ref s, ..) |
             EntryKind::Command(ref s, ..) |
             EntryKind::CheckBox(ref s, ..) |
             EntryKind::RadioButton(ref s, ..) |
