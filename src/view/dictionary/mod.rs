@@ -80,7 +80,12 @@ fn query_to_content(query: &str, language: &String, fuzzy: bool, target: Option<
         if context.dictionaries.is_empty() {
             content.push_str("<p class=\"info\">No dictionaries present.</p>");
         } else {
-            content.push_str("<p class=\"info\">No definitions found.</p>");
+            // if non fuzzy lookup fails let's give fuzzy a shot
+            if !fuzzy {
+                content = query_to_content(query, language, true, target, context);
+            } else {
+                content.push_str("<p class=\"info\">No definitions found.</p>");
+            }
         }
     }
 

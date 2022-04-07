@@ -1,0 +1,55 @@
+p.translated {
+	margin: 0.7em 0.2em;
+}
+
+p.original {
+	margin: 0.7em 0.2em;
+	font-style: normal;
+  	font-size: 0.9em;
+}
+
+
+li.translated {
+	list-style: none;
+}
+li.translated:before {
+	content: "\2192 \0020";
+}
+
+li.original {
+	list-style: none;
+	font-style: italic;
+  	font-size: 0.9em;
+}
+li.translated:before {
+	content: "\2190 \0020";
+}
+
+
+h3 {
+	text-align: center;
+	font-weight: bold;
+	margin: 0.9em 0 0.6em 0;
+	font-variant: small-caps;
+}
+
+dt.category {
+	font-weight: bold;
+	font-size: 0.85em;
+	margin: 0.6em 0 0.4em 0;
+}
+
+dt.def {
+	font-style: italic;
+	font-size: 0.9em;
+	margin: 0.6em 0 0.4em 0;
+}
+
+dd, li {
+	margin-left: 0.8em;
+}
+
+ul {
+	list-style-type: square;
+}
+

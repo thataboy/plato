@@ -124,6 +124,11 @@ prevent-refresh-flash = true
 # The file extensions of the files that will automatically be dithered
 # when opened for the first time.
 dithered-kinds = ["cbz", "jpg", "png", "jpeg"]
+# The google translate server to use, e.g., "https://translate.google.fr"
+google-translate-server = "https://translate.googleapis.com"
+# List of languages you know and may want text to be translated to
+# (defaults to system language)
+# languages = ["en_US", "fr", "vi"]
 
 [reader.paragraph-breaker]
 # The penalty for hyphenated lines. The maximum value is 10_000.

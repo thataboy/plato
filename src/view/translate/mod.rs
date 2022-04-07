@@ -1,0 +1,333 @@
+mod bottom_bar;
+
+use crate::device::CURRENT_DEVICE;
+use crate::framebuffer::{Framebuffer, UpdateMode, Pixmap};
+use crate::geom::{Rectangle, Dir, CycleDir, halves};
+use crate::unit::scale_by_dpi;
+use crate::font::Fonts;
+use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
+use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
+use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
+use crate::document::{Document, Location};
+use crate::document::html::HtmlDocument;
+use crate::view::common::{locate_by_id, locate};
+use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
+use crate::gesture::GestureEvent;
+use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
+use crate::color::BLACK;
+use crate::app::Context;
+use crate::view::filler::Filler;
+use crate::view::image::Image;
+use crate::view::menu::{Menu, MenuKind};
+use crate::view::top_bar::TopBar;
+use self::bottom_bar::BottomBar;
+use crate::translate;
+
+const VIEWER_STYLESHEET: &str = "css/translate.css";
+const USER_STYLESHEET: &str = "css/translate-user.css";
+
+pub struct Translate {
+    id: Id,
+    rect: Rectangle,
+    children: Vec<Box<dyn View>>,
+    doc: HtmlDocument,
+    location: usize,
+    query: String,
+    target: String,
+    active: bool,
+}
+
+impl Translate {
+    pub fn new(rect: Rectangle, query: &str, target: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Translate {
+        let id = ID_FEEDER.next();
+        let mut children = Vec::new();
+        let dpi = CURRENT_DEVICE.dpi;
+        let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
+        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+        let (small_thickness, big_thickness) = halves(thickness);
+
+        let top_bar = TopBar::new(rect![rect.min.x, rect.min.y,
+                                        rect.max.x, rect.min.y + small_height - small_thickness],
+                                  Event::Back,
+                                  "Translate".to_string(),
+                                  context);
+        children.push(Box::new(top_bar) as Box<dyn View>);
+
+        let separator = Filler::new(rect![rect.min.x, rect.min.y + small_height - small_thickness,
+                                          rect.max.x, rect.min.y + small_height + big_thickness],
+                                    BLACK);
+        children.push(Box::new(separator) as Box<dyn View>);
+
+        let image_rect = rect![rect.min.x, rect.min.y + small_height + big_thickness,
+                               rect.max.x, rect.max.y - small_height - small_thickness];
+
+        let image = Image::new(image_rect, Pixmap::new(1, 1));
+        children.push(Box::new(image) as Box<dyn View>);
+
+        let mut doc = HtmlDocument::new_from_memory("");
+        doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
+        doc.set_margin_width(context.settings.dictionary.margin_width);
+        doc.set_viewer_stylesheet(VIEWER_STYLESHEET);
+        doc.set_user_stylesheet(USER_STYLESHEET);
+
+        let separator = Filler::new(rect![rect.min.x, rect.max.y - small_height - small_thickness,
+                                          rect.max.x, rect.max.y - small_height + big_thickness],
+                                    BLACK);
+        children.push(Box::new(separator) as Box<dyn View>);
+
+        let bottom_bar = BottomBar::new(rect![rect.min.x, rect.max.y - small_height + big_thickness,
+                                              rect.max.x, rect.max.y],
+                                              &format!("Translate to: {}", target),
+                                              false, false);
+        children.push(Box::new(bottom_bar) as Box<dyn View>);
+
+        rq.add(RenderData::new(id, rect, UpdateMode::Gui));
+        hub.send(Event::Translate(query.to_string(), target.to_string())).ok();
+
+        Translate {
+            id,
+            rect,
+            children,
+            doc,
+            location: 0,
+            query: query.to_string(),
+            target: target.to_string(),
+            active: false,
+        }
+
+    }
+
+    fn toggle_target_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::TargetLangMenu) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+            let mut entries = Vec::new();
+            for lang in &context.settings.languages {
+                entries.push(EntryKind::RadioButton(lang.to_string(),
+                                                    EntryId::SetTargetLang(lang.to_string()),
+                                                    self.target == lang.to_string()));
+            }
+            if !entries.is_empty() {
+                entries.push(EntryKind::Separator);
+            }
+            let target_lang_menu = Menu::new(rect, ViewId::TargetLangMenu, MenuKind::DropDown, entries, context);
+            rq.add(RenderData::new(target_lang_menu.id(), *target_lang_menu.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(target_lang_menu) as Box<dyn View>);
+        }
+    }
+
+    fn translate(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+        let res = translate::translate(&self.query, &self.target, context);
+        match res {
+            Ok((content, lang)) => {
+                self.doc.update(&content);
+                let top_bar = self.child_mut(0).downcast_mut::<TopBar>().unwrap();
+                top_bar.update_title_label(&format!("Translate from:  {}", lang), rq);
+            },
+            Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}", e)),
+        }
+        if let Some(image) = self.children[2].downcast_mut::<Image>() {
+            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0) {
+                image.update(pixmap, rq);
+                self.location = loc;
+            }
+        }
+        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+            bottom_bar.update_icons(false, self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
+        }
+        self.active = false;
+    }
+
+    fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
+        let location = match dir {
+            CycleDir::Previous => Location::Previous(self.location),
+            CycleDir::Next => Location::Next(self.location),
+        };
+        if let Some(image) = self.children[2].downcast_mut::<Image>() {
+            if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
+                image.update(pixmap, rq);
+                self.location = loc;
+            }
+        }
+        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+            bottom_bar.update_icons(self.doc.resolve_location(Location::Previous(self.location)).is_some(),
+                                    self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
+        }
+    }
+}
+
+impl View for Translate {
+    fn handle_event(&mut self, evt: &Event, hub: &Hub, _bus: &mut Bus, rq: &mut RenderQueue, context: &mut Context) -> bool {
+        match *evt {
+            Event::NetUp => {
+                if self.active {
+                    self.translate(rq, context);
+                }
+                true
+            },
+            Event::Translate(ref query, ref target) => {
+                self.active = true;
+                self.query = query.to_string();
+                self.target = target.to_string();
+                if context.online {
+                    self.translate(rq, context);
+                } else {
+                    if !context.settings.wifi {
+                        hub.send(Event::SetWifi(true)).ok();
+                    }
+                    hub.send(Event::Notify("Waiting for network connection.".to_string())).ok();
+                }
+                true
+            },
+            Event::Select(EntryId::SetTargetLang(ref target)) => {
+                if *target != self.target {
+                    self.target = target.clone();
+                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+                        bottom_bar.update_name(&format!("Translate to:  {}", self.target), rq);
+                    }
+                    if !self.query.is_empty() {
+                        hub.send(Event::Translate(self.query.to_string(), self.target.to_string())).ok();
+                    }
+                }
+                true
+            },
+            Event::Page(dir) => {
+                self.go_to_neighbor(dir, rq);
+                true
+            },
+            Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
+                match dir {
+                    Dir::West => self.go_to_neighbor(CycleDir::Next, rq),
+                    Dir::East => self.go_to_neighbor(CycleDir::Previous, rq),
+                    _ => (),
+                }
+                true
+            },
+
+            // luu
+            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
+                match code {
+                    ButtonCode::Backward =>
+                        if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
+                            self.go_to_neighbor(CycleDir::Previous, rq);
+                        } else {
+                            hub.send(Event::Back).ok();
+                        },
+                    ButtonCode::Forward =>
+                        if self.doc.resolve_location(Location::Next(self.location)).is_some() {
+                            self.go_to_neighbor(CycleDir::Next, rq);
+                        } else {
+                            // auto close view if at end
+                            hub.send(Event::Back).ok();
+                        },
+                    _ => (),
+                }
+                true
+            },
+            Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
+                let half_width = self.rect.width() as i32 / 2;
+                if center.x < half_width {
+                    self.go_to_neighbor(CycleDir::Previous, rq);
+                } else {
+                    self.go_to_neighbor(CycleDir::Next, rq);
+                }
+                true
+            },
+            Event::ToggleNear(ViewId::TargetLangMenu, rect) => {
+                self.toggle_target_lang_menu(rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::MainMenu, rect) => {
+                toggle_main_menu(self, rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::BatteryMenu, rect) => {
+                toggle_battery_menu(self, rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::ClockMenu, rect) => {
+                toggle_clock_menu(self, rect, None, rq, context);
+                true
+            },
+            Event::Gesture(GestureEvent::Cross(_)) => {
+                hub.send(Event::Back).ok();
+                true
+            },
+            _ => false,
+        }
+    }
+
+    fn render(&self, _fb: &mut dyn Framebuffer, _rect: Rectangle, _fonts: &mut Fonts) {
+    }
+
+    fn resize(&mut self, rect: Rectangle, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let dpi = CURRENT_DEVICE.dpi;
+        let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
+        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+        let (small_thickness, big_thickness) = halves(thickness);
+
+        self.children[0].resize(rect![rect.min.x, rect.min.y,
+                                      rect.max.x, rect.min.y + small_height - small_thickness],
+                                hub, rq, context);
+
+        self.children[1].resize(rect![rect.min.x, rect.min.y + small_height - small_thickness,
+                                      rect.max.x, rect.min.y + small_height + big_thickness],
+                                hub, rq, context);
+
+        let image_rect = rect![rect.min.x, rect.min.y + small_height + big_thickness,
+                               rect.max.x, rect.max.y - small_height - small_thickness];
+
+        self.doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
+
+        if let Some(image) = self.children[2].downcast_mut::<Image>() {
+            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(self.location), 1.0) {
+                image.update(pixmap, &mut RenderQueue::new());
+                self.location = loc;
+            }
+        }
+        self.children[2].resize(image_rect, hub, rq, context);
+
+        self.children[3].resize(rect![rect.min.x, rect.max.y - small_height - small_thickness,
+                                      rect.max.x, rect.max.y - small_height + big_thickness],
+                                hub, rq, context);
+
+        self.children[4].resize(rect![rect.min.x, rect.max.y - small_height + big_thickness,
+                                      rect.max.x, rect.max.y],
+                                hub, rq, context);
+        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+            bottom_bar.update_icons(self.doc.resolve_location(Location::Previous(self.location)).is_some(),
+                                    self.doc.resolve_location(Location::Next(self.location)).is_some(), &mut RenderQueue::new());
+        }
+        self.rect = rect;
+        rq.add(RenderData::new(self.id, self.rect, UpdateMode::Full));
+
+    }
+
+    fn rect(&self) -> &Rectangle {
+        &self.rect
+    }
+
+    fn rect_mut(&mut self) -> &mut Rectangle {
+        &mut self.rect
+    }
+
+    fn children(&self) -> &Vec<Box<dyn View>> {
+        &self.children
+    }
+
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn View>> {
+        &mut self.children
+    }
+
+    fn id(&self) -> Id {
+        self.id
+    }
+}

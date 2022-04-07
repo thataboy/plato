@@ -1719,6 +1719,7 @@ impl Reader {
 
             entries.push(EntryKind::Separator);
             entries.push(EntryKind::Command("Define".to_string(), EntryId::DefineSelection));
+            entries.push(EntryKind::Command("Translate".to_string(), EntryId::TranslateSelection));
             entries.push(EntryKind::Command("Search".to_string(), EntryId::SearchForSelection));
 
             if self.info.reader.as_ref().map_or(false, |r| !r.page_names.is_empty()) {
@@ -3692,6 +3693,15 @@ impl View for Reader {
                     let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
                     let language = self.info.language.clone();
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Dictionary { query, language }))).ok();
+                }
+                self.selection = None;
+                true
+            },
+            Event::Select(EntryId::TranslateSelection) => {
+                if let Some(text) = self.selected_text() {
+                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let target = context.settings.languages[0].clone();
+                    hub.send(Event::Select(EntryId::Launch(AppCmd::Translate { query, target }))).ok();
                 }
                 self.selection = None;
                 true
