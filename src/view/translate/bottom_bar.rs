@@ -5,7 +5,7 @@ use crate::view::filler::Filler;
 use crate::view::label::Label;
 use crate::gesture::GestureEvent;
 use crate::input::DeviceEvent;
-use crate::geom::{Rectangle, CycleDir};
+use crate::geom::{Rectangle, CycleDir, halves};
 use crate::color::WHITE;
 use crate::font::Fonts;
 use crate::app::Context;
@@ -20,7 +20,7 @@ pub struct BottomBar {
 }
 
 impl BottomBar {
-    pub fn new(rect: Rectangle, name: &str, has_prev: bool, has_next: bool) -> BottomBar {
+    pub fn new(rect: Rectangle, source: &str, target: &str, has_prev: bool, has_next: bool) -> BottomBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let side = rect.height() as i32;
@@ -37,12 +37,19 @@ impl BottomBar {
             children.push(Box::new(prev_filler) as Box<dyn View>);
         }
 
-        let name_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                              pt!(rect.max.x - side, rect.max.y)];
-        let name_label = Label::new(name_rect, name.to_string(), Align::Center)
-                               .event(Some(Event::ToggleNear(ViewId::TargetLangMenu, name_rect)))
-                               .hold_event(Some(Event::EditLanguages));
-        children.push(Box::new(name_label) as Box<dyn View>);
+        let (left, right) = halves(rect.width() as i32 - 2 * side as i32);
+
+        let source_rect = rect![pt!(rect.min.x + side, rect.min.y),
+                                pt!(rect.min.x + side + left, rect.max.y)];
+        let source_label = Label::new(source_rect, source.to_string(), Align::Center)
+                                     .event(Some(Event::ToggleNear(ViewId::SourceLangMenu, source_rect)));
+        children.push(Box::new(source_label) as Box<dyn View>);
+
+        let target_rect = rect![pt!(rect.max.x - side - right, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        let target_label = Label::new(target_rect, target.to_string(), Align::Center)
+                                     .event(Some(Event::ToggleNear(ViewId::TargetLangMenu, target_rect)));
+        children.push(Box::new(target_label) as Box<dyn View>);
 
         let next_rect = rect![rect.max - side, rect.max];
 
@@ -99,9 +106,14 @@ impl BottomBar {
         }
     }
 
-    pub fn update_name(&mut self, text: &str, rq: &mut RenderQueue) {
-        let name_label = self.child_mut(1).downcast_mut::<Label>().unwrap();
-        name_label.update(text, rq);
+    pub fn update_source(&mut self, text: &str, rq: &mut RenderQueue) {
+        let source_label = self.child_mut(1).downcast_mut::<Label>().unwrap();
+        source_label.update(text, rq);
+    }
+
+    pub fn update_target(&mut self, text: &str, rq: &mut RenderQueue) {
+        let target_label = self.child_mut(2).downcast_mut::<Label>().unwrap();
+        target_label.update(text, rq);
     }
 }
 
@@ -122,11 +134,15 @@ impl View for BottomBar {
         let side = rect.height() as i32;
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
-        let name_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                              pt!(rect.max.x - side, rect.max.y)];
-        self.children[1].resize(name_rect, hub, rq, context);
+        let (left, right) = halves(rect.width() as i32 - 2 * side as i32);
+        let source_rect = rect![pt!(rect.min.x + side, rect.min.y),
+                                pt!(rect.min.x + side + left, rect.max.y)];
+        self.children[1].resize(source_rect, hub, rq, context);
+        let target_rect = rect![pt!(rect.max.x - side - right, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        self.children[2].resize(target_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];
-        self.children[2].resize(next_rect, hub, rq, context);
+        self.children[3].resize(next_rect, hub, rq, context);
         self.rect = rect;
     }
 

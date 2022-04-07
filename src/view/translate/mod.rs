@@ -7,10 +7,10 @@ use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
-use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
+use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
-use crate::view::common::{locate_by_id, locate};
+use crate::view::common::locate_by_id;
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
@@ -32,13 +32,14 @@ pub struct Translate {
     children: Vec<Box<dyn View>>,
     doc: HtmlDocument,
     location: usize,
+    source: String,
     query: String,
     target: String,
     active: bool,
 }
 
 impl Translate {
-    pub fn new(rect: Rectangle, query: &str, target: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Translate {
+    pub fn new(rect: Rectangle, query: &str, source: &str, target: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Translate {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -49,7 +50,7 @@ impl Translate {
         let top_bar = TopBar::new(rect![rect.min.x, rect.min.y,
                                         rect.max.x, rect.min.y + small_height - small_thickness],
                                   Event::Back,
-                                  "Translate".to_string(),
+                                  "Google Translate".to_string(),
                                   context);
         children.push(Box::new(top_bar) as Box<dyn View>);
 
@@ -77,12 +78,13 @@ impl Translate {
 
         let bottom_bar = BottomBar::new(rect![rect.min.x, rect.max.y - small_height + big_thickness,
                                               rect.max.x, rect.max.y],
-                                              &format!("Translate to: {}", target),
+                                              &format!("Translate from:  {}", source),
+                                              &format!("to:  {}", target),
                                               false, false);
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         rq.add(RenderData::new(id, rect, UpdateMode::Gui));
-        hub.send(Event::Translate(query.to_string(), target.to_string())).ok();
+        hub.send(Event::Translate(query.to_string(), source.to_string(), target.to_string())).ok();
 
         Translate {
             id,
@@ -91,10 +93,39 @@ impl Translate {
             doc,
             location: 0,
             query: query.to_string(),
+            source: source.to_string(),
             target: target.to_string(),
             active: false,
         }
 
+    }
+
+    fn toggle_source_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::SourceLangMenu) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+            let langs = &context.settings.languages;
+            let mut entries = langs.iter().rev()
+                                   .map(|x| EntryKind::RadioButton(x.to_string(),
+                                                                   EntryId::SetSourceLang(x.to_string()),
+                                                                   self.source == x.to_string()))
+                                   .collect::<Vec<EntryKind>>();
+            entries.push(EntryKind::Separator);
+            entries.push(EntryKind::RadioButton("auto".to_string(),
+                                                EntryId::SetSourceLang("auto".to_string()),
+                                                self.source == "auto".to_string()));
+            let source_lang_menu = Menu::new(rect, ViewId::SourceLangMenu, MenuKind::DropDown, entries, context);
+            rq.add(RenderData::new(source_lang_menu.id(), *source_lang_menu.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(source_lang_menu) as Box<dyn View>);
+        }
     }
 
     fn toggle_target_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
@@ -109,15 +140,12 @@ impl Translate {
             if let Some(false) = enable {
                 return;
             }
-            let mut entries = Vec::new();
-            for lang in &context.settings.languages {
-                entries.push(EntryKind::RadioButton(lang.to_string(),
-                                                    EntryId::SetTargetLang(lang.to_string()),
-                                                    self.target == lang.to_string()));
-            }
-            if !entries.is_empty() {
-                entries.push(EntryKind::Separator);
-            }
+            let langs = &context.settings.languages;
+            let entries = langs.iter().rev()
+                               .map(|x| EntryKind::RadioButton(x.to_string(),
+                                                               EntryId::SetTargetLang(x.to_string()),
+                                                               self.target == x.to_string()))
+                               .collect::<Vec<EntryKind>>();
             let target_lang_menu = Menu::new(rect, ViewId::TargetLangMenu, MenuKind::DropDown, entries, context);
             rq.add(RenderData::new(target_lang_menu.id(), *target_lang_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(target_lang_menu) as Box<dyn View>);
@@ -125,13 +153,9 @@ impl Translate {
     }
 
     fn translate(&mut self, rq: &mut RenderQueue, context: &mut Context) {
-        let res = translate::translate(&self.query, &self.target, context);
+        let res = translate::translate(&self.query, &self.source, &self.target, context);
         match res {
-            Ok((content, lang)) => {
-                self.doc.update(&content);
-                let top_bar = self.child_mut(0).downcast_mut::<TopBar>().unwrap();
-                top_bar.update_title_label(&format!("Translate from:  {}", lang), rq);
-            },
+            Ok((content, _lang)) => self.doc.update(&content),
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}", e)),
         }
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
@@ -173,9 +197,10 @@ impl View for Translate {
                 }
                 true
             },
-            Event::Translate(ref query, ref target) => {
+            Event::Translate(ref query, ref source, ref target) => {
                 self.active = true;
                 self.query = query.to_string();
+                self.source = source.to_string();
                 self.target = target.to_string();
                 if context.online {
                     self.translate(rq, context);
@@ -187,14 +212,30 @@ impl View for Translate {
                 }
                 true
             },
+            Event::Select(EntryId::SetSourceLang(ref source)) => {
+                if *source != self.source {
+                    self.source = source.clone();
+                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+                        bottom_bar.update_source(&format!("Translate from:  {}", self.source), rq);
+                    }
+                    if !self.query.is_empty() {
+                        hub.send(Event::Translate(self.query.to_string(),
+                                                  self.source.to_string(),
+                                                  self.target.to_string())).ok();
+                    }
+                }
+                true
+            },
             Event::Select(EntryId::SetTargetLang(ref target)) => {
                 if *target != self.target {
                     self.target = target.clone();
                     if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-                        bottom_bar.update_name(&format!("Translate to:  {}", self.target), rq);
+                        bottom_bar.update_target(&format!("to:  {}", self.target), rq);
                     }
                     if !self.query.is_empty() {
-                        hub.send(Event::Translate(self.query.to_string(), self.target.to_string())).ok();
+                        hub.send(Event::Translate(self.query.to_string(),
+                                                  self.source.to_string(),
+                                                  self.target.to_string())).ok();
                     }
                 }
                 true
@@ -239,6 +280,10 @@ impl View for Translate {
                 } else {
                     self.go_to_neighbor(CycleDir::Next, rq);
                 }
+                true
+            },
+            Event::ToggleNear(ViewId::SourceLangMenu, rect) => {
+                self.toggle_source_lang_menu(rect, None, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::TargetLangMenu, rect) => {

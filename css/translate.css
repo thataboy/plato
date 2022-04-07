@@ -8,12 +8,8 @@ p.original {
   	font-size: 0.9em;
 }
 
-
 li.translated {
 	list-style: none;
-}
-li.translated:before {
-	content: "\2192 \0020";
 }
 
 li.original {
@@ -21,10 +17,6 @@ li.original {
 	font-style: italic;
   	font-size: 0.9em;
 }
-li.translated:before {
-	content: "\2190 \0020";
-}
-
 
 h3 {
 	text-align: center;
@@ -53,3 +45,9 @@ ul {
 	list-style-type: square;
 }
 
+h2 {
+	display: block;
+	font-weight: bold;
+	font-size: 1.4em;
+	margin: 1em 1em;
+}

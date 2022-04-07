@@ -917,8 +917,8 @@ pub fn run() -> Result<(), Error> {
                     AppCmd::Calculator => Box::new(Calculator::new(context.fb.rect(), &tx, &mut rq, &mut context)?),
                     AppCmd::Dictionary { ref query, ref language } => Box::new(DictionaryApp::new(context.fb.rect(), query,
                                                                                                   language, &tx, &mut rq, &mut context)),
-                    AppCmd::Translate { ref query, ref target } => {
-                        Box::new(Translate::new(context.fb.rect(), query, target, &tx, &mut rq, &mut context))
+                    AppCmd::Translate { ref query, ref source, ref target } => {
+                        Box::new(Translate::new(context.fb.rect(), query, source, target, &tx, &mut rq, &mut context))
                     },
                     AppCmd::TouchEvents => {
                         Box::new(TouchEvents::new(context.fb.rect(), &mut rq, &mut context))

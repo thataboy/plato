@@ -4,14 +4,13 @@ use serde_json::{json, Value as JsonValue};
 use crate::app::Context;
 use crate::view::Event;
 
-pub fn translate(query: &str, target: &str, context: &Context) -> Result<(String, String), Error> {
+pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> Result<(String, String), Error> {
 
     let params = vec![
         ("client", "gtx"),
         ("ie", "UTF-8"),   // input encoding
         ("oe", "UTF-8"),   // output encoding
-        ("sl", "auto"),    // source language
-        // ("sl", if language.is_empty() {"auto"} else {language}),    // source language
+        ("sl", source),    // source language
         ("tl", target),    // target language
         ("dt", "t"),       // translation of source text
         ("dt", "at"),      // alternate translations
@@ -91,6 +90,20 @@ pub fn translate(query: &str, target: &str, context: &Context) -> Result<(String
 /*
 Sample translate session
 curl "https://translate.googleapis.com/translate_a/single?client=gtx&ie=UTF-8&oe=UTF-8&sl=auto&tl=en&dt=t&dt=at&dt=md&q=Je+demande+pardon+aux+enfants+d'avoir+dédié+ce+livre+à+une+grande+personne.+J'ai+une+excuse+sérieuse"
+
+returned array
+
+            0: 'translation',
+            1: 'all-translations',
+            2: 'original-language',
+            5: 'possible-translations',
+            6: 'confidence',
+            7: 'possible-mistakes',
+            8: 'language',
+            11: 'synonyms',
+            12: 'definitions',
+            13: 'examples',
+            14: 'see-also',
 
 [
     [
