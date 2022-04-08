@@ -274,9 +274,11 @@ impl From<TocLocation> for Location {
 }
 
 pub fn toc_as_html(toc: &[TocEntry], chap_index: usize) -> String {
-    let mut buf = "<html>\n\t<head>\n\t\t<title>Table of Contents</title>\n\t\t\
-                   <link rel=\"stylesheet\" type=\"text/css\" href=\"css/toc.css\"/>\n\t\
-                   </head>\n\t<body>\n".to_string();
+    let mut buf = format!(
+        "<html>\n\t<head>\n\t\t<title>Table of Contents</title>\n\t\t\
+        <link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>\n\t\
+        </head>\n\t<body>\n",
+        if Path::new("css/toc-user.css").exists() {"css/toc-user.css"} else {"css/toc.css"});
     toc_as_html_aux(toc, chap_index, 0, &mut buf);
     buf.push_str("\t</body>\n</html>");
     buf
