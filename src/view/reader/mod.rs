@@ -6,7 +6,7 @@ mod margin_cropper;
 mod chapter_label;
 mod results_label;
 
-use std::{thread, time};
+use std::thread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering as AtomicOrdering;
@@ -56,7 +56,7 @@ use crate::metadata::{DEFAULT_CONTRAST_EXPONENT, DEFAULT_CONTRAST_GRAY};
 use crate::geom::{Point, Vec2, Rectangle, Boundary, CornerSpec, BorderSpec};
 use crate::geom::{Dir, DiagDir, CycleDir, LinearDir, Axis, Region, halves};
 use crate::color::{BLACK, WHITE};
-use crate::app::Context;
+use crate::app::{Context, suppress_flash};
 
 const HISTORY_SIZE: usize = 32;
 const RECT_DIST_JITTER: f32 = 24.0;
@@ -999,18 +999,8 @@ impl Reader {
             }
         });
 
-        // luu prevent flash
-        if update_mode == UpdateMode::Full
-            && context.fb.inverted()
-            && context.settings.reader.prevent_refresh_flash
-            && context.settings.frontlight {
-            hub.send(Event::ToggleFrontlight).ok();
-            let hub1 = hub.clone();
-            thread::spawn(move || {
-                let delay = time::Duration::from_millis(500);
-                thread::sleep(delay);
-                hub1.send(Event::ToggleFrontlight).ok();
-            });
+        if update_mode == UpdateMode::Full {
+            suppress_flash(hub, context);
         }
 
         self.chunks.clear();

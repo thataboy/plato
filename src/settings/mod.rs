@@ -111,6 +111,7 @@ pub struct Settings {
     pub auto_power_off: u8,
     pub time_format: String,
     pub date_format: String,
+    pub refresh_light_off_duration: u64,
     pub google_translate_server: String,
     pub languages: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -384,7 +385,6 @@ pub struct ReaderSettings {
     pub max_margin_width: i32,
     pub line_height: f32,
     pub ignore_document_css: bool,
-    pub prevent_refresh_flash: bool,
     pub dithered_kinds: FxHashSet<String>,
     pub paragraph_breaker: ParagraphBreakerSettings,
     pub refresh_rate: RefreshRateSettings,
@@ -499,7 +499,6 @@ impl Default for ReaderSettings {
             max_margin_width: DEFAULT_MARGIN_WIDTH.saturating_add(2),
             line_height: DEFAULT_LINE_HEIGHT,
             ignore_document_css: false,
-            prevent_refresh_flash: true,
             dithered_kinds: ["cbz", "png", "jpg", "jpeg"].iter().map(|k| k.to_string()).collect(),
             paragraph_breaker: ParagraphBreakerSettings::default(),
             refresh_rate: RefreshRateSettings::default(),
@@ -580,6 +579,7 @@ impl Default for Settings {
             battery: BatterySettings::default(),
             frontlight_levels: LightLevels::default(),
             frontlight_presets: Vec::new(),
+            refresh_light_off_duration: 500,
             google_translate_server: "https://translate.googleapis.com".to_string(),
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
         }

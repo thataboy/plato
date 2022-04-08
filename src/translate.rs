@@ -52,7 +52,7 @@ pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> 
             for item in alts {
                 text.push_str(&format!("<dt class='def'>{}</dt><dd><ul>",
                                        item[0].as_str().unwrap()
-                                                  .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
+                                              .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
                 for xlat in item.get(2).and_then(JsonValue::as_array).unwrap() {
                     text.push_str(&format!("<li>{}</li>",
                                            xlat[0].as_str().unwrap()

@@ -15,7 +15,7 @@ use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_me
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
-use crate::app::Context;
+use crate::app::{Context, suppress_flash};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
 use crate::view::menu::{Menu, MenuKind};
@@ -83,7 +83,8 @@ impl Translate {
                                               false, false);
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
-        rq.add(RenderData::new(id, rect, UpdateMode::Gui));
+        suppress_flash(hub, context);
+        rq.add(RenderData::new(id, rect, UpdateMode::Full));
         hub.send(Event::Translate(query.to_string(), source.to_string(), target.to_string())).ok();
 
         Translate {
@@ -156,7 +157,7 @@ impl Translate {
         let res = translate::translate(&self.query, &self.source, &self.target, context);
         match res {
             Ok((content, _lang)) => self.doc.update(&content),
-            Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}", e)),
+            Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
             if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0) {
