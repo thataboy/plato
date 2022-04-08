@@ -1,7 +1,8 @@
+use crate::color::WHITE;
 use crate::device::CURRENT_DEVICE;
 use crate::document::BYTES_PER_PAGE;
-use crate::framebuffer::{Framebuffer};
-use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, SliderId, THICKNESS_MEDIUM, Align};
+use crate::framebuffer::{Framebuffer, UpdateMode};
+use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, SliderId, THICKNESS_MEDIUM, Align};
 use crate::view::filler::Filler;
 use crate::view::slider::Slider;
 use crate::view::icon::Icon;
@@ -24,6 +25,7 @@ pub struct Scrubber {
     original_loc: usize,
     current_page: f32,
     synthetic: bool,
+    back_enabled: bool,
 }
 
 impl Scrubber {
@@ -58,12 +60,10 @@ impl Scrubber {
                                  pages_count as f32 / if synthetic {BYTES_PER_PAGE as f32} else {1.0});
         children.push(Box::new(slider) as Box<dyn View>);
 
-        let go_back_rect = rect![pt!(rect.max.x - side, y),
-                                 pt!(rect.max.x, rect.max.y)];
-        let go_back_icon = Icon::new("back",
-                                     go_back_rect,
-                                     Event::GoTo(current_loc));
-        children.push(Box::new(go_back_icon) as Box<dyn View>);
+        let back_rect = rect![pt!(rect.max.x - side, y),
+                              pt!(rect.max.x, rect.max.y)];
+        let back_icon = Filler::new(back_rect, WHITE);
+        children.push(Box::new(back_icon) as Box<dyn View>);
 
         Scrubber {
             id,
@@ -72,6 +72,7 @@ impl Scrubber {
             original_loc: current_loc,
             current_page,
             synthetic,
+            back_enabled: false,
         }
     }
 
@@ -95,6 +96,7 @@ impl Scrubber {
             slider.update(page, rq);
         }
         self.current_page = page;
+        self.update_back_icon(self.original_loc != loc, rq);
     }
 
     pub fn update_value(&mut self, page: f32, rq: &mut RenderQueue) {
@@ -110,6 +112,24 @@ impl Scrubber {
                                        if diff >= 0.0 {"+"} else {"-"},
                                        diff.abs()),
                               rq);
+        }
+    }
+
+    pub fn update_back_icon(&mut self, enable: bool, rq: &mut RenderQueue) {
+        if self.back_enabled != enable {
+            let index = 3;
+            let back_rect = *self.child(index).rect();
+            if enable {
+                let back_icon = Icon::new("back",
+                                          back_rect,
+                                          Event::GoTo(self.original_loc));
+                self.children[index] = Box::new(back_icon) as Box<dyn View>;
+            } else {
+                let filler = Filler::new(back_rect, WHITE);
+                self.children[index] = Box::new(filler) as Box<dyn View>;
+            }
+            self.back_enabled = enable;
+            rq.add(RenderData::new(self.id, back_rect, UpdateMode::Gui));
         }
     }
 
