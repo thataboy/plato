@@ -10,7 +10,7 @@ use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
-use crate::view::common::locate_by_id;
+use crate::view::common::{locate, locate_by_id};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
@@ -156,7 +156,17 @@ impl Translate {
     fn translate(&mut self, rq: &mut RenderQueue, context: &mut Context) {
         let res = translate::translate(&self.query, &self.source, &self.target, context);
         match res {
-            Ok((content, _lang)) => self.doc.update(&content),
+            Ok((content, lang)) => {
+                if let Some(index) = locate::<TopBar>(self) {
+                    let top_bar = self.children[index].as_mut().downcast_mut::<TopBar>().unwrap();
+                    let label = if self.source != lang
+                                    { format!("Detected language:  {}", lang) }
+                                else
+                                    { "Google Translate".to_string() };
+                    top_bar.update_title_label(&label, rq);
+                }
+                self.doc.update(&content);
+            }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
