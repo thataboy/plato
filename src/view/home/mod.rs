@@ -1027,9 +1027,9 @@ impl Home {
                      EntryKind::RadioButton("File Name".to_string(), EntryId::FirstColumn(FirstColumn::FileName), first_column == FirstColumn::FileName)]));
 
             let second_column = library_settings.second_column;
-            entries.push(EntryKind::SubMenu("Second Column".to_string(),
-                vec![EntryKind::RadioButton("Progress".to_string(), EntryId::SecondColumn(SecondColumn::Progress), second_column == SecondColumn::Progress),
-                     EntryKind::RadioButton("Year".to_string(), EntryId::SecondColumn(SecondColumn::Year), second_column == SecondColumn::Year)]));
+            // entries.push(EntryKind::SubMenu("Second Column".to_string(),
+            //     vec![EntryKind::RadioButton("Progress".to_string(), EntryId::SecondColumn(SecondColumn::Progress), second_column == SecondColumn::Progress),
+            //          EntryKind::RadioButton("Year".to_string(), EntryId::SecondColumn(SecondColumn::Year), second_column == SecondColumn::Year)]));
 
             entries.push(EntryKind::CheckBox("Thumbnail Previews".to_string(),
                                              EntryId::ThumbnailPreviews,
