@@ -319,7 +319,6 @@ pub enum Event {
     EditLanguages,
     Define(String),
     Translate(String, String, String),
-    NetUp,
     Submit(ViewId, String),
     Slider(SliderId, f32, FingerStatus),
     ToggleNear(ViewId, Rectangle),

@@ -541,10 +541,8 @@ pub fn run() -> Result<(), Error> {
                                                       &tx, &mut rq, &mut context);
                         context.online = true;
                         view.children_mut().push(Box::new(notif) as Box<dyn View>);
-                        if view.is::<Home>() {
+                        if view.is::<Home>() || view.is::<Translate>() {
                             view.handle_event(&evt, &tx, &mut bus, &mut rq, &mut context);
-                        } else if view.is::<Translate>() {
-                            view.handle_event(&Event::NetUp, &tx, &mut bus, &mut rq, &mut context);
                         } else if let Some(entry) = history.get_mut(0).filter(|entry| entry.view.is::<Home>()) {
                             let (tx, _rx) = mpsc::channel();
                             entry.view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);

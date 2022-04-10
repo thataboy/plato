@@ -202,7 +202,7 @@ impl Translate {
 impl View for Translate {
     fn handle_event(&mut self, evt: &Event, hub: &Hub, _bus: &mut Bus, rq: &mut RenderQueue, context: &mut Context) -> bool {
         match *evt {
-            Event::NetUp => {
+            Event::Device(DeviceEvent::NetUp) => {
                 if self.active {
                     self.translate(rq, context);
                 }
@@ -263,8 +263,6 @@ impl View for Translate {
                 }
                 true
             },
-
-            // luu
             Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
                 match code {
                     ButtonCode::Backward =>
