@@ -3689,7 +3689,7 @@ impl View for Reader {
             },
             Event::Select(EntryId::TranslateSelection) => {
                 if let Some(text) = self.selected_text() {
-                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let query = text.trim().to_string();
                     let source = "auto".to_string();
                     let target = context.settings.languages[0].clone();
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Translate { query, source, target }))).ok();
