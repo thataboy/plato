@@ -318,7 +318,7 @@ pub enum Event {
     PropagateSelect(EntryId),
     EditLanguages,
     Define(String),
-    Translate(String, String, String),
+    Proceed,
     Submit(ViewId, String),
     Slider(SliderId, f32, FingerStatus),
     ToggleNear(ViewId, Rectangle),

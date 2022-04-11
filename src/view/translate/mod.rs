@@ -85,7 +85,7 @@ impl Translate {
 
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
-        hub.send(Event::Translate(query.to_string(), source.to_string(), target.to_string())).ok();
+        hub.send(Event::Proceed).ok();
 
         Translate {
             id,
@@ -208,11 +208,8 @@ impl View for Translate {
                 }
                 true
             },
-            Event::Translate(ref query, ref source, ref target) => {
+            Event::Proceed => {
                 self.active = true;
-                self.query = query.to_string();
-                self.source = source.to_string();
-                self.target = target.to_string();
                 if context.online {
                     self.translate(rq, context);
                 } else {
@@ -229,11 +226,7 @@ impl View for Translate {
                     if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
                         bottom_bar.update_source(&format!("Translate from:  {}", self.source), rq);
                     }
-                    if !self.query.is_empty() {
-                        hub.send(Event::Translate(self.query.to_string(),
-                                                  self.source.to_string(),
-                                                  self.target.to_string())).ok();
-                    }
+                    hub.send(Event::Proceed).ok();
                 }
                 true
             },
@@ -243,11 +236,7 @@ impl View for Translate {
                     if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
                         bottom_bar.update_target(&format!("to:  {}", self.target), rq);
                     }
-                    if !self.query.is_empty() {
-                        hub.send(Event::Translate(self.query.to_string(),
-                                                  self.source.to_string(),
-                                                  self.target.to_string())).ok();
-                    }
+                    hub.send(Event::Proceed).ok();
                 }
                 true
             },
