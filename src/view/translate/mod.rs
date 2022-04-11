@@ -36,6 +36,7 @@ pub struct Translate {
     query: String,
     target: String,
     active: bool,
+    wifi: bool,
 }
 
 impl Translate {
@@ -83,6 +84,8 @@ impl Translate {
                                               false, false);
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
+        let wifi = context.settings.wifi;
+
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
         hub.send(Event::Proceed).ok();
@@ -97,6 +100,7 @@ impl Translate {
             source: source.to_string(),
             target: target.to_string(),
             active: false,
+            wifi,
         }
 
     }
@@ -303,6 +307,12 @@ impl View for Translate {
             Event::Gesture(GestureEvent::Cross(_)) => {
                 hub.send(Event::Back).ok();
                 true
+            },
+            Event::Back => {
+                if !self.wifi {
+                    hub.send(Event::SetWifi(false)).ok();
+                }
+                false
             },
             _ => false,
         }
