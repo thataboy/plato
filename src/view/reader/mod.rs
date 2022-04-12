@@ -793,7 +793,7 @@ impl Reader {
                     CycleDir::Next => {
                         self.finished = true;
                         let action = if self.ephemeral {
-                            FinishedAction::Notify
+                            FinishedAction::Close
                         } else {
                             context.settings.reader.finished
                         };
@@ -810,9 +810,14 @@ impl Reader {
                         }
                     },
                     CycleDir::Previous => {
-                        let notif = Notification::new("No previous page.".to_string(),
-                                                      hub, rq, context);
-                        self.children.push(Box::new(notif) as Box<dyn View>);
+                        if self.ephemeral {
+                            self.quit(context);
+                            hub.send(Event::Back).ok();
+                        } else {
+                            let notif = Notification::new("No previous page.".to_string(),
+                                                          hub, rq, context);
+                            self.children.push(Box::new(notif) as Box<dyn View>);
+                        }
                     },
                 }
             },
