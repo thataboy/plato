@@ -11,6 +11,7 @@ mod gesture;
 mod helpers;
 mod dictionary;
 mod translate;
+mod wikipedia;
 mod document;
 mod library;
 mod metadata;

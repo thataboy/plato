@@ -13,6 +13,7 @@ mod settings;
 mod frontlight;
 mod lightsensor;
 mod translate;
+mod wikipedia;
 
 use std::env;
 use std::path::Path;

@@ -50,6 +50,7 @@ use crate::view::menu::{Menu, MenuKind};
 use crate::view::intermission::Intermission;
 use crate::view::dictionary::Dictionary;
 use crate::view::translate::Translate;
+use crate::view::wikipedia::Wiki;
 use crate::view::calculator::Calculator;
 use crate::view::sketch::Sketch;
 use crate::view::touch_events::TouchEvents;
@@ -422,6 +423,9 @@ fn main() -> Result<(), Error> {
                         },
                         AppCmd::Translate { ref query, ref source, ref target } => {
                             Box::new(Translate::new(context.fb.rect(), query, source, target, &tx, &mut rq, &mut context))
+                        },
+                        AppCmd::Wiki { ref query } => {
+                            Box::new(Wiki::new(context.fb.rect(), query, &tx, &mut rq, &mut context))
                         },
                         AppCmd::TouchEvents => {
                             Box::new(TouchEvents::new(context.fb.rect(), &mut rq, &mut context))

@@ -24,6 +24,7 @@ use crate::view::menu::{Menu, MenuKind};
 use crate::view::keyboard::{Layout};
 use crate::view::dictionary::Dictionary as DictionaryApp;
 use crate::view::translate::Translate;
+use crate::view::wikipedia::Wiki;
 use crate::view::calculator::Calculator;
 use crate::view::sketch::Sketch;
 use crate::view::touch_events::TouchEvents;
@@ -541,7 +542,7 @@ pub fn run() -> Result<(), Error> {
                                                       &tx, &mut rq, &mut context);
                         context.online = true;
                         view.children_mut().push(Box::new(notif) as Box<dyn View>);
-                        if view.is::<Home>() || view.is::<Translate>() {
+                        if view.is::<Home>() || view.is::<Translate>() || view.is::<Wiki>() {
                             view.handle_event(&evt, &tx, &mut bus, &mut rq, &mut context);
                         } else if let Some(entry) = history.get_mut(0).filter(|entry| entry.view.is::<Home>()) {
                             let (tx, _rx) = mpsc::channel();
@@ -932,6 +933,9 @@ pub fn run() -> Result<(), Error> {
                                                                                                   language, &tx, &mut rq, &mut context)),
                     AppCmd::Translate { ref query, ref source, ref target } => {
                         Box::new(Translate::new(context.fb.rect(), query, source, target, &tx, &mut rq, &mut context))
+                    },
+                    AppCmd::Wiki { ref query } => {
+                        Box::new(Wiki::new(context.fb.rect(), query, &tx, &mut rq, &mut context))
                     },
                     AppCmd::TouchEvents => {
                         Box::new(TouchEvents::new(context.fb.rect(), &mut rq, &mut context))

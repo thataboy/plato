@@ -6,11 +6,10 @@ use crate::geom::{Rectangle, Dir, CycleDir, halves};
 use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
-use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
+use crate::view::{ViewId, Id, ID_FEEDER};
 use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
-use crate::view::common::{locate, locate_by_id};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
@@ -18,29 +17,31 @@ use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
-use crate::view::menu::{Menu, MenuKind};
 use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
-use crate::translate;
+use crate::wikipedia;
 
-const VIEWER_STYLESHEET: &str = "css/translate.css";
-const USER_STYLESHEET: &str = "css/translate-user.css";
+const VIEWER_STYLESHEET: &str = "css/wikipedia.css";
+const USER_STYLESHEET: &str = "css/wikipedia-user.css";
 
-pub struct Translate {
+pub struct Wiki {
     id: Id,
     rect: Rectangle,
     children: Vec<Box<dyn View>>,
     doc: HtmlDocument,
     location: usize,
-    source: String,
     query: String,
-    target: String,
+    titles: Vec<String>,
+    locs: Vec<usize>,
+    count: usize,
+    current_chapter_hi: usize,
     active: bool,
     wifi: bool,
 }
 
-impl Translate {
-    pub fn new(rect: Rectangle, query: &str, source: &str, target: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Translate {
+impl Wiki {
+    pub fn new(rect: Rectangle, query: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Wiki {
+        suppress_flash(hub, context);
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -51,7 +52,7 @@ impl Translate {
         let top_bar = TopBar::new(rect![rect.min.x, rect.min.y,
                                         rect.max.x, rect.min.y + small_height - small_thickness],
                                   Event::Back,
-                                  "Google Translate".to_string(),
+                                  "Wikipedia".to_string(),
                                   context);
         children.push(Box::new(top_bar) as Box<dyn View>);
 
@@ -79,110 +80,93 @@ impl Translate {
 
         let bottom_bar = BottomBar::new(rect![rect.min.x, rect.max.y - small_height + big_thickness,
                                               rect.max.x, rect.max.y],
-                                              &format!("Translate from:  {}", source),
-                                              &format!("to:  {}", target),
+                                              "",
                                               false, false);
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
 
-        suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
         hub.send(Event::Proceed).ok();
 
-        Translate {
+        Wiki {
             id,
             rect,
             children,
             doc,
             location: 0,
             query: query.to_string(),
-            source: source.to_string(),
-            target: target.to_string(),
+            titles: Vec::new(),
+            locs: Vec::new(),
+            count: 0,
+            current_chapter_hi: 0,
             active: false,
             wifi,
         }
 
     }
 
-    fn toggle_source_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
-        if let Some(index) = locate_by_id(self, ViewId::SourceLangMenu) {
-            if let Some(true) = enable {
-                return;
-            }
-
-            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
-            self.children.remove(index);
-        } else {
-            if let Some(false) = enable {
-                return;
-            }
-            let langs = &context.settings.languages;
-            let mut entries = langs.iter().rev()
-                                   .map(|x| EntryKind::RadioButton(x.to_string(),
-                                                                   EntryId::SetSourceLang(x.to_string()),
-                                                                   self.source == x.to_string()))
-                                   .collect::<Vec<EntryKind>>();
-            entries.push(EntryKind::Separator);
-            entries.push(EntryKind::RadioButton("auto".to_string(),
-                                                EntryId::SetSourceLang("auto".to_string()),
-                                                self.source == "auto".to_string()));
-            let source_lang_menu = Menu::new(rect, ViewId::SourceLangMenu, MenuKind::DropDown, entries, context);
-            rq.add(RenderData::new(source_lang_menu.id(), *source_lang_menu.rect(), UpdateMode::Gui));
-            self.children.push(Box::new(source_lang_menu) as Box<dyn View>);
-        }
-    }
-
-    fn toggle_target_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
-        if let Some(index) = locate_by_id(self, ViewId::TargetLangMenu) {
-            if let Some(true) = enable {
-                return;
-            }
-
-            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
-            self.children.remove(index);
-        } else {
-            if let Some(false) = enable {
-                return;
-            }
-            let langs = &context.settings.languages;
-            let entries = langs.iter().rev()
-                               .map(|x| EntryKind::RadioButton(x.to_string(),
-                                                               EntryId::SetTargetLang(x.to_string()),
-                                                               self.target == x.to_string()))
-                               .collect::<Vec<EntryKind>>();
-            let target_lang_menu = Menu::new(rect, ViewId::TargetLangMenu, MenuKind::DropDown, entries, context);
-            rq.add(RenderData::new(target_lang_menu.id(), *target_lang_menu.rect(), UpdateMode::Gui));
-            self.children.push(Box::new(target_lang_menu) as Box<dyn View>);
-        }
-    }
-
-    fn translate(&mut self, rq: &mut RenderQueue, context: &mut Context) {
-        let res = translate::translate(&self.query, &self.source, &self.target, context);
+    fn wiki(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+        let res = wikipedia::wiki(&self.query, context);
+        self.count = 0;
         match res {
-            Ok((content, lang)) => {
-                if let Some(index) = locate::<TopBar>(self) {
-                    let top_bar = self.children[index].as_mut().downcast_mut::<TopBar>().unwrap();
-                    let label = if self.source != lang
-                                    { format!("Detected language:  {}", lang) }
-                                else
-                                    { "Google Translate".to_string() };
-                    top_bar.update_title_label(&label, rq);
-                }
+            Ok((content, titles, cnt)) => {
+                self.count = cnt;
                 self.doc.update(&content);
+                self.titles = titles;
+                for i in 0..cnt {
+                    let location = Location::Uri(format!("#{i}"));
+                    if let Some((_, loc)) = self.doc.pixmap(location, 1.0) {
+                        self.locs.push(loc);
+                    }
+                }
             }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
-        if let Some(image) = self.children[2].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0) {
-                image.update(pixmap, rq);
-                self.location = loc;
+        self.active = false;
+        self.go_to_location(Location::Exact(0), rq);
+    }
+
+    fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
+        let cc = self.current_chapter_hi;
+        let hpc = self.has_previous_chapter();
+        let hnc = self.has_next_chapter();
+        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+            bottom_bar.update_icons(hpc, hnc, rq);
+            bottom_bar.update_label(&format!("{}/{}: {}",
+                                             cc + 1,
+                                             self.count,
+                                             self.titles[cc]),
+                                    rq);
+        }
+    }
+
+    fn get_current_chapter_hi(&mut self) -> usize {
+        if let Some(next) = self.doc.resolve_location(Location::Next(self.location)) {
+            for (i, loc) in self.locs.iter().enumerate() {
+                if *loc >= next {
+                    return i.saturating_sub(1)
+                }
             }
         }
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(false, self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
+        self.count.saturating_sub(1)
+    }
+
+    fn current_chapter_lo(&mut self) -> usize {
+        for (i, loc) in self.locs.iter().enumerate() {
+            if self.location <= *loc {
+                return i.saturating_sub(1);
+            }
         }
-        self.active = false;
+        self.count.saturating_sub(1)
+    }
+
+    fn has_next_chapter(&mut self) -> bool {
+        (self.current_chapter_hi + 1) < self.count
+    }
+
+    fn has_previous_chapter(&mut self) -> bool {
+        self.current_chapter_lo() > 0 || self.locs[0] < self.location
     }
 
     fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
@@ -190,61 +174,78 @@ impl Translate {
             CycleDir::Previous => Location::Previous(self.location),
             CycleDir::Next => Location::Next(self.location),
         };
+        self.go_to_location(location, rq);
+    }
+
+    fn go_to_location(&mut self, location: Location, rq: &mut RenderQueue) {
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
             if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
-                image.update(pixmap, rq);
-                self.location = loc;
+                if loc != self.location {
+                    image.update(pixmap, rq);
+                    self.location = loc;
+                    self.current_chapter_hi = self.get_current_chapter_hi();
+                }
             }
         }
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(self.doc.resolve_location(Location::Previous(self.location)).is_some(),
-                                    self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
+        self.update_bottom_bar(rq);
+    }
+
+    fn jump_backward(&mut self, rq: &mut RenderQueue) {
+        let cc = self.current_chapter_lo();
+        let ch = if self.location > self.locs[cc] {cc} else {cc.saturating_sub(1)};
+        self.go_to_location(Location::Exact(self.locs[ch]), rq);
+    }
+
+    fn jump_forward(&mut self, rq: &mut RenderQueue) {
+        let ch = (self.current_chapter_hi + 1).min(self.count - 1);
+        self.go_to_location(Location::Exact(self.locs[ch]), rq);
+    }
+
+    fn go(&mut self, dir: CycleDir,  hub: &Hub, rq: &mut RenderQueue) {
+        match dir {
+            CycleDir::Previous =>
+                if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
+                    self.go_to_neighbor(CycleDir::Previous, rq);
+                } else {
+                    hub.send(Event::Back).ok();
+                },
+            CycleDir::Next =>
+                if self.doc.resolve_location(Location::Next(self.location)).is_some() {
+                    self.go_to_neighbor(CycleDir::Next, rq);
+                } else {
+                    hub.send(Event::Back).ok();
+                },
         }
     }
 }
 
-impl View for Translate {
+impl View for Wiki {
     fn handle_event(&mut self, evt: &Event, hub: &Hub, _bus: &mut Bus, rq: &mut RenderQueue, context: &mut Context) -> bool {
         match *evt {
             Event::Device(DeviceEvent::NetUp) => {
                 if self.active {
-                    self.translate(rq, context);
+                    self.wiki(rq, context);
                 }
                 true
             },
             Event::Proceed => {
                 self.active = true;
                 if context.online {
-                    self.translate(rq, context);
+                    self.wiki(rq, context);
                 } else {
+                    // when not online but wifi is on, NetUp doesn't seem to get triggered
+                    // switch off wifi to ensure view gets notified when NetUp
                     hub.send(Event::SetWifi(false)).ok();
                     hub.send(Event::SetWifi(true)).ok();
                     hub.send(Event::Notify("Waiting for network connection.".to_string())).ok();
                 }
                 true
             },
-            Event::Select(EntryId::SetSourceLang(ref source)) => {
-                if *source != self.source {
-                    self.source = source.clone();
-                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-                        bottom_bar.update_source(&format!("Translate from:  {}", self.source), rq);
-                    }
-                    hub.send(Event::Proceed).ok();
-                }
-                true
-            },
-            Event::Select(EntryId::SetTargetLang(ref target)) => {
-                if *target != self.target {
-                    self.target = target.clone();
-                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-                        bottom_bar.update_target(&format!("to:  {}", self.target), rq);
-                    }
-                    hub.send(Event::Proceed).ok();
-                }
-                true
-            },
             Event::Page(dir) => {
-                self.go_to_neighbor(dir, rq);
+                match dir {
+                    CycleDir::Previous => self.jump_backward(rq),
+                    CycleDir::Next => self.jump_forward(rq),
+                }
                 true
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
@@ -257,19 +258,8 @@ impl View for Translate {
             },
             Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
                 match code {
-                    ButtonCode::Backward =>
-                        if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Previous, rq);
-                        } else {
-                            hub.send(Event::Back).ok();
-                        },
-                    ButtonCode::Forward =>
-                        if self.doc.resolve_location(Location::Next(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Next, rq);
-                        } else {
-                            // auto close view if at end
-                            hub.send(Event::Back).ok();
-                        },
+                    ButtonCode::Backward => self.go(CycleDir::Previous, hub, rq),
+                    ButtonCode::Forward => self.go(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
@@ -277,18 +267,10 @@ impl View for Translate {
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 let half_width = self.rect.width() as i32 / 2;
                 if center.x < half_width {
-                    self.go_to_neighbor(CycleDir::Previous, rq);
+                    self.go(CycleDir::Previous, hub, rq);
                 } else {
-                    self.go_to_neighbor(CycleDir::Next, rq);
+                    self.go(CycleDir::Next, hub, rq);
                 }
-                true
-            },
-            Event::ToggleNear(ViewId::SourceLangMenu, rect) => {
-                self.toggle_source_lang_menu(rect, None, rq, context);
-                true
-            },
-            Event::ToggleNear(ViewId::TargetLangMenu, rect) => {
-                self.toggle_target_lang_menu(rect, None, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::MainMenu, rect) => {
@@ -339,12 +321,6 @@ impl View for Translate {
 
         self.doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
 
-        if let Some(image) = self.children[2].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(self.location), 1.0) {
-                image.update(pixmap, &mut RenderQueue::new());
-                self.location = loc;
-            }
-        }
         self.children[2].resize(image_rect, hub, rq, context);
 
         self.children[3].resize(rect![rect.min.x, rect.max.y - small_height - small_thickness,
@@ -354,11 +330,10 @@ impl View for Translate {
         self.children[4].resize(rect![rect.min.x, rect.max.y - small_height + big_thickness,
                                       rect.max.x, rect.max.y],
                                 hub, rq, context);
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(self.doc.resolve_location(Location::Previous(self.location)).is_some(),
-                                    self.doc.resolve_location(Location::Next(self.location)).is_some(), &mut RenderQueue::new());
-        }
         self.rect = rect;
+
+        self.go_to_location(Location::Exact(self.location), rq);
+
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Full));
 
     }

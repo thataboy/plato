@@ -113,6 +113,7 @@ pub struct Settings {
     pub date_format: String,
     pub refresh_light_off_duration: u64,
     pub google_translate_server: String,
+    pub wikipedia_server: String,
     pub languages: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<LibrarySettings>,
@@ -581,6 +582,7 @@ impl Default for Settings {
             frontlight_presets: Vec::new(),
             refresh_light_off_duration: 500,
             google_translate_server: "https://translate.googleapis.com".to_string(),
+            wikipedia_server: "https://en.wikipedia.org".to_string(),
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
         }
     }

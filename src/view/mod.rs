@@ -39,6 +39,7 @@ pub mod home;
 pub mod reader;
 pub mod dictionary;
 pub mod translate;
+pub mod wikipedia;
 pub mod calculator;
 pub mod sketch;
 pub mod touch_events;
@@ -382,6 +383,9 @@ pub enum AppCmd {
         source: String,
         target: String,
     },
+    Wiki {
+        query: String,
+    },
     TouchEvents,
     RotationValues,
 }
@@ -554,6 +558,7 @@ pub enum EntryId {
     DefineSelection,
     SearchForSelection,
     TranslateSelection,
+    WikiSelection,
     AdjustSelection,
     Annotations,
     Bookmarks,
