@@ -389,6 +389,8 @@ impl Reader {
         let (width, height) = context.display.dims;
         let font_size = context.settings.reader.font_size;
         doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
+        let margin_width = context.settings.reader.margin_width.max(4);
+        doc.set_margin_width(margin_width);
         let pages_count = doc.pages_count();
         info.title = doc.title().unwrap_or_default();
 
