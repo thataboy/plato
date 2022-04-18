@@ -6,6 +6,7 @@ use crate::framebuffer::{Framebuffer, UpdateMode, Pixmap};
 use crate::geom::{Rectangle, Point, Dir, CycleDir, halves};
 use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
+use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
@@ -14,7 +15,6 @@ use crate::document::html::HtmlDocument;
 use crate::view::common::{locate_by_id, locate};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
-use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::Context;
 use crate::view::filler::Filler;
@@ -444,27 +444,21 @@ impl View for Dictionary {
                 }
                 true
             },
-            // luu
-            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
-                match code {
-                    ButtonCode::Backward =>
-                        if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Previous, rq);
-                        } else {
-                            hub.send(Event::Back).ok();
-                        },
-                    ButtonCode::Forward =>
-                        if self.doc.resolve_location(Location::Next(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Next, rq);
-                        } else {
-                            // auto close view if at end
-                            hub.send(Event::Back).ok();
-                        },
-                    _ => (),
+            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Pressed, .. }) => {
+                let cd = match code {
+                    ButtonCode::Backward => Some(CycleDir::Previous),
+                    ButtonCode::Forward => Some(CycleDir::Next),
+                    _ => None,
+                };
+                if let Some(cd) = cd {
+                    let loc = self.location;
+                    self.go_to_neighbor(cd, rq);
+                    if self.location == loc {
+                        hub.send(Event::Back).ok();
+                    }
                 }
                 true
             },
-
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 self.follow_link(center, rq, context);
                 true
