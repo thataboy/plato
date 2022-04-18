@@ -6,23 +6,31 @@ use crate::geom::{Rectangle, Dir, CycleDir, halves};
 use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
-use crate::view::{ViewId, Id, ID_FEEDER};
+use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
-use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
+use crate::view::common::{locate_by_id, toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
+use crate::view::menu::{Menu, MenuKind};
 use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
-use crate::wikipedia;
+use crate::wikipedia::{search, fetch, ID_PREFIX};
 
 const VIEWER_STYLESHEET: &str = "css/wikipedia.css";
 const USER_STYLESHEET: &str = "css/wikipedia-user.css";
+
+#[derive(PartialEq)]
+enum Mode {
+    Search,
+    Fetch,
+    Idle,
+}
 
 pub struct Wiki {
     id: Id,
@@ -32,10 +40,12 @@ pub struct Wiki {
     location: usize,
     query: String,
     titles: Vec<String>,
+    pageids: Vec<String>,
     locs: Vec<usize>,
     count: usize,
-    current_chapter_hi: usize,
-    active: bool,
+    selected_chapter: Option<usize>,
+    visible_chapter_hi: Option<usize>,
+    mode: Mode,
     wifi: bool,
 }
 
@@ -81,7 +91,7 @@ impl Wiki {
         let bottom_bar = BottomBar::new(rect![rect.min.x, rect.max.y - small_height + big_thickness,
                                               rect.max.x, rect.max.y],
                                               "",
-                                              false, false);
+                                              false, false, false);
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
@@ -97,25 +107,29 @@ impl Wiki {
             location: 0,
             query: query.to_string(),
             titles: Vec::new(),
+            pageids: Vec::new(),
             locs: Vec::new(),
             count: 0,
-            current_chapter_hi: 0,
-            active: false,
+            selected_chapter: None,
+            visible_chapter_hi: None,
+            mode: Mode::Search,
             wifi,
         }
 
     }
 
-    fn wiki(&mut self, rq: &mut RenderQueue, context: &mut Context) {
-        let res = wikipedia::wiki(&self.query, context);
+    fn search(&mut self, _hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        // hub.send(Event::Notify("Searching...".to_string())).ok();
+        let res = search(&self.query, context);
         self.count = 0;
         match res {
-            Ok((content, titles, cnt)) => {
+            Ok((content, titles, pageids, cnt)) => {
                 self.count = cnt;
                 self.doc.update(&content);
                 self.titles = titles;
+                self.pageids = pageids;
                 for i in 0..cnt {
-                    let location = Location::Uri(format!("#{i}"));
+                    let location = Location::Uri(format!("#{ID_PREFIX}{i}"));
                     if let Some((_, loc)) = self.doc.pixmap(location, 1.0) {
                         self.locs.push(loc);
                     }
@@ -123,16 +137,27 @@ impl Wiki {
             }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
-        self.active = false;
+        self.mode = Mode::Idle;
         self.go_to_location(Location::Exact(0), rq);
     }
 
+    fn fetch(&mut self, hub: &Hub, _rq: &mut RenderQueue, context: &mut Context) {
+        // hub.send(Event::Notify("Fetching full article...".to_string())).ok();
+        let sel = self.selected_chapter();
+        let res = fetch(&self.pageids[sel], context);
+        match res {
+            Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); },
+            Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
+        }
+        self.mode = Mode::Idle;
+    }
+
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
-        let cc = self.current_chapter_hi;
+        let cc = self.selected_chapter();
         let hpc = self.has_previous_chapter();
         let hnc = self.has_next_chapter();
         if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(hpc, hnc, rq);
+            bottom_bar.update_icons(hpc, hnc, self.count > 0, rq);
             bottom_bar.update_label(&format!("{}/{}: {}",
                                              cc + 1,
                                              self.count,
@@ -141,18 +166,28 @@ impl Wiki {
         }
     }
 
-    fn get_current_chapter_hi(&mut self) -> usize {
-        if let Some(next) = self.doc.resolve_location(Location::Next(self.location)) {
-            for (i, loc) in self.locs.iter().enumerate() {
-                if *loc >= next {
-                    return i.saturating_sub(1)
-                }
-            }
+    fn visible_chapter_hi(&mut self) -> usize {
+        // return cached value if exists
+        if let Some(ch) = self.visible_chapter_hi {
+            return ch;
         }
-        self.count.saturating_sub(1)
+        let mut ch = 0;
+        if let Some(next) = self.doc.resolve_location(Location::Next(self.location)) {
+            while ch < self.count {
+                if self.locs[ch] >= next {
+                    break;
+                }
+                ch += 1;
+            }
+            ch = ch.saturating_sub(1);
+        } else {
+            ch = self.count.saturating_sub(1);
+        }
+        self.visible_chapter_hi = Some(ch);
+        ch
     }
 
-    fn current_chapter_lo(&mut self) -> usize {
+    fn visible_chapter_lo(&mut self) -> usize {
         for (i, loc) in self.locs.iter().enumerate() {
             if self.location <= *loc {
                 return i.saturating_sub(1);
@@ -161,15 +196,24 @@ impl Wiki {
         self.count.saturating_sub(1)
     }
 
+    fn selected_chapter(&mut self) -> usize {
+        if let Some(chapter) = self.selected_chapter {
+            chapter
+        } else {
+            self.visible_chapter_hi()
+        }
+    }
+
     fn has_next_chapter(&mut self) -> bool {
-        (self.current_chapter_hi + 1) < self.count
+        (self.visible_chapter_hi() + 1) < self.count
     }
 
     fn has_previous_chapter(&mut self) -> bool {
-        self.current_chapter_lo() > 0 || self.locs[0] < self.location
+        self.visible_chapter_lo() > 0 || self.locs[0] < self.location
     }
 
     fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
+        self.selected_chapter = None;
         let location = match dir {
             CycleDir::Previous => Location::Previous(self.location),
             CycleDir::Next => Location::Next(self.location),
@@ -183,7 +227,8 @@ impl Wiki {
                 if loc != self.location {
                     image.update(pixmap, rq);
                     self.location = loc;
-                    self.current_chapter_hi = self.get_current_chapter_hi();
+                    // force recalculate
+                    self.visible_chapter_hi = None;
                 }
             }
         }
@@ -191,17 +236,20 @@ impl Wiki {
     }
 
     fn jump_backward(&mut self, rq: &mut RenderQueue) {
-        let cc = self.current_chapter_lo();
+        self.selected_chapter = None;
+        let cc = self.visible_chapter_lo();
         let ch = if self.location > self.locs[cc] {cc} else {cc.saturating_sub(1)};
         self.go_to_location(Location::Exact(self.locs[ch]), rq);
     }
 
     fn jump_forward(&mut self, rq: &mut RenderQueue) {
-        let ch = (self.current_chapter_hi + 1).min(self.count - 1);
+        self.selected_chapter = None;
+        let ch = (self.visible_chapter_hi() + 1).min(self.count - 1);
         self.go_to_location(Location::Exact(self.locs[ch]), rq);
     }
 
     fn go(&mut self, dir: CycleDir,  hub: &Hub, rq: &mut RenderQueue) {
+        self.selected_chapter = None;
         match dir {
             CycleDir::Previous =>
                 if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
@@ -217,22 +265,59 @@ impl Wiki {
                 },
         }
     }
+
+    fn toggle_chapter_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::ChapterMenu) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+            let sel = self.selected_chapter();
+            let entries = self.titles.iter().enumerate()
+                                   .map(|(i, x)| EntryKind::RadioButton(format!("{}. {x}", i+1),
+                                                                        EntryId::GoTo(i),
+                                                                        i == sel))
+                                   .collect::<Vec<EntryKind>>();
+            let chapter_menu = Menu::new(rect, ViewId::ChapterMenu, MenuKind::DropDown, entries, context);
+            rq.add(RenderData::new(chapter_menu.id(), *chapter_menu.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(chapter_menu) as Box<dyn View>);
+        }
+    }
+
+    fn reseed(&mut self, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(top_bar) = self.child_mut(0).downcast_mut::<TopBar>() {
+            top_bar.reseed(rq, context);
+        }
+        rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
+    }
+
 }
 
 impl View for Wiki {
     fn handle_event(&mut self, evt: &Event, hub: &Hub, _bus: &mut Bus, rq: &mut RenderQueue, context: &mut Context) -> bool {
         match *evt {
             Event::Device(DeviceEvent::NetUp) => {
-                if self.active {
-                    self.wiki(rq, context);
+                match self.mode {
+                    Mode::Search => self.search(hub, rq, context),
+                    Mode::Fetch => self.fetch(hub, rq, context),
+                    _ => (),
                 }
                 true
             },
             Event::Proceed => {
-                self.active = true;
                 if context.online {
-                    self.wiki(rq, context);
-                } else {
+                    match self.mode {
+                        Mode::Search => self.search(hub, rq, context),
+                        Mode::Fetch => self.fetch(hub, rq, context),
+                        _ => (),
+                    }
+                } else if self.mode != Mode::Idle {
                     // when not online but wifi is on, NetUp doesn't seem to get triggered
                     // switch off wifi to ensure view gets notified when NetUp
                     hub.send(Event::SetWifi(false)).ok();
@@ -246,6 +331,11 @@ impl View for Wiki {
                     CycleDir::Previous => self.jump_backward(rq),
                     CycleDir::Next => self.jump_forward(rq),
                 }
+                true
+            },
+            Event::Download => {
+                self.mode = Mode::Fetch;
+                hub.send(Event::Proceed).ok();
                 true
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
@@ -273,6 +363,15 @@ impl View for Wiki {
                 }
                 true
             },
+            Event::Select(EntryId::GoTo(chapter)) => {
+                self.selected_chapter = Some(chapter);
+                self.go_to_location(Location::Exact(self.locs[chapter]), rq);
+                true
+            },
+            Event::ToggleNear(ViewId::ChapterMenu, rect) => {
+                self.toggle_chapter_menu(rect, None, rq, context);
+                true
+            },
             Event::ToggleNear(ViewId::MainMenu, rect) => {
                 toggle_main_menu(self, rect, None, rq, context);
                 true
@@ -287,6 +386,10 @@ impl View for Wiki {
             },
             Event::Gesture(GestureEvent::Cross(_)) => {
                 hub.send(Event::Back).ok();
+                true
+            },
+            Event::Reseed => {
+                self.reseed(rq, context);
                 true
             },
             Event::Back => {
@@ -331,7 +434,6 @@ impl View for Wiki {
                                       rect.max.x, rect.max.y],
                                 hub, rq, context);
         self.rect = rect;
-
         self.go_to_location(Location::Exact(self.location), rq);
 
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Full));

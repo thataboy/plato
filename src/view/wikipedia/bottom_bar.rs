@@ -1,5 +1,5 @@
 use crate::framebuffer::{Framebuffer, UpdateMode};
-use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, Align};
+use crate::view::{View, ViewId, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, Align};
 use crate::view::icon::Icon;
 use crate::view::filler::Filler;
 use crate::view::label::Label;
@@ -17,10 +17,11 @@ pub struct BottomBar {
     children: Vec<Box<dyn View>>,
     has_prev: bool,
     has_next: bool,
+    has_article: bool,
 }
 
 impl BottomBar {
-    pub fn new(rect: Rectangle, text: &str, has_prev: bool, has_next: bool) -> BottomBar {
+    pub fn new(rect: Rectangle, text: &str, has_prev: bool, has_next: bool, has_article: bool) -> BottomBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let side = rect.height() as i32;
@@ -37,9 +38,22 @@ impl BottomBar {
         }
 
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - side, rect.max.y)];
-        let label = Label::new(label_rect, text.to_string(), Align::Center);
+                               pt!(rect.max.x - 2 * side, rect.max.y)];
+        let label = Label::new(label_rect, text.to_string(), Align::Center)
+                              .event(Some(Event::ToggleNear(ViewId::ChapterMenu, label_rect)));
         children.push(Box::new(label) as Box<dyn View>);
+
+        let download_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                  pt!(rect.max.x - side, rect.max.y)];
+        if has_article {
+            let download_icon = Icon::new("download",
+                                          download_rect,
+                                          Event::Page(CycleDir::Next));
+            children.push(Box::new(download_icon) as Box<dyn View>);
+        } else {
+            let download_filler = Filler::new(download_rect, WHITE);
+            children.push(Box::new(download_filler) as Box<dyn View>);
+        }
 
         let next_rect = rect![rect.max - side, rect.max];
         if has_next {
@@ -58,10 +72,11 @@ impl BottomBar {
             children,
             has_prev,
             has_next,
+            has_article,
         }
     }
 
-    pub fn update_icons(&mut self, has_prev: bool, has_next: bool, rq: &mut RenderQueue) {
+    pub fn update_icons(&mut self, has_prev: bool, has_next: bool, has_article: bool, rq: &mut RenderQueue) {
         if self.has_prev != has_prev {
             let index = 0;
             let prev_rect = *self.child(index).rect();
@@ -76,6 +91,22 @@ impl BottomBar {
             }
             self.has_prev = has_prev;
             rq.add(RenderData::new(self.id, prev_rect, UpdateMode::Gui));
+        }
+
+        if self.has_article != has_article {
+            let index = self.len() - 2;
+            let download_rect = *self.child(index).rect();
+            if has_article {
+                let download_icon = Icon::new("download",
+                                          download_rect,
+                                          Event::Download);
+                self.children[index] = Box::new(download_icon) as Box<dyn View>;
+            } else {
+                let download_filler = Filler::new(download_rect, WHITE);
+                self.children[index] = Box::new(download_filler) as Box<dyn View>;
+            }
+            self.has_article = has_article;
+            rq.add(RenderData::new(self.id, download_rect, UpdateMode::Gui));
         }
 
         if self.has_next != has_next {
@@ -119,10 +150,13 @@ impl View for BottomBar {
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - side, rect.max.y)];
+                               pt!(rect.max.x - 2 * side, rect.max.y)];
         self.children[1].resize(label_rect, hub, rq, context);
+        let download_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                  pt!(rect.max.x - side, rect.max.y)];
+        self.children[2].resize(download_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];
-        self.children[2].resize(next_rect, hub, rq, context);
+        self.children[3].resize(next_rect, hub, rq, context);
         self.rect = rect;
     }
 

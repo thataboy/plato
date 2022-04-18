@@ -201,6 +201,24 @@ impl Translate {
                                     self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
         }
     }
+
+    fn go(&mut self, dir: CycleDir,  hub: &Hub, rq: &mut RenderQueue) {
+        match dir {
+            CycleDir::Previous =>
+                if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
+                    self.go_to_neighbor(CycleDir::Previous, rq);
+                } else {
+                    hub.send(Event::Back).ok();
+                },
+            CycleDir::Next =>
+                if self.doc.resolve_location(Location::Next(self.location)).is_some() {
+                    self.go_to_neighbor(CycleDir::Next, rq);
+                } else {
+                    hub.send(Event::Back).ok();
+                },
+        }
+    }
+
 }
 
 impl View for Translate {
@@ -257,19 +275,8 @@ impl View for Translate {
             },
             Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
                 match code {
-                    ButtonCode::Backward =>
-                        if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Previous, rq);
-                        } else {
-                            hub.send(Event::Back).ok();
-                        },
-                    ButtonCode::Forward =>
-                        if self.doc.resolve_location(Location::Next(self.location)).is_some() {
-                            self.go_to_neighbor(CycleDir::Next, rq);
-                        } else {
-                            // auto close view if at end
-                            hub.send(Event::Back).ok();
-                        },
+                    ButtonCode::Backward => self.go(CycleDir::Previous, hub, rq),
+                    ButtonCode::Forward => self.go(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
@@ -277,9 +284,9 @@ impl View for Translate {
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 let half_width = self.rect.width() as i32 / 2;
                 if center.x < half_width {
-                    self.go_to_neighbor(CycleDir::Previous, rq);
+                    self.go(CycleDir::Previous, hub, rq);
                 } else {
-                    self.go_to_neighbor(CycleDir::Next, rq);
+                    self.go(CycleDir::Next, hub, rq);
                 }
                 true
             },

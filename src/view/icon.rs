@@ -26,7 +26,7 @@ lazy_static! {
                      "move-backward", "move-backward-short", "move-forward", "move-forward-short",
                      "close",  "check_mark-small", "check_mark", "check_mark-large", "bullet",
                      "arrow-left", "arrow-right", "angle-down", "angle-up", "crop", "toc", "font_family",
-                     "double_angle-left", "double_angle-right",
+                     "double_angle-left", "double_angle-right", "download",
                      "font_size", "line_height", "align-justify", "align-left", "align-right",
 
                      "align-center", "margin", "plug", "cover", "enclosed_menu", "contrast", "gray"].iter().cloned() {
