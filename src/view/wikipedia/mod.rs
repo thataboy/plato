@@ -20,7 +20,7 @@ use crate::view::image::Image;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
-use crate::wikipedia::{search, fetch, ID_PREFIX};
+use crate::wikipedia::{search, fetch, Page};
 
 const VIEWER_STYLESHEET: &str = "css/wikipedia.css";
 const USER_STYLESHEET: &str = "css/wikipedia-user.css";
@@ -39,19 +39,15 @@ pub struct Wiki {
     doc: HtmlDocument,
     location: usize,
     query: String,
-    titles: Vec<String>,
-    pageids: Vec<String>,
-    locs: Vec<usize>,
+    pages: Vec<Page>,
     count: usize,
-    selected_chapter: Option<usize>,
-    visible_chapter_hi: Option<usize>,
+    current_chapter: Option<usize>,
     mode: Mode,
     wifi: bool,
 }
 
 impl Wiki {
     pub fn new(rect: Rectangle, query: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Wiki {
-        suppress_flash(hub, context);
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -96,6 +92,7 @@ impl Wiki {
 
         let wifi = context.settings.wifi;
 
+        suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
         hub.send(Event::Proceed).ok();
 
@@ -106,12 +103,9 @@ impl Wiki {
             doc,
             location: 0,
             query: query.to_string(),
-            titles: Vec::new(),
-            pageids: Vec::new(),
-            locs: Vec::new(),
+            pages: Vec::new(),
             count: 0,
-            selected_chapter: None,
-            visible_chapter_hi: None,
+            current_chapter: None,
             mode: Mode::Search,
             wifi,
         }
@@ -121,19 +115,11 @@ impl Wiki {
     fn search(&mut self, _hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         // hub.send(Event::Notify("Searching...".to_string())).ok();
         let res = search(&self.query, context);
-        self.count = 0;
         match res {
-            Ok((content, titles, pageids, cnt)) => {
-                self.count = cnt;
-                self.doc.update(&content);
-                self.titles = titles;
-                self.pageids = pageids;
-                for i in 0..cnt {
-                    let location = Location::Uri(format!("#{ID_PREFIX}{i}"));
-                    if let Some((_, loc)) = self.doc.pixmap(location, 1.0) {
-                        self.locs.push(loc);
-                    }
-                }
+            Ok(results) => {
+                self.pages = results;
+                self.count = self.pages.len();
+                self.go_to_chapter(0, rq);
             }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
@@ -143,147 +129,100 @@ impl Wiki {
 
     fn fetch(&mut self, hub: &Hub, _rq: &mut RenderQueue, context: &mut Context) {
         // hub.send(Event::Notify("Fetching full article...".to_string())).ok();
-        let sel = self.selected_chapter();
-        let res = fetch(&self.pageids[sel], context);
-        match res {
-            Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); },
-            Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
+        if let Some(cc) = self.current_chapter {
+            let res = fetch(&self.pages[cc].pageid, context);
+            match res {
+                Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); },
+                Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
+            }
+            self.mode = Mode::Idle;
         }
-        self.mode = Mode::Idle;
     }
 
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
-        let cc = self.selected_chapter();
-        let hpc = self.has_previous_chapter();
-        let hnc = self.has_next_chapter();
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(hpc, hnc, self.count > 0, rq);
-            bottom_bar.update_label(&format!("{}/{}: {}",
-                                             cc + 1,
-                                             self.count,
-                                             self.titles[cc]),
-                                    rq);
-        }
-    }
-
-    fn visible_chapter_hi(&mut self) -> usize {
-        // return cached value if exists
-        if let Some(ch) = self.visible_chapter_hi {
-            return ch;
-        }
-        let mut ch = 0;
-        if let Some(next) = self.doc.resolve_location(Location::Next(self.location)) {
-            while ch < self.count {
-                if self.locs[ch] >= next {
-                    break;
-                }
-                ch += 1;
-            }
-            ch = ch.saturating_sub(1);
-        } else {
-            ch = self.count.saturating_sub(1);
-        }
-        self.visible_chapter_hi = Some(ch);
-        ch
-    }
-
-    fn visible_chapter_lo(&mut self) -> usize {
-        for (i, loc) in self.locs.iter().enumerate() {
-            if self.location <= *loc {
-                return i.saturating_sub(1);
+        if let Some(cc) = self.current_chapter {
+            if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+                bottom_bar.update_icons(cc > 0, cc < self.count - 1, self.count > 0, rq);
+                bottom_bar.update_label(&format!("{}/{}: {}",
+                                                 cc + 1,
+                                                 self.count,
+                                                 self.pages[cc].title),
+                                        rq);
             }
         }
-        self.count.saturating_sub(1)
     }
 
-    fn selected_chapter(&mut self) -> usize {
-        if let Some(chapter) = self.selected_chapter {
-            chapter
-        } else {
-            self.visible_chapter_hi()
-        }
-    }
-
-    fn has_next_chapter(&mut self) -> bool {
-        (self.visible_chapter_hi() + 1) < self.count
-    }
-
-    fn has_previous_chapter(&mut self) -> bool {
-        self.visible_chapter_lo() > 0 || self.locs[0] < self.location
-    }
-
-    fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
-        self.selected_chapter = None;
+    fn go_to_neighbor(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
         let location = match dir {
-            CycleDir::Previous => Location::Previous(self.location),
-            CycleDir::Next => Location::Next(self.location),
+            CycleDir::Previous => self.doc.resolve_location(Location::Previous(self.location)),
+            CycleDir::Next => self.doc.resolve_location(Location::Next(self.location)),
         };
-        self.go_to_location(location, rq);
+        if let Some(loc) = location {
+            self.go_to_location(Location::Exact(loc), rq);
+        } else {
+            self.go_next_chapter(dir, hub, rq);
+        }
+    }
+
+    fn go_next_chapter(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
+        if let Some(cc) = self.current_chapter {
+            match dir {
+                CycleDir::Previous =>
+                    if cc > 0 {
+                        self.go_to_chapter(cc - 1, rq);
+                    } else {
+                        hub.send(Event::Back).ok();
+                    },
+                CycleDir::Next =>
+                    if (cc + 1) < self.count {
+                        self.go_to_chapter(cc + 1, rq);
+                    } else {
+                        hub.send(Event::Back).ok();
+                    },
+            }
+        }
     }
 
     fn go_to_location(&mut self, location: Location, rq: &mut RenderQueue) {
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
             if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
-                if loc != self.location {
-                    image.update(pixmap, rq);
-                    self.location = loc;
-                    // force recalculate
-                    self.visible_chapter_hi = None;
-                }
+                image.update(pixmap, rq);
+                self.location = loc;
             }
         }
         self.update_bottom_bar(rq);
     }
 
-    fn jump_backward(&mut self, rq: &mut RenderQueue) {
-        self.selected_chapter = None;
-        let cc = self.visible_chapter_lo();
-        let ch = if self.location > self.locs[cc] {cc} else {cc.saturating_sub(1)};
-        self.go_to_location(Location::Exact(self.locs[ch]), rq);
-    }
-
-    fn jump_forward(&mut self, rq: &mut RenderQueue) {
-        self.selected_chapter = None;
-        let ch = (self.visible_chapter_hi() + 1).min(self.count - 1);
-        self.go_to_location(Location::Exact(self.locs[ch]), rq);
-    }
-
-    fn go(&mut self, dir: CycleDir,  hub: &Hub, rq: &mut RenderQueue) {
-        self.selected_chapter = None;
-        match dir {
-            CycleDir::Previous =>
-                if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
-                    self.go_to_neighbor(CycleDir::Previous, rq);
-                } else {
-                    hub.send(Event::Back).ok();
-                },
-            CycleDir::Next =>
-                if self.doc.resolve_location(Location::Next(self.location)).is_some() {
-                    self.go_to_neighbor(CycleDir::Next, rq);
-                } else {
-                    hub.send(Event::Back).ok();
-                },
+    fn go_to_chapter(&mut self, chapter: usize, rq: &mut RenderQueue) {
+        if let Some(cc) = self.current_chapter {
+            if cc == chapter { return; }
         }
+        self.current_chapter = Some(chapter);
+        self.doc.update(&self.pages[chapter].extract);
+        self.go_to_location(Location::Exact(0), rq);
     }
 
     fn toggle_chapter_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if self.count == 0 {
+            return;
+        }
         if let Some(index) = locate_by_id(self, ViewId::ChapterMenu) {
             if let Some(true) = enable {
                 return;
             }
-
             rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
             self.children.remove(index);
         } else {
             if let Some(false) = enable {
                 return;
             }
-            let sel = self.selected_chapter();
-            let entries = self.titles.iter().enumerate()
-                                   .map(|(i, x)| EntryKind::RadioButton(format!("{}. {x}", i+1),
-                                                                        EntryId::GoTo(i),
-                                                                        i == sel))
-                                   .collect::<Vec<EntryKind>>();
+            let cc = self.current_chapter.unwrap_or(std::usize::MAX);
+            let entries = self.pages.iter().enumerate()
+                                    .map(|(i, x)|
+                                         EntryKind::RadioButton(format!("{}. {}", i+1, x.title),
+                                                                EntryId::GoTo(i),
+                                                                i == cc))
+                                    .collect::<Vec<EntryKind>>();
             let chapter_menu = Menu::new(rect, ViewId::ChapterMenu, MenuKind::DropDown, entries, context);
             rq.add(RenderData::new(chapter_menu.id(), *chapter_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(chapter_menu) as Box<dyn View>);
@@ -327,10 +266,7 @@ impl View for Wiki {
                 true
             },
             Event::Page(dir) => {
-                match dir {
-                    CycleDir::Previous => self.jump_backward(rq),
-                    CycleDir::Next => self.jump_forward(rq),
-                }
+                self.go_next_chapter(dir, hub, rq);
                 true
             },
             Event::Download => {
@@ -340,16 +276,16 @@ impl View for Wiki {
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
                 match dir {
-                    Dir::West => self.go_to_neighbor(CycleDir::Next, rq),
-                    Dir::East => self.go_to_neighbor(CycleDir::Previous, rq),
+                    Dir::West => self.go_to_neighbor(CycleDir::Previous, hub, rq),
+                    Dir::East => self.go_to_neighbor(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
             },
             Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
                 match code {
-                    ButtonCode::Backward => self.go(CycleDir::Previous, hub, rq),
-                    ButtonCode::Forward => self.go(CycleDir::Next, hub, rq),
+                    ButtonCode::Backward => self.go_to_neighbor(CycleDir::Previous, hub, rq),
+                    ButtonCode::Forward => self.go_to_neighbor(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
@@ -357,15 +293,14 @@ impl View for Wiki {
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 let half_width = self.rect.width() as i32 / 2;
                 if center.x < half_width {
-                    self.go(CycleDir::Previous, hub, rq);
+                    self.go_to_neighbor(CycleDir::Previous, hub, rq);
                 } else {
-                    self.go(CycleDir::Next, hub, rq);
+                    self.go_to_neighbor(CycleDir::Next, hub, rq);
                 }
                 true
             },
             Event::Select(EntryId::GoTo(chapter)) => {
-                self.selected_chapter = Some(chapter);
-                self.go_to_location(Location::Exact(self.locs[chapter]), rq);
+                self.go_to_chapter(chapter, rq);
                 true
             },
             Event::ToggleNear(ViewId::ChapterMenu, rect) => {

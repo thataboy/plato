@@ -4,14 +4,20 @@ use reqwest::blocking::Client;
 use serde_json::Value as JsonValue;
 use crate::app::Context;
 
-pub const ID_PREFIX: &str = "__PLATO__";
+const REMOVE_TAGS: &str = r#"<span.*?>|</span>|<link[^>]+>|\n+|(?s)<!--.+-->|<p class="mw-empty-elt">(\s|\n)*</p>"#;
 
-fn url(context: &Context) -> String {
+pub struct Page {
+    pub title: String,
+    pub pageid: String,
+    pub extract: String,
+}
+
+fn wiki_url(context: &Context) -> String {
     let server = &context.settings.wikipedia_server.trim();
     format!("{}{}w/api.php", server, if server.ends_with("/") {""} else {"/"})
 }
 
-pub fn search(query: &str, context: &Context) -> Result<(String, Vec<String>, Vec<String>, usize), Error> {
+pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
     let params = vec![
         ("action", "query"),
         ("list", "search"),
@@ -21,7 +27,7 @@ pub fn search(query: &str, context: &Context) -> Result<(String, Vec<String>, Ve
     ];
     let client = Client::new();
 
-    let response = client.get(&url(context))
+    let response = client.get(&wiki_url(context))
                          .query(&params)
                          .send()?;
 
@@ -29,11 +35,7 @@ pub fn search(query: &str, context: &Context) -> Result<(String, Vec<String>, Ve
         return Err(format_err!("Unable to connect: {}", response.status()));
     }
 
-    let mut text = String::new();
-    let mut titles: Vec<String> = Vec::new();
-    let mut pids: Vec<String> = Vec::new();
     let body: JsonValue = response.json().unwrap();
-    let mut cnt: usize = 0;
 
     if let Some(results) = body.get("query").unwrap()
                                .get("search").and_then(JsonValue::as_array) {
@@ -59,7 +61,7 @@ pub fn search(query: &str, context: &Context) -> Result<(String, Vec<String>, Ve
             ("pageids", &pageids_str),
         ];
 
-        let response = client.get(&url(context))
+        let response = client.get(&wiki_url(context))
                              .query(&params)
                              .send()?;
 
@@ -69,30 +71,33 @@ pub fn search(query: &str, context: &Context) -> Result<(String, Vec<String>, Ve
 
         let body: JsonValue = response.json().unwrap();
 
-        if let Some(pages) = body.get("query").unwrap()
-                                 .get("pages").and_then(JsonValue::as_object) {
+        if let Some(json_pages) = body.get("query").unwrap()
+                                      .get("pages").and_then(JsonValue::as_object) {
 
-            let re = Regex::new(r#"<link[^>]+>|\n+|(?s)<!--.+-->|<p class="mw-empty-elt">(\s|\n)*</p>"#).unwrap();
+            let mut pages: Vec<Page> = Vec::new();
+            let re = Regex::new(REMOVE_TAGS).unwrap();
             let re2 = Regex::new(r"^<p>").unwrap();
 
-            text.push_str("<dl>");
             for pageid in pageids {
-                if let Some(page) = pages.get(&pageid) {
-                    let title = page.get("title").and_then(JsonValue::as_str).unwrap();
-                    titles.push(title.to_string());
-                    pids.push(pageid);
-                    text.push_str(&format!("<dt class='title' id='{ID_PREFIX}{cnt}'>{title}</dt>"));
-                    let extract = page.get("extract").and_then(JsonValue::as_str).unwrap();
-                    text.push_str(&format!("<dd class='extract'>{}</dd>",
-                        &re2.replace(&re.replace_all(extract, ""), "<p class='first'>")));
-                    cnt += 1;
+                if let Some(page) = json_pages.get(&pageid) {
+                    let title = page.get("title").and_then(JsonValue::as_str).unwrap().to_string();
+                    let temp = page.get("extract").and_then(JsonValue::as_str).unwrap();
+                    let extract = format!("<h2 class='title'>{}</h2>{}",
+                                          title,
+                                          re2.replace(&re.replace_all(temp, ""), "<p class='first'>"));
+                    pages.push(
+                        Page {
+                            title,
+                            pageid,
+                            extract,
+                        }
+                    );
                 }
             }
-            text.push_str("</dl>");
-
+            return Ok(pages);
         }
     }
-    Ok((text, titles, pids, cnt))
+    Err(format_err!("Unexpected value returned."))
 }
 
 pub fn fetch(pageid: &str, context: &Context) -> Result<String, Error> {
@@ -104,7 +109,7 @@ pub fn fetch(pageid: &str, context: &Context) -> Result<String, Error> {
     ];
     let client = Client::new();
 
-    let response = client.get(&url(context))
+    let response = client.get(&wiki_url(context))
                          .query(&params)
                          .send()?;
 
@@ -119,7 +124,7 @@ pub fn fetch(pageid: &str, context: &Context) -> Result<String, Error> {
         if page.get("missing").is_some() {
             return Err(format_err!("Page not found."));
         }
-        let re = Regex::new(r#"<span.*?>|</span>|<link[^>]+>|\n+|(?s)<!--.+-->|<p class="mw-empty-elt">(\s|\n)*</p>"#).unwrap();
+        let re = Regex::new(REMOVE_TAGS).unwrap();
         let extract = page.get("extract").and_then(JsonValue::as_str).unwrap();
 
         let text = format!("<html><head><title>{}</title></head><body>{}</body></html>",
