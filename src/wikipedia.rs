@@ -25,9 +25,10 @@ pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
         ("format", "json"),
         ("srsearch", query),
     ];
+    let url = wiki_url(context);
     let client = Client::new();
 
-    let response = client.get(&wiki_url(context))
+    let response = client.get(&url)
                          .query(&params)
                          .send()?;
 
@@ -61,7 +62,7 @@ pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
             ("pageids", &pageids_str),
         ];
 
-        let response = client.get(&wiki_url(context))
+        let response = client.get(&url)
                              .query(&params)
                              .send()?;
 

@@ -160,11 +160,11 @@ impl Wiki {
         if let Some(loc) = location {
             self.go_to_location(Location::Exact(loc), rq);
         } else {
-            self.go_next_chapter(dir, hub, rq);
+            self.go_to_next_chapter(dir, hub, rq);
         }
     }
 
-    fn go_next_chapter(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
+    fn go_to_next_chapter(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
         if let Some(cc) = self.current_chapter {
             match dir {
                 CycleDir::Previous =>
@@ -266,7 +266,7 @@ impl View for Wiki {
                 true
             },
             Event::Page(dir) => {
-                self.go_next_chapter(dir, hub, rq);
+                self.go_to_next_chapter(dir, hub, rq);
                 true
             },
             Event::Download => {
@@ -328,6 +328,7 @@ impl View for Wiki {
                 true
             },
             Event::Back => {
+                hub.send(Event::Notify("closing...".to_string())).ok();
                 if !self.wifi {
                     hub.send(Event::SetWifi(false)).ok();
                 }

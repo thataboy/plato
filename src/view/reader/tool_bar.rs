@@ -1,6 +1,5 @@
 use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
-use crate::settings::ReaderSettings;
 use crate::metadata::{ReaderInfo, TextAlign};
 use crate::metadata::{DEFAULT_CONTRAST_EXPONENT, DEFAULT_CONTRAST_GRAY};
 use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, SliderId, ViewId, THICKNESS_MEDIUM};

@@ -27,14 +27,14 @@ pub struct Book {
     info: Info,
     index: usize,
     first_column: FirstColumn,
-    second_column: SecondColumn,
+    //second_column: SecondColumn,
     preview_path: Option<PathBuf>,
     active: bool,
 }
 
 impl Book {
     pub fn new(rect: Rectangle, info: Info, index: usize,
-               first_column: FirstColumn, second_column: SecondColumn, preview_path: Option<PathBuf>) -> Book {
+               first_column: FirstColumn, _second_column: SecondColumn, preview_path: Option<PathBuf>) -> Book {
         Book {
             id: ID_FEEDER.next(),
             rect,
@@ -42,7 +42,7 @@ impl Book {
             info,
             index,
             first_column,
-            second_column,
+            //second_column,
             preview_path,
             active: false,
         }

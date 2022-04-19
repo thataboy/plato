@@ -5,7 +5,7 @@ use lazy_static::lazy_static;
 use super::book::Book;
 use crate::device::CURRENT_DEVICE;
 use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData};
-use crate::view::{BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
+use crate::view::{BIG_BAR_HEIGHT/*, THICKNESS_MEDIUM*/};
 use crate::view::filler::Filler;
 use crate::document::open;
 use crate::framebuffer::{Framebuffer, UpdateMode};

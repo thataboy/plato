@@ -6,7 +6,7 @@ use crate::view::page_label::PageLabel;
 use super::chapter_label::ChapterLabel;
 use crate::gesture::GestureEvent;
 use crate::input::DeviceEvent;
-use crate::geom::{Rectangle, CycleDir, halves};
+use crate::geom::{Rectangle, CycleDir/*, halves*/};
 use crate::document::{Document, Neighbors, TocEntry};
 use crate::color::WHITE;
 use crate::font::Fonts;
