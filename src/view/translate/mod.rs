@@ -185,7 +185,7 @@ impl Translate {
         self.active = false;
     }
 
-    fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
+    fn go_to_neighbor(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
         let location = match dir {
             CycleDir::Previous => Location::Previous(self.location),
             CycleDir::Next => Location::Next(self.location),
@@ -194,6 +194,9 @@ impl Translate {
             if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
                 image.update(pixmap, rq);
                 self.location = loc;
+            } else {
+                hub.send(Event::Back).ok();
+                return;
             }
         }
         if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
@@ -201,24 +204,6 @@ impl Translate {
                                     self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
         }
     }
-
-    fn go(&mut self, dir: CycleDir,  hub: &Hub, rq: &mut RenderQueue) {
-        match dir {
-            CycleDir::Previous =>
-                if self.doc.resolve_location(Location::Previous(self.location)).is_some() {
-                    self.go_to_neighbor(CycleDir::Previous, rq);
-                } else {
-                    hub.send(Event::Back).ok();
-                },
-            CycleDir::Next =>
-                if self.doc.resolve_location(Location::Next(self.location)).is_some() {
-                    self.go_to_neighbor(CycleDir::Next, rq);
-                } else {
-                    hub.send(Event::Back).ok();
-                },
-        }
-    }
-
 }
 
 impl View for Translate {
@@ -262,21 +247,21 @@ impl View for Translate {
                 true
             },
             Event::Page(dir) => {
-                self.go_to_neighbor(dir, rq);
+                self.go_to_neighbor(dir, hub,  rq);
                 true
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
                 match dir {
-                    Dir::West => self.go_to_neighbor(CycleDir::Next, rq),
-                    Dir::East => self.go_to_neighbor(CycleDir::Previous, rq),
+                    Dir::West => self.go_to_neighbor(CycleDir::Next, hub,  rq),
+                    Dir::East => self.go_to_neighbor(CycleDir::Previous, hub,  rq),
                     _ => (),
                 }
                 true
             },
             Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
                 match code {
-                    ButtonCode::Backward => self.go(CycleDir::Previous, hub, rq),
-                    ButtonCode::Forward => self.go(CycleDir::Next, hub, rq),
+                    ButtonCode::Backward => self.go_to_neighbor(CycleDir::Previous, hub, rq),
+                    ButtonCode::Forward => self.go_to_neighbor(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
@@ -284,9 +269,9 @@ impl View for Translate {
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 let half_width = self.rect.width() as i32 / 2;
                 if center.x < half_width {
-                    self.go(CycleDir::Previous, hub, rq);
+                    self.go_to_neighbor(CycleDir::Previous, hub, rq);
                 } else {
-                    self.go(CycleDir::Next, hub, rq);
+                    self.go_to_neighbor(CycleDir::Next, hub, rq);
                 }
                 true
             },
