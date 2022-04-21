@@ -24,6 +24,19 @@ auto-power-off = 3
 # https://docs.rs/chrono/latest/chrono/format/strftime/index.html
 time-format = "%H:%M"
 date-format = "%A, %B %-d, %Y"
+# The google translate server to use, e.g., "https://translate.google.fr"
+google-translate-server = "https://translate.googleapis.com"
+# List of languages to appear in Translate to: menu
+# Example: languages = ["en_US", "fr", "vi"]
+# If not specified, default to system language
+# duration in millisecs to turn the light off during a full screen refresh
+# This feature is intended to prevent an unpleasant white flash
+# when the screen does a full refresh in inverted mode
+# Set to 0 to disable the feature
+refresh-light-off-duration = 500
+# List of languages to appear in Wikipedia search menu
+# Example: wikipedia-languages = ["en", "fr", "vi"]
+wikipedia-languages = ["en"]
 
 # You can create libraries by adding further [[libraries]] entries.
 [[libraries]]
