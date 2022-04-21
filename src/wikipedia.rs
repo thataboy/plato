@@ -2,22 +2,20 @@ use anyhow::{Error, format_err};
 use regex::Regex;
 use reqwest::blocking::Client;
 use serde_json::Value as JsonValue;
-use crate::app::Context;
 
 const REMOVE_TAGS: &str = r#"<span.*?>|</span>|<link[^>]+>|\n+|(?s)<!--.+-->|<p class="mw-empty-elt">(\s|\n)*</p>"#;
 
-pub struct Page {
+pub struct WikiPage {
     pub title: String,
     pub pageid: String,
     pub extract: String,
 }
 
-fn wiki_url(context: &Context) -> String {
-    let server = &context.settings.wikipedia_server.trim();
-    format!("{}{}w/api.php", server, if server.ends_with("/") {""} else {"/"})
+fn wiki_url(lang: &str) -> String {
+    format!("https://{}.wikipedia.org/w/api.php", lang)
 }
 
-pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
+pub fn search(query: &str, lang: &str) -> Result<Vec<WikiPage>, Error> {
     let params = vec![
         ("action", "query"),
         ("list", "search"),
@@ -25,7 +23,7 @@ pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
         ("format", "json"),
         ("srsearch", query),
     ];
-    let url = wiki_url(context);
+    let url = wiki_url(lang);
     let client = Client::new();
 
     let response = client.get(&url)
@@ -72,22 +70,22 @@ pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
 
         let body: JsonValue = response.json().unwrap();
 
-        if let Some(json_pages) = body.get("query").unwrap()
-                                      .get("pages").and_then(JsonValue::as_object) {
+        if let Some(pages) = body.get("query").unwrap()
+                                 .get("pages").and_then(JsonValue::as_object) {
 
-            let mut pages: Vec<Page> = Vec::new();
+            let mut results: Vec<WikiPage> = Vec::new();
             let re = Regex::new(REMOVE_TAGS).unwrap();
             let re2 = Regex::new(r"^<p>").unwrap();
 
             for pageid in pageids {
-                if let Some(page) = json_pages.get(&pageid) {
+                if let Some(page) = pages.get(&pageid) {
                     let title = page.get("title").and_then(JsonValue::as_str).unwrap().to_string();
                     let temp = page.get("extract").and_then(JsonValue::as_str).unwrap();
                     let extract = format!("<h2 class='title'>{}</h2>{}",
                                           title,
                                           re2.replace(&re.replace_all(temp, ""), "<p class='first'>"));
-                    pages.push(
-                        Page {
+                    results.push(
+                        WikiPage {
                             title,
                             pageid,
                             extract,
@@ -95,13 +93,13 @@ pub fn search(query: &str, context: &Context) -> Result<Vec<Page>, Error> {
                     );
                 }
             }
-            return Ok(pages);
+            return Ok(results);
         }
     }
     Err(format_err!("Unexpected value returned."))
 }
 
-pub fn fetch(pageid: &str, context: &Context) -> Result<String, Error> {
+pub fn fetch(pageid: &str, lang: &str) -> Result<String, Error> {
     let params = vec![
         ("action", "query"),
         ("prop", "extracts"),
@@ -110,7 +108,7 @@ pub fn fetch(pageid: &str, context: &Context) -> Result<String, Error> {
     ];
     let client = Client::new();
 
-    let response = client.get(&wiki_url(context))
+    let response = client.get(&wiki_url(lang))
                          .query(&params)
                          .send()?;
 

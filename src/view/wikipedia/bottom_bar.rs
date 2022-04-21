@@ -38,13 +38,13 @@ impl BottomBar {
         }
 
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - 2 * side, rect.max.y)];
+                               pt!(rect.max.x - 3 * side, rect.max.y)];
         let label = Label::new(label_rect, text.to_string(), Align::Center)
                               .event(Some(Event::ToggleNear(ViewId::ChapterMenu, label_rect)));
         children.push(Box::new(label) as Box<dyn View>);
 
-        let download_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
-                                  pt!(rect.max.x - side, rect.max.y)];
+        let download_rect = rect![pt!(rect.max.x - 3 * side, rect.min.y),
+                                  pt!(rect.max.x - 2 * side, rect.max.y)];
         if has_article {
             let download_icon = Icon::new("download",
                                           download_rect,
@@ -54,6 +54,13 @@ impl BottomBar {
             let download_filler = Filler::new(download_rect, WHITE);
             children.push(Box::new(download_filler) as Box<dyn View>);
         }
+
+        let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        let search_icon = Icon::new("search",
+                                    search_rect,
+                                    Event::Show(ViewId::SearchBar));
+        children.push(Box::new(search_icon) as Box<dyn View>);
 
         let next_rect = rect![rect.max - side, rect.max];
         if has_next {
@@ -94,7 +101,7 @@ impl BottomBar {
         }
 
         if self.has_article != has_article {
-            let index = self.len() - 2;
+            let index = 2;
             let download_rect = *self.child(index).rect();
             if has_article {
                 let download_icon = Icon::new("download",
@@ -150,13 +157,16 @@ impl View for BottomBar {
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - 2 * side, rect.max.y)];
+                               pt!(rect.max.x - 3 * side, rect.max.y)];
         self.children[1].resize(label_rect, hub, rq, context);
-        let download_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
-                                  pt!(rect.max.x - side, rect.max.y)];
+        let download_rect = rect![pt!(rect.max.x - 3 * side, rect.min.y),
+                                  pt!(rect.max.x - 2 * side, rect.max.y)];
         self.children[2].resize(download_rect, hub, rq, context);
+        let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        self.children[3].resize(search_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];
-        self.children[3].resize(next_rect, hub, rq, context);
+        self.children[4].resize(next_rect, hub, rq, context);
         self.rect = rect;
     }
 

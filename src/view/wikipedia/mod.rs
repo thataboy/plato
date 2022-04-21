@@ -5,22 +5,24 @@ use crate::framebuffer::{Framebuffer, UpdateMode, Pixmap};
 use crate::geom::{Rectangle, Dir, CycleDir, halves};
 use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
-use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
-use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
-use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
-use crate::view::common::{locate_by_id, toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
+use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
+use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
+use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
+use crate::view::common::{locate, locate_by_id, toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
+use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::top_bar::TopBar;
+use crate::view::search_bar::SearchBar;
 use self::bottom_bar::BottomBar;
-use crate::wikipedia::{search, fetch, Page};
+use crate::wikipedia::{search, fetch, WikiPage};
 
 const VIEWER_STYLESHEET: &str = "css/wikipedia.css";
 const USER_STYLESHEET: &str = "css/wikipedia-user.css";
@@ -39,11 +41,13 @@ pub struct Wiki {
     doc: HtmlDocument,
     location: usize,
     query: String,
-    pages: Vec<Page>,
+    lang: String,
+    results: Vec<WikiPage>,
     count: usize,
     current_chapter: Option<usize>,
     mode: Mode,
     wifi: bool,
+    focus: Option<ViewId>,
 }
 
 impl Wiki {
@@ -91,10 +95,15 @@ impl Wiki {
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
+        let lang = context.settings.wikipedia_languages[0].to_owned();
 
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
-        hub.send(Event::Proceed).ok();
+        if query.trim().is_empty() {
+            hub.send(Event::Show(ViewId::SearchBar)).ok();
+        } else {
+            hub.send(Event::Proceed).ok();
+        }
 
         Wiki {
             id,
@@ -102,23 +111,26 @@ impl Wiki {
             children,
             doc,
             location: 0,
-            query: query.to_string(),
-            pages: Vec::new(),
+            query: query.trim().to_string(),
+            lang,
+            results: Vec::new(),
             count: 0,
             current_chapter: None,
             mode: Mode::Search,
             wifi,
+            focus: None,
         }
 
     }
 
-    fn search(&mut self, _hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn search(&mut self, _hub: &Hub, rq: &mut RenderQueue) {
         // hub.send(Event::Notify("Searching...".to_string())).ok();
-        let res = search(&self.query, context);
+        let res = search(&self.query, &self.lang);
         match res {
             Ok(results) => {
-                self.pages = results;
-                self.count = self.pages.len();
+                self.results = results;
+                self.count = self.results.len();
+                self.current_chapter = None;
                 self.go_to_chapter(0, rq);
             }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
@@ -127,10 +139,10 @@ impl Wiki {
         self.go_to_location(Location::Exact(0), rq);
     }
 
-    fn fetch(&mut self, hub: &Hub, _rq: &mut RenderQueue, context: &mut Context) {
+    fn fetch(&mut self, hub: &Hub, _rq: &mut RenderQueue) {
         // hub.send(Event::Notify("Fetching full article...".to_string())).ok();
         if let Some(cc) = self.current_chapter {
-            let res = fetch(&self.pages[cc].pageid, context);
+            let res = fetch(&self.results[cc].pageid, &self.lang);
             match res {
                 Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); },
                 Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
@@ -141,12 +153,13 @@ impl Wiki {
 
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
         if let Some(cc) = self.current_chapter {
-            if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-                bottom_bar.update_icons(cc > 0, cc < self.count - 1, self.count > 0, rq);
+            if let Some(index) = locate::<BottomBar>(self) {
+                let bottom_bar = self.children[index].downcast_mut::<BottomBar>().unwrap();
+                bottom_bar.update_icons(cc > 0, cc < self.count.saturating_sub(1), self.count > 0, rq);
                 bottom_bar.update_label(&format!("{}/{}: {}",
                                                  cc + 1,
                                                  self.count,
-                                                 self.pages[cc].title),
+                                                 self.results[cc].title),
                                         rq);
             }
         }
@@ -198,7 +211,7 @@ impl Wiki {
             if cc == chapter { return; }
         }
         self.current_chapter = Some(chapter);
-        self.doc.update(&self.pages[chapter].extract);
+        self.doc.update(&self.results[chapter].extract);
         self.go_to_location(Location::Exact(0), rq);
     }
 
@@ -217,7 +230,7 @@ impl Wiki {
                 return;
             }
             let cc = self.current_chapter.unwrap_or(std::usize::MAX);
-            let entries = self.pages.iter().enumerate()
+            let entries = self.results.iter().enumerate()
                                     .map(|(i, x)|
                                          EntryKind::RadioButton(format!("{}. {}", i+1, x.title),
                                                                 EntryId::GoTo(i),
@@ -236,6 +249,93 @@ impl Wiki {
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
     }
 
+    fn toggle_search_bar(&mut self, enable: Option<bool>, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate::<SearchBar>(self) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            let mut rect = *self.child(index).rect();
+            rect.absorb(self.child(index-1).rect()); // top sep
+            rect.absorb(self.child(index+1).rect()); // kbd's sep
+            rect.absorb(self.child(index+2).rect()); // kbd
+            self.children.drain(index - 1 ..= index + 2);
+            rq.add(RenderData::expose(rect, UpdateMode::Gui));
+            hub.send(Event::Focus(None)).ok();
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+
+            let dpi = CURRENT_DEVICE.dpi;
+            let (small_height, big_height) = (scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32,
+                                              scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32);
+            let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+            let (small_thickness, big_thickness) = halves(thickness);
+
+            let mut kb_rect = rect![self.rect.min.x,
+                                    self.rect.max.y - (small_height + 3 * big_height) as i32 + big_thickness,
+                                    self.rect.max.x,
+                                    self.rect.max.y - small_height - small_thickness];
+
+            let index = locate::<BottomBar>(self).unwrap();
+
+            let keyboard = Keyboard::new(&mut kb_rect, false, context);
+            self.children.insert(index, Box::new(keyboard) as Box<dyn View>);
+
+            let separator = Filler::new(rect![self.rect.min.x, kb_rect.min.y - thickness,
+                                              self.rect.max.x, kb_rect.min.y],
+                                        BLACK);
+            self.children.insert(index, Box::new(separator) as Box<dyn View>);
+
+
+            let sp_rect = rect![self.rect.min.x, kb_rect.min.y - small_height - small_thickness,
+                                self.rect.max.x, kb_rect.min.y - small_height + big_thickness];
+            let y_min = sp_rect.max.y;
+            let rect = rect![self.rect.min.x, y_min,
+                             self.rect.max.x, y_min + small_height - thickness];
+            let search_bar = SearchBar::new(rect,
+                                            ViewId::WikiSearchInput,
+                                            "",
+                                            &self.query,
+                                            context);
+            self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
+
+            let separator = Filler::new(sp_rect, BLACK);
+            self.children.insert(index, Box::new(separator) as Box<dyn View>);
+
+            for i in index..index+4 {  // 4 items added
+                rq.add(RenderData::new(self.child(i).id(), *self.child(i).rect(), UpdateMode::Gui));
+            }
+            hub.send(Event::Focus(Some(ViewId::WikiSearchInput))).ok();
+        }
+    }
+
+    fn toggle_lang_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::SearchMenu) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+            let langs = &context.settings.wikipedia_languages;
+            let mut entries = langs.iter().rev()
+                                   .map(|x| EntryKind::RadioButton(x.to_string(),
+                                                                   EntryId::SetWikiLang(x.to_string()),
+                                                                   self.lang == x.to_string()))
+                                   .collect::<Vec<EntryKind>>();
+            entries.push(EntryKind::Separator);
+            let lang_menu = Menu::new(rect, ViewId::WikiLangMenu, MenuKind::DropDown, entries, context);
+            rq.add(RenderData::new(lang_menu.id(), *lang_menu.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(lang_menu) as Box<dyn View>);
+        }
+    }
+
 }
 
 impl View for Wiki {
@@ -243,8 +343,8 @@ impl View for Wiki {
         match *evt {
             Event::Device(DeviceEvent::NetUp) => {
                 match self.mode {
-                    Mode::Search => self.search(hub, rq, context),
-                    Mode::Fetch => self.fetch(hub, rq, context),
+                    Mode::Search => self.search(hub, rq),
+                    Mode::Fetch => self.fetch(hub, rq),
                     _ => (),
                 }
                 true
@@ -252,8 +352,8 @@ impl View for Wiki {
             Event::Proceed => {
                 if context.online {
                     match self.mode {
-                        Mode::Search => self.search(hub, rq, context),
-                        Mode::Fetch => self.fetch(hub, rq, context),
+                        Mode::Search => self.search(hub, rq),
+                        Mode::Fetch => self.fetch(hub, rq),
                         _ => (),
                     }
                 } else if self.mode != Mode::Idle {
@@ -265,8 +365,25 @@ impl View for Wiki {
                 }
                 true
             },
+            Event::Submit(ViewId::WikiSearchInput, ref text) => {
+                if !text.trim().is_empty() {
+                    self.toggle_search_bar(Some(false), hub, rq, context);
+                    self.query = text.trim().to_string();
+                    self.mode = Mode::Search;
+                    hub.send(Event::Proceed).ok();
+                }
+                true
+            },
             Event::Page(dir) => {
                 self.go_to_next_chapter(dir, hub, rq);
+                true
+            },
+            Event::Gesture(GestureEvent::Arrow { dir, .. }) => {
+                match dir {
+                    Dir::West => self.go_to_next_chapter(CycleDir::Previous, hub, rq),
+                    Dir::East => self.go_to_next_chapter(CycleDir::Next, hub, rq),
+                    _ => (),
+                }
                 true
             },
             Event::Download => {
@@ -276,8 +393,8 @@ impl View for Wiki {
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
                 match dir {
-                    Dir::West => self.go_to_neighbor(CycleDir::Previous, hub, rq),
-                    Dir::East => self.go_to_neighbor(CycleDir::Next, hub, rq),
+                    Dir::East => self.go_to_neighbor(CycleDir::Previous, hub, rq),
+                    Dir::West => self.go_to_neighbor(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
@@ -291,11 +408,15 @@ impl View for Wiki {
                 true
             },
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
-                let half_width = self.rect.width() as i32 / 2;
-                if center.x < half_width {
-                    self.go_to_neighbor(CycleDir::Previous, hub, rq);
+                if self.focus.is_some() {
+                    self.toggle_search_bar(Some(false), hub, rq, context);
                 } else {
-                    self.go_to_neighbor(CycleDir::Next, hub, rq);
+                    let half_width = self.rect.width() as i32 / 2;
+                    if center.x < half_width {
+                        self.go_to_neighbor(CycleDir::Previous, hub, rq);
+                    } else {
+                        self.go_to_neighbor(CycleDir::Next, hub, rq);
+                    }
                 }
                 true
             },
@@ -303,8 +424,30 @@ impl View for Wiki {
                 self.go_to_chapter(chapter, rq);
                 true
             },
+            Event::Select(EntryId::SetWikiLang(ref lang)) => {
+                if *lang != self.lang {
+                    self.lang = lang.clone();
+                }
+                true
+            },
             Event::ToggleNear(ViewId::ChapterMenu, rect) => {
                 self.toggle_chapter_menu(rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::SearchMenu, rect) => {
+                self.toggle_lang_menu(rect, None, rq, context);
+                true
+            },
+            Event::Show(ViewId::SearchBar) => {
+                self.toggle_search_bar(None, hub, rq, context);
+                true
+            }
+            Event::Close(ViewId::SearchBar) => {
+                self.toggle_search_bar(Some(false), hub, rq, context);
+                true
+            }
+            Event::Focus(v) => {
+                self.focus = v;
                 true
             },
             Event::ToggleNear(ViewId::MainMenu, rect) => {
@@ -328,7 +471,6 @@ impl View for Wiki {
                 true
             },
             Event::Back => {
-                hub.send(Event::Notify("closing...".to_string())).ok();
                 if !self.wifi {
                     hub.send(Event::SetWifi(false)).ok();
                 }
@@ -342,6 +484,9 @@ impl View for Wiki {
     }
 
     fn resize(&mut self, rect: Rectangle, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+
+        self.toggle_search_bar(Some(false), hub, rq, context);
+
         let dpi = CURRENT_DEVICE.dpi;
         let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;

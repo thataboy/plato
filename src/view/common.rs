@@ -82,6 +82,8 @@ pub fn toggle_main_menu(view: &mut dyn View, rect: Rectangle, enable: Option<boo
 
         let apps = vec![EntryKind::Command("Dictionary".to_string(),
                                            EntryId::Launch(AppCmd::Dictionary { query: "".to_string(), language: "".to_string() })),
+                        EntryKind::Command("Wikipedia".to_string(),
+                                           EntryId::Launch(AppCmd::Wiki { query: "".to_string() })),
                         EntryKind::Command("Calculator".to_string(),
                                            EntryId::Launch(AppCmd::Calculator)),
                         EntryKind::Command("Sketch".to_string(),
