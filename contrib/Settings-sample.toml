@@ -39,9 +39,9 @@ refresh-light-off-duration = 500
 # List of languages to appear in Wikipedia search menu
 # Example: wikipedia-languages = ["en", "fr", "vi"]
 wikipedia-languages = ["en"]
-# Path to save html (e.g., from wikipedia) to
-# "" = save to where app is installed
-html-save-path = ""
+# Library to save html docs (e.g., from Wikipedia) into
+# If ommited, html docs will be saved in app's install location
+# save-to-library = "library-name"
 
 # You can create libraries by adding further [[libraries]] entries.
 [[libraries]]

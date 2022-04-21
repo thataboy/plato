@@ -3806,18 +3806,28 @@ impl View for Reader {
                 let mut name = format!("{}-{}.{}", self.info.title.to_lowercase().replace(' ', "_"),
                                        Local::now().format("%Y%m%d_%H%M%S"),
                                        self.info.file.kind);
-                let save_path = context.settings.html_save_path.trim();
-                if !save_path.is_empty() {
-                    let mut path = PathBuf::from(save_path);
-                    if path.exists() {
+                let mut reload_library = false;
+                let save_to_library = context.settings.save_to_library.as_ref().unwrap_or(&"".to_string()).to_string();
+                if !save_to_library.is_empty() {
+                    let library = context.settings.libraries.iter()
+                                                            .find(|&x| x.name == save_to_library);
+                    if let Some(library) = library {
+                        let mut path = library.path.clone();
                         path.push(name);
                         name = path.display().to_string();
+                        reload_library = true;
                     }
                 }
                 let doc = self.doc.lock().unwrap();
                 let msg = match doc.save(&name) {
                     Err(e) => format!("{}", e),
-                    Ok(()) => format!("Saved {}.", name),
+                    Ok(()) => {
+                        if reload_library {
+                            context.library.reload();
+                            context.batch_import();
+                        }
+                        format!("Saved {}.", name)
+                    },
                 };
                 let notif = Notification::new(msg, hub, rq, context);
                 self.children.push(Box::new(notif) as Box<dyn View>);
