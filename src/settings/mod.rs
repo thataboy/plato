@@ -111,6 +111,8 @@ pub struct Settings {
     pub auto_power_off: u8,
     pub time_format: String,
     pub date_format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_urls_queue: Option<PathBuf>,
     pub refresh_light_off_duration: u64,
     pub google_translate_server: String,
     pub wikipedia_languages: Vec<String>,
@@ -563,6 +565,7 @@ impl Default for Settings {
                     .. Default::default()
                 },
             ],
+            external_urls_queue: Some(PathBuf::from("bin/article_fetcher/urls.txt")),
             themes: Vec::new(),
             keyboard_layout: "English".to_string(),
             frontlight: true,
