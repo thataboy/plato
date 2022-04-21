@@ -115,6 +115,7 @@ pub struct Settings {
     pub external_urls_queue: Option<PathBuf>,
     pub refresh_light_off_duration: u64,
     pub google_translate_server: String,
+    pub html_save_path: String,
     pub wikipedia_languages: Vec<String>,
     pub languages: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -595,6 +596,7 @@ impl Default for Settings {
             frontlight_presets: Vec::new(),
             refresh_light_off_duration: 500,
             google_translate_server: "https://translate.googleapis.com".to_string(),
+            html_save_path: "".to_string(),
             wikipedia_languages: vec![String::from("en")],
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
         }

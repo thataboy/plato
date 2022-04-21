@@ -3803,9 +3803,17 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::Save) => {
-                let name = format!("{}-{}.{}", self.info.title.to_lowercase().replace(' ', "_"),
-                                   Local::now().format("%Y%m%d_%H%M%S"),
-                                   self.info.file.kind);
+                let mut name = format!("{}-{}.{}", self.info.title.to_lowercase().replace(' ', "_"),
+                                       Local::now().format("%Y%m%d_%H%M%S"),
+                                       self.info.file.kind);
+                let save_path = context.settings.html_save_path.trim();
+                if !save_path.is_empty() {
+                    let mut path = PathBuf::from(save_path);
+                    if path.exists() {
+                        path.push(name);
+                        name = path.display().to_string();
+                    }
+                }
                 let doc = self.doc.lock().unwrap();
                 let msg = match doc.save(&name) {
                     Err(e) => format!("{}", e),
