@@ -37,7 +37,7 @@ impl BottomBar {
             children.push(Box::new(prev_filler) as Box<dyn View>);
         }
 
-        let (left, right) = halves(rect.width() as i32 - 2 * side as i32);
+        let (left, right) = halves(rect.width() as i32 - 3 * side as i32);
 
         let source_rect = rect![pt!(rect.min.x + side, rect.min.y),
                                 pt!(rect.min.x + side + left, rect.max.y)];
@@ -45,11 +45,18 @@ impl BottomBar {
                                      .event(Some(Event::ToggleNear(ViewId::SourceLangMenu, source_rect)));
         children.push(Box::new(source_label) as Box<dyn View>);
 
-        let target_rect = rect![pt!(rect.max.x - side - right, rect.min.y),
-                                pt!(rect.max.x - side, rect.max.y)];
+        let target_rect = rect![pt!(rect.max.x - 2 * side - right, rect.min.y),
+                                pt!(rect.max.x - 2 * side, rect.max.y)];
         let target_label = Label::new(target_rect, target.to_string(), Align::Center)
                                      .event(Some(Event::ToggleNear(ViewId::TargetLangMenu, target_rect)));
         children.push(Box::new(target_label) as Box<dyn View>);
+
+        let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        let search_icon = Icon::new("search",
+                                    search_rect,
+                                    Event::Show(ViewId::SearchBar));
+        children.push(Box::new(search_icon) as Box<dyn View>);
 
         let next_rect = rect![rect.max - side, rect.max];
 
@@ -134,15 +141,18 @@ impl View for BottomBar {
         let side = rect.height() as i32;
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
-        let (left, right) = halves(rect.width() as i32 - 2 * side as i32);
+        let (left, right) = halves(rect.width() as i32 - 3 * side as i32);
         let source_rect = rect![pt!(rect.min.x + side, rect.min.y),
                                 pt!(rect.min.x + side + left, rect.max.y)];
         self.children[1].resize(source_rect, hub, rq, context);
-        let target_rect = rect![pt!(rect.max.x - side - right, rect.min.y),
-                                pt!(rect.max.x - side, rect.max.y)];
+        let target_rect = rect![pt!(rect.max.x - 2 * side - right, rect.min.y),
+                                pt!(rect.max.x - 2 * side, rect.max.y)];
         self.children[2].resize(target_rect, hub, rq, context);
+        let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
+                                pt!(rect.max.x - side, rect.max.y)];
+        self.children[3].resize(search_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];
-        self.children[3].resize(next_rect, hub, rq, context);
+        self.children[4].resize(next_rect, hub, rq, context);
         self.rect = rect;
     }
 

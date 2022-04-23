@@ -33,26 +33,38 @@ impl BottomBar {
                                       Event::Page(CycleDir::Previous));
             children.push(Box::new(prev_icon) as Box<dyn View>);
         } else {
-            let prev_filler = Filler::new(prev_rect, WHITE);
-            children.push(Box::new(prev_filler) as Box<dyn View>);
+            let filler = Filler::new(prev_rect, WHITE);
+            children.push(Box::new(filler) as Box<dyn View>);
         }
 
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - 3 * side, rect.max.y)];
+                               pt!(rect.max.x - 4 * side, rect.max.y)];
         let label = Label::new(label_rect, text.to_string(), Align::Center)
                               .event(Some(Event::ToggleNear(ViewId::ChapterMenu, label_rect)));
         children.push(Box::new(label) as Box<dyn View>);
+
+        let read_rect = rect![pt!(rect.max.x - 4 * side, rect.min.y),
+                              pt!(rect.max.x - 3 * side, rect.max.y)];
+        if has_article {
+            let read_icon = Icon::new("read",
+                                      read_rect,
+                                      Event::Read);
+            children.push(Box::new(read_icon) as Box<dyn View>);
+        } else {
+            let filler = Filler::new(read_rect, WHITE);
+            children.push(Box::new(filler) as Box<dyn View>);
+        }
 
         let download_rect = rect![pt!(rect.max.x - 3 * side, rect.min.y),
                                   pt!(rect.max.x - 2 * side, rect.max.y)];
         if has_article {
             let download_icon = Icon::new("download",
                                           download_rect,
-                                          Event::Page(CycleDir::Next));
+                                          Event::Download);
             children.push(Box::new(download_icon) as Box<dyn View>);
         } else {
-            let download_filler = Filler::new(download_rect, WHITE);
-            children.push(Box::new(download_filler) as Box<dyn View>);
+            let filler = Filler::new(download_rect, WHITE);
+            children.push(Box::new(filler) as Box<dyn View>);
         }
 
         let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
@@ -69,8 +81,8 @@ impl BottomBar {
                                       Event::Page(CycleDir::Next));
             children.push(Box::new(next_icon) as Box<dyn View>);
         } else {
-            let next_filler = Filler::new(next_rect, WHITE);
-            children.push(Box::new(next_filler) as Box<dyn View>);
+            let filler = Filler::new(next_rect, WHITE);
+            children.push(Box::new(filler) as Box<dyn View>);
         }
 
         BottomBar {
@@ -93,8 +105,8 @@ impl BottomBar {
                                           Event::Page(CycleDir::Previous));
                 self.children[index] = Box::new(prev_icon) as Box<dyn View>;
             } else {
-                let prev_filler = Filler::new(prev_rect, WHITE);
-                self.children[index] = Box::new(prev_filler) as Box<dyn View>;
+                let filler = Filler::new(prev_rect, WHITE);
+                self.children[index] = Box::new(filler) as Box<dyn View>;
             }
             self.has_prev = has_prev;
             rq.add(RenderData::new(self.id, prev_rect, UpdateMode::Gui));
@@ -102,17 +114,25 @@ impl BottomBar {
 
         if self.has_article != has_article {
             let index = 2;
-            let download_rect = *self.child(index).rect();
+            let read_rect = *self.child(index).rect();
+            let download_rect = *self.child(index+1).rect();
             if has_article {
+                let read_icon = Icon::new("read",
+                                          read_rect,
+                                          Event::Read);
+                self.children[index] = Box::new(read_icon) as Box<dyn View>;
                 let download_icon = Icon::new("download",
                                           download_rect,
                                           Event::Download);
-                self.children[index] = Box::new(download_icon) as Box<dyn View>;
+                self.children[index+1] = Box::new(download_icon) as Box<dyn View>;
             } else {
-                let download_filler = Filler::new(download_rect, WHITE);
-                self.children[index] = Box::new(download_filler) as Box<dyn View>;
+                let filler = Filler::new(read_rect, WHITE);
+                self.children[index] = Box::new(filler) as Box<dyn View>;
+                let filler = Filler::new(download_rect, WHITE);
+                self.children[index+1] = Box::new(filler) as Box<dyn View>;
             }
             self.has_article = has_article;
+            rq.add(RenderData::new(self.id, read_rect, UpdateMode::Gui));
             rq.add(RenderData::new(self.id, download_rect, UpdateMode::Gui));
         }
 
@@ -125,8 +145,8 @@ impl BottomBar {
                                           Event::Page(CycleDir::Next));
                 self.children[index] = Box::new(next_icon) as Box<dyn View>;
             } else {
-                let next_filler = Filler::new(next_rect, WHITE);
-                self.children[index] = Box::new(next_filler) as Box<dyn View>;
+                let filler = Filler::new(next_rect, WHITE);
+                self.children[index] = Box::new(filler) as Box<dyn View>;
             }
             self.has_next = has_next;
             rq.add(RenderData::new(self.id, next_rect, UpdateMode::Gui));
@@ -157,16 +177,19 @@ impl View for BottomBar {
         let prev_rect = rect![rect.min, rect.min + side];
         self.children[0].resize(prev_rect, hub, rq, context);
         let label_rect = rect![pt!(rect.min.x + side, rect.min.y),
-                               pt!(rect.max.x - 3 * side, rect.max.y)];
+                               pt!(rect.max.x - 4 * side, rect.max.y)];
         self.children[1].resize(label_rect, hub, rq, context);
+        let read_rect = rect![pt!(rect.max.x - 4 * side, rect.min.y),
+                              pt!(rect.max.x - 3 * side, rect.max.y)];
+        self.children[2].resize(read_rect, hub, rq, context);
         let download_rect = rect![pt!(rect.max.x - 3 * side, rect.min.y),
                                   pt!(rect.max.x - 2 * side, rect.max.y)];
-        self.children[2].resize(download_rect, hub, rq, context);
+        self.children[3].resize(download_rect, hub, rq, context);
         let search_rect = rect![pt!(rect.max.x - 2 * side, rect.min.y),
                                 pt!(rect.max.x - side, rect.max.y)];
-        self.children[3].resize(search_rect, hub, rq, context);
+        self.children[4].resize(search_rect, hub, rq, context);
         let next_rect = rect![rect.max - side, rect.max];
-        self.children[4].resize(next_rect, hub, rq, context);
+        self.children[5].resize(next_rect, hub, rq, context);
         self.rect = rect;
     }
 

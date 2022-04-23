@@ -36,7 +36,7 @@ use self::tool_bar::ToolBar;
 use self::scrubber::Scrubber;
 use self::bottom_bar::BottomBar;
 use self::results_bar::ResultsBar;
-use crate::view::common::{locate, rlocate, locate_by_id};
+use crate::view::common::{locate, rlocate, locate_by_id, get_save_path};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::view::filler::Filler;
 use crate::view::named_input::NamedInput;
@@ -3803,30 +3803,16 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::Save) => {
-                let mut name = format!("{}-{}.{}", self.info.title.to_lowercase().replace(' ', "_"),
-                                       Local::now().format("%Y%m%d_%H%M%S"),
-                                       self.info.file.kind);
-                let mut reload_library = false;
-                let save_to_library = context.settings.save_to_library.as_ref().unwrap_or(&"".to_string()).to_string();
-                if !save_to_library.is_empty() {
-                    let library = context.settings.libraries.iter()
-                                                            .find(|&x| x.name == save_to_library);
-                    if let Some(library) = library {
-                        let mut path = library.path.clone();
-                        path.push(name);
-                        name = path.display().to_string();
-                        reload_library = true;
-                    }
-                }
                 let doc = self.doc.lock().unwrap();
-                let msg = match doc.save(&name) {
+                let (path, is_library) = get_save_path(&self.info.title, &self.info.file.kind, context);
+                let msg = match doc.save(&path) {
                     Err(e) => format!("{}", e),
                     Ok(()) => {
-                        if reload_library {
+                        if is_library {
                             context.library.reload();
                             context.batch_import();
                         }
-                        format!("Saved {}.", name)
+                        format!("Saved {}.", path)
                     },
                 };
                 let notif = Notification::new(msg, hub, rq, context);

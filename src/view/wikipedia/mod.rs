@@ -8,19 +8,20 @@ use crate::font::Fonts;
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
 use crate::gesture::GestureEvent;
+use crate::helpers::save_text;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
-use crate::view::common::{locate, locate_by_id, toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
+use crate::view::common::{locate, locate_by_id, toggle_main_menu, toggle_battery_menu, toggle_clock_menu, get_save_path};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
 use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
-use crate::view::top_bar::TopBar;
 use crate::view::search_bar::SearchBar;
+use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
 use crate::wikipedia::{search, fetch, WikiPage};
 
@@ -30,7 +31,8 @@ const USER_STYLESHEET: &str = "css/wikipedia-user.css";
 #[derive(PartialEq)]
 enum Mode {
     Search,
-    Fetch,
+    Read,
+    Download,
     Idle,
 }
 
@@ -47,6 +49,7 @@ pub struct Wiki {
     current_chapter: Option<usize>,
     mode: Mode,
     wifi: bool,
+    is_stand_alone: bool,
     focus: Option<ViewId>,
 }
 
@@ -95,11 +98,12 @@ impl Wiki {
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
+        let is_stand_alone = query.trim().is_empty();
         let lang = context.settings.wikipedia_languages[0].to_owned();
 
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
-        if query.trim().is_empty() {
+        if is_stand_alone {
             hub.send(Event::Show(ViewId::SearchBar)).ok();
         } else {
             hub.send(Event::Proceed).ok();
@@ -118,13 +122,13 @@ impl Wiki {
             current_chapter: None,
             mode: Mode::Search,
             wifi,
+            is_stand_alone,
             focus: None,
         }
 
     }
 
-    fn search(&mut self, _hub: &Hub, rq: &mut RenderQueue) {
-        // hub.send(Event::Notify("Searching...".to_string())).ok();
+    fn search(&mut self, rq: &mut RenderQueue) {
         let res = search(&self.query, &self.lang);
         match res {
             Ok(results) => {
@@ -139,13 +143,38 @@ impl Wiki {
         self.go_to_location(Location::Exact(0), rq);
     }
 
-    fn fetch(&mut self, hub: &Hub, _rq: &mut RenderQueue) {
-        // hub.send(Event::Notify("Fetching full article...".to_string())).ok();
+    fn fetch(&mut self, hub: &Hub) {
         if let Some(cc) = self.current_chapter {
             let res = fetch(&self.results[cc].pageid, &self.lang);
             match res {
-                Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); },
                 Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
+                Ok(text) => { hub.send(Event::OpenHtml(text, None)).ok(); }
+            }
+            self.mode = Mode::Idle;
+        }
+    }
+
+    fn save(&mut self, hub: &Hub, context: &mut Context) {
+        if let Some(cc) = self.current_chapter {
+            let res = fetch(&self.results[cc].pageid, &self.lang);
+            match res {
+                Err(e) => { hub.send(Event::Notify((&e).to_string())).ok(); },
+                Ok(text) => {
+                    let (path, is_library) = get_save_path(&self.results[cc].title,
+                                                           "html",
+                                                           context);
+                    let msg = match save_text(&text, &path) {
+                        Err(e) => format!("{}", e),
+                        Ok(()) => {
+                            if is_library {
+                                context.library.reload();
+                                context.batch_import();
+                            }
+                            format!("Saved {}.", path)
+                        },
+                    };
+                    hub.send(Event::Notify(msg)).ok();
+                }
             }
             self.mode = Mode::Idle;
         }
@@ -173,24 +202,32 @@ impl Wiki {
         if let Some(loc) = location {
             self.go_to_location(Location::Exact(loc), rq);
         } else {
-            self.go_to_next_chapter(dir, hub, rq);
+            self.go_to_neighbor_chapter(dir, hub, rq);
         }
     }
 
-    fn go_to_next_chapter(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
+    fn go_to_neighbor_chapter(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
         if let Some(cc) = self.current_chapter {
             match dir {
                 CycleDir::Previous =>
                     if cc > 0 {
                         self.go_to_chapter(cc - 1, rq);
                     } else {
-                        hub.send(Event::Back).ok();
+                        if self.is_stand_alone {
+                            self.go_to_chapter(self.count.saturating_sub(1), rq);
+                        } else {
+                            hub.send(Event::Back).ok();
+                        }
                     },
                 CycleDir::Next =>
                     if (cc + 1) < self.count {
                         self.go_to_chapter(cc + 1, rq);
                     } else {
-                        hub.send(Event::Back).ok();
+                        if self.is_stand_alone {
+                            self.go_to_chapter(0, rq);
+                        } else {
+                            hub.send(Event::Back).ok();
+                        }
                     },
             }
         }
@@ -297,7 +334,7 @@ impl Wiki {
             let search_bar = SearchBar::new(rect,
                                             ViewId::WikiSearchInput,
                                             "",
-                                            &self.query,
+                                            "",
                                             context);
             self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
 
@@ -343,8 +380,9 @@ impl View for Wiki {
         match *evt {
             Event::Device(DeviceEvent::NetUp) => {
                 match self.mode {
-                    Mode::Search => self.search(hub, rq),
-                    Mode::Fetch => self.fetch(hub, rq),
+                    Mode::Search => self.search(rq),
+                    Mode::Read => self.fetch(hub),
+                    Mode::Download => self.save(hub, context),
                     _ => (),
                 }
                 true
@@ -352,8 +390,9 @@ impl View for Wiki {
             Event::Proceed => {
                 if context.online {
                     match self.mode {
-                        Mode::Search => self.search(hub, rq),
-                        Mode::Fetch => self.fetch(hub, rq),
+                        Mode::Search => self.search(rq),
+                        Mode::Read => self.fetch(hub),
+                        Mode::Download => self.save(hub, context),
                         _ => (),
                     }
                 } else if self.mode != Mode::Idle {
@@ -375,19 +414,24 @@ impl View for Wiki {
                 true
             },
             Event::Page(dir) => {
-                self.go_to_next_chapter(dir, hub, rq);
+                self.go_to_neighbor_chapter(dir, hub, rq);
                 true
             },
             Event::Gesture(GestureEvent::Arrow { dir, .. }) => {
                 match dir {
-                    Dir::West => self.go_to_next_chapter(CycleDir::Previous, hub, rq),
-                    Dir::East => self.go_to_next_chapter(CycleDir::Next, hub, rq),
+                    Dir::West => self.go_to_neighbor_chapter(CycleDir::Previous, hub, rq),
+                    Dir::East => self.go_to_neighbor_chapter(CycleDir::Next, hub, rq),
                     _ => (),
                 }
                 true
             },
+            Event::Read => {
+                self.mode = Mode::Read;
+                hub.send(Event::Proceed).ok();
+                true
+            },
             Event::Download => {
-                self.mode = Mode::Fetch;
+                self.mode = Mode::Download;
                 hub.send(Event::Proceed).ok();
                 true
             },
@@ -411,10 +455,10 @@ impl View for Wiki {
                 if self.focus.is_some() {
                     self.toggle_search_bar(Some(false), hub, rq, context);
                 } else {
-                    let half_width = self.rect.width() as i32 / 2;
-                    if center.x < half_width {
+                    let fifth_width = self.rect.width() as i32 / 5;
+                    if center.x < 2 * fifth_width {
                         self.go_to_neighbor(CycleDir::Previous, hub, rq);
-                    } else {
+                    } else if center.x > 3 * fifth_width {
                         self.go_to_neighbor(CycleDir::Next, hub, rq);
                     }
                 }
@@ -505,6 +549,12 @@ impl View for Wiki {
 
         self.doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
 
+        if let Some(image) = self.children[2].downcast_mut::<Image>() {
+            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(self.location), 1.0) {
+                image.update(pixmap, &mut RenderQueue::new());
+                self.location = loc;
+            }
+        }
         self.children[2].resize(image_rect, hub, rq, context);
 
         self.children[3].resize(rect![rect.min.x, rect.max.y - small_height - small_thickness,

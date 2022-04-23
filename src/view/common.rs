@@ -82,6 +82,12 @@ pub fn toggle_main_menu(view: &mut dyn View, rect: Rectangle, enable: Option<boo
 
         let apps = vec![EntryKind::Command("Dictionary".to_string(),
                                            EntryId::Launch(AppCmd::Dictionary { query: "".to_string(), language: "".to_string() })),
+                        EntryKind::Command("Translate".to_string(),
+                                           EntryId::Launch(AppCmd::Translate {
+                                                                query: "".to_string(),
+                                                                source: "auto".to_string(),
+                                                                target:  context.settings.languages[0].clone(),
+                                                           })),
                         EntryKind::Command("Wikipedia".to_string(),
                                            EntryId::Launch(AppCmd::Wiki { query: "".to_string() })),
                         EntryKind::Command("Calculator".to_string(),
@@ -248,4 +254,23 @@ pub fn toggle_keyboard_layout_menu(view: &mut dyn View, rect: Rectangle, enable:
         rq.add(RenderData::new(keyboard_layout_menu.id(), *keyboard_layout_menu.rect(), UpdateMode::Gui));
         view.children_mut().push(Box::new(keyboard_layout_menu) as Box<dyn View>);
     }
+}
+
+pub fn get_save_path(title: &str, kind: &str, context: &mut Context) -> (String, bool) {
+    let mut name = format!("{}-{}.{}", title.replace(' ', "_"),
+                           Local::now().format("%Y%m%d_%H%M%S"),
+                           kind);
+    let mut is_library = false;
+    let save_to_library = context.settings.save_to_library.as_ref().unwrap_or(&"".to_string()).to_string();
+    if !save_to_library.is_empty() {
+        let library = context.settings.libraries.iter()
+                                             .find(|&x| x.name == save_to_library);
+        if let Some(library) = library {
+            let mut path = library.path.clone();
+            path.push(name);
+            name = path.display().to_string();
+            is_library = true;
+        }
+    }
+    (name, is_library)
 }

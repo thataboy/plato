@@ -98,6 +98,12 @@ pub fn save_toml<T, P: AsRef<Path>>(data: &T, path: P) -> Result<(), Error> wher
        .map_err(Into::into)
 }
 
+pub fn save_text(data: &str, path: &str) -> Result<(), Error> {
+    fs::write(path, data)
+       .with_context(|| format!("can't write to file {}", path))
+       .map_err(Into::into)
+}
+
 pub trait Fingerprint {
     fn fingerprint(&self, epoch: SystemTime) -> io::Result<Fp>;
 }

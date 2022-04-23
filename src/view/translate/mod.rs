@@ -2,12 +2,12 @@ mod bottom_bar;
 
 use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode, Pixmap};
-use crate::geom::{Rectangle, Dir, CycleDir, halves};
+use crate::geom::{Rectangle, Point, Dir, CycleDir, halves};
 use crate::unit::scale_by_dpi;
 use crate::font::Fonts;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
-use crate::view::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM};
+use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
 use crate::view::common::{locate, locate_by_id};
@@ -18,7 +18,9 @@ use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
 use crate::view::filler::Filler;
 use crate::view::image::Image;
+use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
+use crate::view::search_bar::SearchBar;
 use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
 use crate::translate;
@@ -37,6 +39,8 @@ pub struct Translate {
     target: String,
     active: bool,
     wifi: bool,
+    is_stand_alone: bool,
+    focus: Option<ViewId>,
 }
 
 impl Translate {
@@ -85,10 +89,15 @@ impl Translate {
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
+        let is_stand_alone = query.trim().is_empty();
 
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
-        hub.send(Event::Proceed).ok();
+        if is_stand_alone {
+            hub.send(Event::Show(ViewId::SearchBar)).ok();
+        } else {
+            hub.send(Event::Proceed).ok();
+        }
 
         Translate {
             id,
@@ -101,6 +110,8 @@ impl Translate {
             target: target.to_string(),
             active: false,
             wifi,
+            is_stand_alone,
+            focus: None,
         }
 
     }
@@ -157,6 +168,68 @@ impl Translate {
         }
     }
 
+    fn toggle_search_bar(&mut self, enable: Option<bool>, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate::<SearchBar>(self) {
+            if let Some(true) = enable {
+                return;
+            }
+
+            let mut rect = *self.child(index).rect();
+            rect.absorb(self.child(index-1).rect()); // top sep
+            rect.absorb(self.child(index+1).rect()); // kbd's sep
+            rect.absorb(self.child(index+2).rect()); // kbd
+            self.children.drain(index - 1 ..= index + 2);
+            rq.add(RenderData::expose(rect, UpdateMode::Gui));
+            hub.send(Event::Focus(None)).ok();
+        } else {
+            if let Some(false) = enable {
+                return;
+            }
+
+            let dpi = CURRENT_DEVICE.dpi;
+            let (small_height, big_height) = (scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32,
+                                              scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32);
+            let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+            let (small_thickness, big_thickness) = halves(thickness);
+
+            let mut kb_rect = rect![self.rect.min.x,
+                                    self.rect.max.y - (small_height + 3 * big_height) as i32 + big_thickness,
+                                    self.rect.max.x,
+                                    self.rect.max.y - small_height - small_thickness];
+
+            let index = locate::<BottomBar>(self).unwrap();
+
+            let keyboard = Keyboard::new(&mut kb_rect, false, context);
+            self.children.insert(index, Box::new(keyboard) as Box<dyn View>);
+
+            let separator = Filler::new(rect![self.rect.min.x, kb_rect.min.y - thickness,
+                                              self.rect.max.x, kb_rect.min.y],
+                                        BLACK);
+            self.children.insert(index, Box::new(separator) as Box<dyn View>);
+
+
+            let sp_rect = rect![self.rect.min.x, kb_rect.min.y - small_height - small_thickness,
+                                self.rect.max.x, kb_rect.min.y - small_height + big_thickness];
+            let y_min = sp_rect.max.y;
+            let rect = rect![self.rect.min.x, y_min,
+                             self.rect.max.x, y_min + small_height - thickness];
+            let search_bar = SearchBar::new(rect,
+                                            ViewId::TranslateSearchInput,
+                                            "",
+                                            "",
+                                            context);
+            self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
+
+            let separator = Filler::new(sp_rect, BLACK);
+            self.children.insert(index, Box::new(separator) as Box<dyn View>);
+
+            for i in index..index+4 {  // 4 items added
+                rq.add(RenderData::new(self.child(i).id(), *self.child(i).rect(), UpdateMode::Gui));
+            }
+            hub.send(Event::Focus(Some(ViewId::TranslateSearchInput))).ok();
+        }
+    }
+
     fn translate(&mut self, rq: &mut RenderQueue, context: &mut Context) {
         let res = translate::translate(&self.query, &self.source, &self.target, context);
         match res {
@@ -173,15 +246,7 @@ impl Translate {
             }
             Err(e) => self.doc.update(&format!("<h2>Error</h2><p>{:?}</p>", e)),
         }
-        if let Some(image) = self.children[2].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0) {
-                image.update(pixmap, rq);
-                self.location = loc;
-            }
-        }
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
-            bottom_bar.update_icons(false, self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
-        }
+        self.go_to_location(Location::Exact(0), rq);
         self.active = false;
     }
 
@@ -190,20 +255,53 @@ impl Translate {
             CycleDir::Previous => Location::Previous(self.location),
             CycleDir::Next => Location::Next(self.location),
         };
+        if let Some(loc) = self.doc.resolve_location(location) {
+            self.go_to_location(Location::Exact(loc), rq);
+        } else {
+            if self.is_stand_alone {
+                match dir {
+                    CycleDir::Previous => self.go_to_location(Location::Exact(std::usize::MAX), rq),
+                    CycleDir::Next => self.go_to_location(Location::Exact(0), rq),
+                }
+            } else {
+                hub.send(Event::Back).ok();
+            }
+        }
+    }
+
+    fn go_to_location(&mut self, location: Location, rq: &mut RenderQueue) {
         if let Some(image) = self.children[2].downcast_mut::<Image>() {
             if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
                 image.update(pixmap, rq);
                 self.location = loc;
-            } else {
-                hub.send(Event::Back).ok();
-                return;
             }
         }
-        if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+        if let Some(index) = locate::<BottomBar>(self) {
+            let bottom_bar = self.children[index].downcast_mut::<BottomBar>().unwrap();
             bottom_bar.update_icons(self.doc.resolve_location(Location::Previous(self.location)).is_some(),
                                     self.doc.resolve_location(Location::Next(self.location)).is_some(), rq);
         }
     }
+
+    fn underlying_word(&mut self, pt: Point) -> Option<String> {
+        let dpi = CURRENT_DEVICE.dpi;
+        let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
+        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
+        let (_, big_thickness) = halves(thickness);
+        let offset = pt!(self.rect.min.x, self.rect.min.y + small_height + big_thickness);
+
+        if let Some((words, _)) = self.doc.words(Location::Exact(self.location)) {
+            for word in words {
+                let rect = word.rect.to_rect() + offset;
+                if rect.includes(pt) {
+                    return Some(word.text)
+                }
+            }
+        }
+
+        None
+    }
+
 }
 
 impl View for Translate {
@@ -220,16 +318,34 @@ impl View for Translate {
                 if context.online {
                     self.translate(rq, context);
                 } else {
+                    // when not online but wifi is on, NetUp doesn't seem to get triggered
+                    // switch off wifi to ensure view gets notified when NetUp
                     hub.send(Event::SetWifi(false)).ok();
                     hub.send(Event::SetWifi(true)).ok();
                     hub.send(Event::Notify("Waiting for network connection.".to_string())).ok();
                 }
                 true
             },
+            Event::Submit(ViewId::TranslateSearchInput, ref text) => {
+                if !text.trim().is_empty() {
+                    self.toggle_search_bar(Some(false), hub, rq, context);
+                    self.query = text.trim().to_string();
+                    hub.send(Event::Proceed).ok();
+                }
+                true
+            },
+            Event::Gesture(GestureEvent::HoldFingerLong(pt, _)) => {
+                if let Some(text) = self.underlying_word(pt) {
+                    self.query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    hub.send(Event::Proceed).ok();
+                }
+                true
+            },
             Event::Select(EntryId::SetSourceLang(ref source)) => {
                 if *source != self.source {
                     self.source = source.clone();
-                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+                    if let Some(index) = locate::<BottomBar>(self) {
+                        let bottom_bar = self.children[index].downcast_mut::<BottomBar>().unwrap();
                         bottom_bar.update_source(&format!("Translate from:  {}", self.source), rq);
                     }
                     hub.send(Event::Proceed).ok();
@@ -239,7 +355,8 @@ impl View for Translate {
             Event::Select(EntryId::SetTargetLang(ref target)) => {
                 if *target != self.target {
                     self.target = target.clone();
-                    if let Some(bottom_bar) = self.children[4].downcast_mut::<BottomBar>() {
+                    if let Some(index) = locate::<BottomBar>(self) {
+                        let bottom_bar = self.children[index].downcast_mut::<BottomBar>().unwrap();
                         bottom_bar.update_target(&format!("to:  {}", self.target), rq);
                     }
                     hub.send(Event::Proceed).ok();
@@ -267,11 +384,15 @@ impl View for Translate {
                 true
             },
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
-                let half_width = self.rect.width() as i32 / 2;
-                if center.x < half_width {
-                    self.go_to_neighbor(CycleDir::Previous, hub, rq);
+                if self.focus.is_some() {
+                    self.toggle_search_bar(Some(false), hub, rq, context);
                 } else {
-                    self.go_to_neighbor(CycleDir::Next, hub, rq);
+                    let fifth_width = self.rect.width() as i32 / 5;
+                    if center.x < 2 * fifth_width {
+                        self.go_to_neighbor(CycleDir::Previous, hub, rq);
+                    } else if center.x > 3 * fifth_width {
+                        self.go_to_neighbor(CycleDir::Next, hub, rq);
+                    }
                 }
                 true
             },
@@ -281,6 +402,18 @@ impl View for Translate {
             },
             Event::ToggleNear(ViewId::TargetLangMenu, rect) => {
                 self.toggle_target_lang_menu(rect, None, rq, context);
+                true
+            },
+            Event::Show(ViewId::SearchBar) => {
+                self.toggle_search_bar(None, hub, rq, context);
+                true
+            }
+            Event::Close(ViewId::SearchBar) => {
+                self.toggle_search_bar(Some(false), hub, rq, context);
+                true
+            }
+            Event::Focus(v) => {
+                self.focus = v;
                 true
             },
             Event::ToggleNear(ViewId::MainMenu, rect) => {
@@ -313,6 +446,9 @@ impl View for Translate {
     }
 
     fn resize(&mut self, rect: Rectangle, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+
+        self.toggle_search_bar(Some(false), hub, rq, context);
+
         let dpi = CURRENT_DEVICE.dpi;
         let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
