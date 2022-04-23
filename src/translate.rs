@@ -2,6 +2,7 @@ use anyhow::{Error, format_err};
 use reqwest::blocking::Client;
 use serde_json::Value as JsonValue;
 use crate::app::Context;
+use crate::helpers::trim_non_alphanumeric;
 
 pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> Result<(String, String), Error> {
 
@@ -16,8 +17,8 @@ pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> 
         ("dt", "md"),      // definitions of source text
         ("q", query),      // source text to translate
     ];
-    let server = &context.settings.google_translate_server.trim();
-    let url = format!("{}{}translate_a/single", server, if server.ends_with("/") {""} else {"/"});
+    let server = trim_non_alphanumeric(&context.settings.google_translate_server);
+    let url = format!("{}/translate_a/single", server);
     let client = Client::new();
 
     let response = client.get(&url)

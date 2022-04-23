@@ -24,6 +24,7 @@ use crate::view::search_bar::SearchBar;
 use crate::view::top_bar::TopBar;
 use self::bottom_bar::BottomBar;
 use crate::translate;
+use crate::helpers::{first_n_words, trim_non_alphanumeric};
 
 const VIEWER_STYLESHEET: &str = "css/translate.css";
 const USER_STYLESHEET: &str = "css/translate-user.css";
@@ -216,7 +217,8 @@ impl Translate {
             let search_bar = SearchBar::new(rect,
                                             ViewId::TranslateSearchInput,
                                             "",
-                                            "",
+                                            &first_n_words(&self.query, 5),
+                                            false,
                                             context);
             self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
 
@@ -336,7 +338,7 @@ impl View for Translate {
             },
             Event::Gesture(GestureEvent::HoldFingerLong(pt, _)) => {
                 if let Some(text) = self.underlying_word(pt) {
-                    self.query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    self.query = trim_non_alphanumeric(&text);
                     hub.send(Event::Proceed).ok();
                 }
                 true

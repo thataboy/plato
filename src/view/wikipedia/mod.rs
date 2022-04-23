@@ -8,7 +8,7 @@ use crate::font::Fonts;
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
 use crate::gesture::GestureEvent;
-use crate::helpers::save_text;
+use crate::helpers::{save_text, first_n_words};
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
 use crate::app::{Context, suppress_flash};
@@ -334,7 +334,8 @@ impl Wiki {
             let search_bar = SearchBar::new(rect,
                                             ViewId::WikiSearchInput,
                                             "",
-                                            "",
+                                            &first_n_words(&self.query, 5),
+                                            true,
                                             context);
             self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
 
