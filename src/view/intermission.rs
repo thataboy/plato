@@ -59,8 +59,12 @@ impl Intermission {
                                 images.push(path.to_path_buf());
                             }
                         }
-                        let index = (Local::now().timestamp_nanos() as u64 % images.len() as u64) as usize;
-                        Message::Image(images[index].clone())
+                        if images.len() > 0 {
+                            let index = (Local::now().timestamp_nanos() as u64 % images.len() as u64) as usize;
+                            Message::Image(images[index].clone())
+                        } else {
+                            Message::Text(kind.text().to_string())
+                        }
                     } else {
                         Message::Image(path.clone())
                     }

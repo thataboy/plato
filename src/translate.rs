@@ -2,7 +2,7 @@ use anyhow::{Error, format_err};
 use reqwest::blocking::Client;
 use serde_json::Value as JsonValue;
 use crate::app::Context;
-use crate::helpers::trim_non_alphanumeric;
+use crate::helpers::{encode_entities, trim_non_alphanumeric};
 
 pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> Result<(String, String), Error> {
 
@@ -29,7 +29,7 @@ pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> 
     }
 
     let mut text = String::new();
-    let body: JsonValue = response.json().unwrap();
+    let body: JsonValue = response.json()?;
     let lang = body.get(2).unwrap().as_str().unwrap().to_string();
 
     if let Some(xlats) = body.get(0).and_then(JsonValue::as_array) {
@@ -38,26 +38,22 @@ pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> 
         // translations are arrays of [source-sentence, translated-sentence]
         text.push_str("<p class='translated'><big>&#9635; </big>");
         for item in xlats {
-            text.push_str(&item[0].as_str().unwrap()
-                                  .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;"));
+            text.push_str(&encode_entities(&item[0].as_str().unwrap()));
         }
         text.push_str("<p class='original'><big>&#9669; </big>");
-        text.push_str(&query.replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;"));
+        text.push_str(&encode_entities(&query));
         text.push_str("</p>");
 
         if let Some(alts) = body.get(5).and_then(JsonValue::as_array) {
             text.push_str("<h3>Alternate translations</h3><dl>");
 
-            // alternate translations are arrays of [source-line, array of translation]
+            // alternate translations are arrays of [source-sentence, array of translated sentences]
             for item in alts {
                 text.push_str(&format!("<dt class='def'>{}</dt><dd><ul>",
-                                       item[0].as_str().unwrap()
-                                              .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
+                                       encode_entities(&item[0].as_str().unwrap())));
                 for xlat in item.get(2).and_then(JsonValue::as_array).unwrap() {
                     text.push_str(&format!("<li>{}</li>",
-                                           xlat[0].as_str().unwrap()
-                                                  .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
-
+                                           encode_entities(&xlat[0].as_str().unwrap())));
                 }
                 text.push_str("</ul></dd>");
             }
@@ -71,12 +67,10 @@ pub fn translate(query: &str, source: &str, target: &str, context: &Context) -> 
             text.push_str("<h3>Definitions</h3><dl>");
             for cat in categories {
                 text.push_str(&format!("<dt class='category'>{}</dt><dd><ul>",
-                                       cat[0].as_str().unwrap()
-                                             .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
+                                       encode_entities(&cat[0].as_str().unwrap())));
                 for def in cat.get(1).and_then(JsonValue::as_array).unwrap() {
                     text.push_str(&format!("<li>{}</li>",
-                                           def[0].as_str().unwrap()
-                                                 .replace('<', "&lt;").replace('>', "&gt;").replace('&', "&amp;")));
+                                           encode_entities(&def[0].as_str().unwrap())))
 
                 }
                 text.push_str("</ul></dd>");

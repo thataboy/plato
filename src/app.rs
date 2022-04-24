@@ -118,6 +118,19 @@ impl Context {
         }
     }
 
+    pub fn reimport(&mut self, index: usize) {
+        let selected_library = self.settings.selected_library;
+        if index == selected_library {
+            self.library.reload();
+            self.library.import(&self.settings.import);
+        } else {
+            let library_settings = &self.settings.libraries[index];
+            let mut library = Library::new(&library_settings.path, library_settings.mode);
+            library.import(&self.settings.import);
+            library.flush();
+        }
+    }
+
     pub fn load_keyboard_layouts(&mut self) {
         let glob = Glob::new("**/*.json").unwrap().compile_matcher();
         for entry in WalkDir::new(Path::new(KEYBOARD_LAYOUTS_DIRNAME)).min_depth(1)

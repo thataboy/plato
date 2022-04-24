@@ -31,10 +31,10 @@ pub fn search(query: &str, lang: &str) -> Result<Vec<WikiPage>, Error> {
                          .send()?;
 
     if !response.status().is_success() {
-        return Err(format_err!("Unable to connect: {}", response.status()));
+        return Err(format_err!("Unable to connect to {}: {}", url, response.status()));
     }
 
-    let body: JsonValue = response.json().unwrap();
+    let body: JsonValue = response.json()?;
 
     if let Some(results) = body.get("query").unwrap()
                                .get("search").and_then(JsonValue::as_array) {
@@ -68,7 +68,7 @@ pub fn search(query: &str, lang: &str) -> Result<Vec<WikiPage>, Error> {
             return Err(format_err!("Failed to retrieve summaries: {}", response.status()));
         }
 
-        let body: JsonValue = response.json().unwrap();
+        let body: JsonValue = response.json()?;
 
         if let Some(pages) = body.get("query").unwrap()
                                  .get("pages").and_then(JsonValue::as_object) {
@@ -106,17 +106,18 @@ pub fn fetch(pageid: &str, lang: &str) -> Result<String, Error> {
         ("format", "json"),
         ("pageids", pageid),
     ];
+    let url = wiki_url(lang);
     let client = Client::new();
 
-    let response = client.get(&wiki_url(lang))
+    let response = client.get(&url)
                          .query(&params)
                          .send()?;
 
     if !response.status().is_success() {
-        return Err(format_err!("Unable to connect: {}", response.status()));
+        return Err(format_err!("Unable to connect to {}: {}", url, response.status()));
     }
 
-    let body: JsonValue = response.json().unwrap();
+    let body: JsonValue = response.json()?;
     if let Some(page) = body.get("query").unwrap()
                             .get("pages").unwrap()
                             .get(pageid).and_then(JsonValue::as_object) {

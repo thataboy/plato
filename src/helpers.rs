@@ -106,6 +106,10 @@ pub fn first_n_words(text: &str, n: usize) -> String {
     text.split_whitespace().take(n).collect::<Vec<&str>>().join(" ")
 }
 
+pub fn encode_entities(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 pub fn save_text(data: &str, path: &str) -> Result<(), Error> {
     fs::write(path, data)
        .with_context(|| format!("can't write to file {}", path))

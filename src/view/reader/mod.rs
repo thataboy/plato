@@ -3804,13 +3804,12 @@ impl View for Reader {
             },
             Event::Select(EntryId::Save) => {
                 let doc = self.doc.lock().unwrap();
-                let (path, is_library) = get_save_path(&self.info.title, &self.info.file.kind, context);
+                let (path, library_index) = get_save_path(&self.info.title, &self.info.file.kind, context);
                 let msg = match doc.save(&path) {
                     Err(e) => format!("{}", e),
                     Ok(()) => {
-                        if is_library {
-                            context.library.reload();
-                            context.batch_import();
+                        if let Some(index) = library_index {
+                            context.reimport(index);
                         }
                         format!("Saved {}.", path)
                     },
