@@ -259,20 +259,30 @@ pub fn toggle_keyboard_layout_menu(view: &mut dyn View, rect: Rectangle, enable:
 /// return full save path name according to save_to_library setting
 ///        and index of said library or None
 pub fn get_save_path(title: &str, kind: &str, context: &mut Context) -> (String, Option<usize>) {
-    let mut path = format!("{}-{}.{}", title.replace(' ', "_"),
-                           Local::now().format("%Y%m%d_%H%M%S"),
+    let mut path = format!("{}  {}.{}", title,
+                           Local::now().format("%Y%m%d-%H%M%S"),
                            kind);
-    let mut library_index = None;
-    let library_name = context.settings.save_to_library.as_ref()
-                                                       .unwrap_or(&"".to_string()).to_string();
-    if !library_name.is_empty() {
-        library_index = context.settings.libraries.iter().position(|x| x.name == library_name);
-        if let Some(index) = library_index {
-            let library = &context.settings.libraries[index];
-            let mut path1 = library.path.clone();
-            path1.push(path);
-            path = path1.display().to_string();
+    let library_index = if context.settings.save_to_library.is_none() {
+        // if save_to_library omitted, default to first
+        Some(0)
+    } else {
+        let library_name = context.settings.save_to_library.as_ref().unwrap().to_string();
+        if library_name.is_empty() {
+            None
+        } else {
+            let index = context.settings.libraries.iter().position(|x| x.name == library_name);
+            if index.is_some() {
+                index
+            } else {
+                Some(0)
+            }
         }
+    };
+    if let Some(idx) = library_index {
+        let library = &context.settings.libraries[idx];
+        let mut path1 = library.path.clone();
+        path1.push(path);
+        path = path1.display().to_string();
     }
     (path, library_index)
 }
