@@ -121,7 +121,6 @@ impl Context {
     pub fn reimport(&mut self, index: usize) {
         let selected_library = self.settings.selected_library;
         if index == selected_library {
-            self.library.reload();
             self.library.import(&self.settings.import);
         } else {
             let library_settings = &self.settings.libraries[index];

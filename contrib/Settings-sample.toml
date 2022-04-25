@@ -40,7 +40,8 @@ refresh-light-off-duration = 500
 # Example: wikipedia-languages = ["en", "fr", "vi"]
 wikipedia-languages = ["en"]
 # Library to save html docs (e.g., from Wikipedia) into
-# If ommited, html docs will be saved in app's install location
+# If ommited, html docs will be saved in first library
+# If set to "", html docs will be saved in app's install directory
 # save-to-library = "library-name"
 
 # You can create libraries by adding further [[libraries]] entries.
