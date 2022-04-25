@@ -12,6 +12,7 @@ use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::document::{Document, Location};
 use crate::document::html::HtmlDocument;
+use crate::helpers::trim_non_alphanumeric;
 use crate::view::common::{locate_by_id, locate};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::gesture::GestureEvent;
@@ -465,7 +466,7 @@ impl View for Dictionary {
             },
             Event::Gesture(GestureEvent::HoldFingerLong(pt, _)) => {
                 if let Some(text) = self.underlying_word(pt) {
-                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let query = trim_non_alphanumeric(&text);
                     self.define(Some(&query), rq, context);
                 }
                 true

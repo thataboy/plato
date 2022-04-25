@@ -27,7 +27,7 @@ use crate::view::{ViewId, Id, ID_FEEDER, EntryKind, EntryId, SliderId};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::unit::{scale_by_dpi, mm_to_px};
 use crate::device::CURRENT_DEVICE;
-use crate::helpers::AsciiExtension;
+use crate::helpers::{AsciiExtension, first_n_words, trim_non_alphanumeric};
 use crate::font::Fonts;
 use crate::font::family_names;
 use self::margin_cropper::{MarginCropper, BUTTON_DIAMETER};
@@ -3286,7 +3286,7 @@ impl View for Reader {
             },
             Event::Gesture(GestureEvent::HoldFingerLong(center, _)) if self.rect.includes(center) => {
                 if let Some(text) = self.selected_text() {
-                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let query = trim_non_alphanumeric(&text);
                     let language = self.info.language.clone();
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Dictionary { query, language }))).ok();
                 }
@@ -3706,7 +3706,7 @@ impl View for Reader {
             },
             Event::Select(EntryId::DefineSelection) => {
                 if let Some(text) = self.selected_text() {
-                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let query = trim_non_alphanumeric(&first_n_words(&text, 5));
                     let language = self.info.language.clone();
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Dictionary { query, language }))).ok();
                 }
@@ -3725,7 +3725,7 @@ impl View for Reader {
             },
             Event::Select(EntryId::WikiSelection) => {
                 if let Some(text) = self.selected_text() {
-                    let query = text.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                    let query = trim_non_alphanumeric(&first_n_words(&text, 8));
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Wiki { query }))).ok();
                 }
                 self.selection = None;
@@ -3733,7 +3733,7 @@ impl View for Reader {
             },
             Event::Select(EntryId::SearchForSelection) => {
                 if let Some(text) = self.selected_text() {
-                    let text = text.trim_matches(|c: char| !c.is_alphanumeric());
+                    let text = &trim_non_alphanumeric(&first_n_words(&text, 5));
                     match make_query(text) {
                         Some(query) => {
                             self.search(text, query, hub, rq);

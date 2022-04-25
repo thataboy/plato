@@ -217,7 +217,7 @@ impl Translate {
             let search_bar = SearchBar::new(rect,
                                             ViewId::TranslateSearchInput,
                                             "",
-                                            &first_n_words(&self.query, 5),
+                                            &first_n_words(&self.query, 10),
                                             false,
                                             context);
             self.children.insert(index, Box::new(search_bar) as Box<dyn View>);
