@@ -45,7 +45,7 @@ use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::notification::Notification;
 use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction};
-use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH};
+use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH, MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::frontlight::LightLevels;
 use crate::gesture::GestureEvent;
@@ -1899,14 +1899,15 @@ impl Reader {
             if let Some(false) = enable {
                 return;
             }
-
             let line_height = self.info.reader.as_ref()
                                   .and_then(|r| r.line_height).unwrap_or(context.settings.reader.line_height);
+            let lh_gradient = context.settings.reader.line_height_gradient.clamp(MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT);
+            let epsilon = lh_gradient / 2.0;
             let entries = (0..=10).map(|x| {
-                let lh = 1.0 + x as f32 / 10.0;
-                EntryKind::RadioButton(format!("{:.1}", lh),
+                let lh = 1.0 + x as f32 * lh_gradient;
+                EntryKind::RadioButton(format!("{:.3}", lh),
                                        EntryId::SetLineHeight(x),
-                                       (lh - line_height).abs() < 0.05)
+                                       (lh - line_height).abs() < epsilon)
             }).collect();
             let line_height_menu = Menu::new(rect, ViewId::LineHeightMenu, MenuKind::DropDown, entries, context);
             rq.add(RenderData::new(line_height_menu.id(), *line_height_menu.rect(), UpdateMode::Gui));
@@ -3860,7 +3861,8 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::SetLineHeight(v)) => {
-                let line_height = 1.0 + v as f32 / 10.0;
+                let lh_gradient = context.settings.reader.line_height_gradient.clamp(MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT);
+                let line_height = 1.0 + v as f32 * lh_gradient;
                 self.set_line_height(line_height, hub, rq, context);
                 true
             },

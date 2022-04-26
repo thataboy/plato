@@ -34,6 +34,8 @@ pub const DEFAULT_FONT_FAMILY: &str = "Libertinus Serif";
 pub const DEFAULT_TEXT_ALIGN: TextAlign = TextAlign::Left;
 pub const HYPHEN_PENALTY: i32 = 50;
 pub const STRETCH_TOLERANCE: f32 = 1.26;
+pub const MIN_LINE_HEIGHT_GRADIENT: f32 = 0.025;
+pub const MAX_LINE_HEIGHT_GRADIENT: f32 = 0.25;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -389,6 +391,7 @@ pub struct ReaderSettings {
     pub min_margin_width: i32,
     pub max_margin_width: i32,
     pub line_height: f32,
+    pub line_height_gradient: f32,
     pub ignore_document_css: bool,
     pub dithered_kinds: FxHashSet<String>,
     pub paragraph_breaker: ParagraphBreakerSettings,
@@ -503,6 +506,7 @@ impl Default for ReaderSettings {
             min_margin_width: DEFAULT_MARGIN_WIDTH.saturating_sub(8),
             max_margin_width: DEFAULT_MARGIN_WIDTH.saturating_add(2),
             line_height: DEFAULT_LINE_HEIGHT,
+            line_height_gradient: 0.1,
             ignore_document_css: false,
             dithered_kinds: ["cbz", "png", "jpg", "jpeg"].iter().map(|k| k.to_string()).collect(),
             paragraph_breaker: ParagraphBreakerSettings::default(),

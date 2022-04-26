@@ -68,7 +68,7 @@ impl ToolBar {
                                                     rect![x_offset, rect.min.y,
                                                           x_offset + side + line_height_label_width, rect.min.y + side],
                                                     Event::Show(ViewId::LineHeightMenu),
-                                                    format!("{:.1} em", line_height));
+                                                    format!("{:.3} em", line_height));
             children.push(Box::new(line_height_icon) as Box<dyn View>);
 
             // Separator.
@@ -241,7 +241,7 @@ impl ToolBar {
 
     pub fn update_line_height(&mut self, line_height: f32, rq: &mut RenderQueue) {
         if let Some(labeled_icon) = self.children[2].downcast_mut::<LabeledIcon>() {
-            labeled_icon.update(&format!("{:.1} em", line_height), rq);
+            labeled_icon.update(&format!("{:.3} em", line_height), rq);
         }
     }
 

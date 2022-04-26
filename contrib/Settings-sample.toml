@@ -135,6 +135,8 @@ min-margin-width = 0
 max-margin-width = 10
 # The default line height, in ems.
 line-height = 1.2
+# Line height adjustment steps; smaller value => finer control
+line-height-gradient = 0.1
 # Whether to ignore the document's style sheets.
 ignore-document-css = false
 # The file extensions of the files that will automatically be dithered
