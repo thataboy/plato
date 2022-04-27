@@ -516,23 +516,50 @@ impl Fonts {
     pub fn load() -> Result<Fonts, Error> {
         let opener = FontOpener::new()?;
         let mut fonts = Fonts {
-            sans_serif: FontFamily {
-                regular: opener.open("fonts/NotoSans-Regular.ttf")?,
-                italic: opener.open("fonts/NotoSans-Italic.ttf")?,
-                bold: opener.open("fonts/NotoSans-Bold.ttf")?,
-                bold_italic: opener.open("fonts/NotoSans-BoldItalic.ttf")?,
+            sans_serif: if Path::new("fonts/sans-Regular.ttf").exists() {
+                FontFamily {
+                    regular: opener.open("fonts/sans-Regular.ttf")?,
+                    italic: opener.open("fonts/sans-Italic.ttf")?,
+                    bold: opener.open("fonts/sans-Bold.ttf")?,
+                    bold_italic: opener.open("fonts/sans-BoldItalic.ttf")?,
+                }
+            } else {
+                FontFamily {
+                    regular: opener.open("fonts/NotoSans-Regular.ttf")?,
+                    italic: opener.open("fonts/NotoSans-Italic.ttf")?,
+                    bold: opener.open("fonts/NotoSans-Bold.ttf")?,
+                    bold_italic: opener.open("fonts/NotoSans-BoldItalic.ttf")?,
+                }
             },
-            serif: FontFamily {
-                regular: opener.open("fonts/NotoSerif-Regular.ttf")?,
-                italic: opener.open("fonts/NotoSerif-Italic.ttf")?,
-                bold: opener.open("fonts/NotoSerif-Bold.ttf")?,
-                bold_italic: opener.open("fonts/NotoSerif-BoldItalic.ttf")?,
+            serif: if Path::new("fonts/serif-Regular.ttf").exists() {
+                FontFamily {
+                    regular: opener.open("fonts/serif-Regular.ttf")?,
+                    italic: opener.open("fonts/serif-Italic.ttf")?,
+                    bold: opener.open("fonts/serif-Bold.ttf")?,
+                    bold_italic: opener.open("fonts/serif-BoldItalic.ttf")?,
+                }
+            } else {
+                FontFamily {
+                    regular: opener.open("fonts/NotoSerif-Regular.ttf")?,
+                    italic: opener.open("fonts/NotoSerif-Italic.ttf")?,
+                    bold: opener.open("fonts/NotoSerif-Bold.ttf")?,
+                    bold_italic: opener.open("fonts/NotoSerif-BoldItalic.ttf")?,
+                }
             },
-            monospace: FontFamily {
-                regular: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
-                bold: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                bold_italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
+            monospace: if Path::new("fonts/monospace-Regular.ttf").exists() {
+                FontFamily {
+                    regular: opener.open("fonts/monospace-Regular.ttf")?,
+                    italic: opener.open("fonts/monospace-Italic.ttf")?,
+                    bold: opener.open("fonts/monospace-Regular.ttf")?,
+                    bold_italic: opener.open("fonts/monospace-Italic.ttf")?,
+                }
+            } else {
+                FontFamily {
+                    regular: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
+                    italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
+                    bold: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
+                    bold_italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
+                }
             },
             keyboard: opener.open("fonts/VarelaRound-Regular.ttf")?,
             display: opener.open("fonts/Cormorant-Regular.ttf")?,
