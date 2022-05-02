@@ -41,6 +41,7 @@ pub struct Dictionary {
     language: String,
     target: Option<String>,
     focus: Option<ViewId>,
+    is_stand_alone: bool,
 }
 
 fn query_to_content(query: &str, language: &String, fuzzy: bool, target: Option<&String>, context: &mut Context) -> String {
@@ -163,7 +164,9 @@ impl Dictionary {
 
         rq.add(RenderData::new(id, rect, UpdateMode::Gui));
 
-        if query.is_empty() {
+        let is_stand_alone = query.is_empty();
+
+        if is_stand_alone {
             hub.send(Event::Focus(Some(ViewId::DictionarySearchInput))).ok();
         } else {
             hub.send(Event::Define(query.to_string())).ok();
@@ -180,6 +183,7 @@ impl Dictionary {
             language: language.to_string(),
             target,
             focus: None,
+            is_stand_alone,
         }
     }
 
@@ -337,11 +341,26 @@ impl Dictionary {
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
     }
 
-    fn go_to_neighbor(&mut self, dir: CycleDir, rq: &mut RenderQueue) {
+    fn go_to_neighbor(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue) {
         let location = match dir {
             CycleDir::Previous => Location::Previous(self.location),
             CycleDir::Next => Location::Next(self.location),
         };
+        if let Some(loc) = self.doc.resolve_location(location) {
+            self.go_to_location(Location::Exact(loc), rq);
+        } else {
+            if self.is_stand_alone {
+                match dir {
+                    CycleDir::Previous => self.go_to_location(Location::Exact(std::usize::MAX), rq),
+                    CycleDir::Next => self.go_to_location(Location::Exact(0), rq),
+                }
+            } else {
+                hub.send(Event::Back).ok();
+            }
+        }
+    }
+
+    fn go_to_location(&mut self, location: Location, rq: &mut RenderQueue) {
         if let Some(image) = self.children[4].downcast_mut::<Image>() {
             if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
                 image.update(pixmap, rq);
@@ -393,7 +412,7 @@ impl Dictionary {
         None
     }
 
-    fn follow_link(&mut self, pt: Point, rq: &mut RenderQueue, context: &mut Context) {
+    fn follow_link(&mut self, pt: Point, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let dpi = CURRENT_DEVICE.dpi;
         let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
@@ -412,9 +431,9 @@ impl Dictionary {
 
         let half_width = self.rect.width() as i32 / 2;
         if pt.x - offset.x < half_width {
-            self.go_to_neighbor(CycleDir::Previous, rq);
+            self.go_to_neighbor(CycleDir::Previous, hub, rq);
         } else {
-            self.go_to_neighbor(CycleDir::Next, rq);
+            self.go_to_neighbor(CycleDir::Next, hub, rq);
         }
     }
 }
@@ -434,34 +453,27 @@ impl View for Dictionary {
                 true
             },
             Event::Page(dir) => {
-                self.go_to_neighbor(dir, rq);
+                self.go_to_neighbor(dir, hub, rq);
                 true
             },
             Event::Gesture(GestureEvent::Swipe { dir, start, .. }) if self.rect.includes(start) => {
                 match dir {
-                    Dir::West => self.go_to_neighbor(CycleDir::Next, rq),
-                    Dir::East => self.go_to_neighbor(CycleDir::Previous, rq),
+                    Dir::West => self.go_to_neighbor(CycleDir::Next, hub, rq),
+                    Dir::East => self.go_to_neighbor(CycleDir::Previous, hub, rq),
                     _ => (),
                 }
                 true
             },
-            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Pressed, .. }) => {
-                let cd = match code {
-                    ButtonCode::Backward => Some(CycleDir::Previous),
-                    ButtonCode::Forward => Some(CycleDir::Next),
-                    _ => None,
-                };
-                if let Some(cd) = cd {
-                    let loc = self.location;
-                    self.go_to_neighbor(cd, rq);
-                    if self.location == loc {
-                        hub.send(Event::Back).ok();
-                    }
+            Event::Device(DeviceEvent::Button { code, status: ButtonStatus::Released, .. }) => {
+                match code {
+                    ButtonCode::Backward => self.go_to_neighbor(CycleDir::Previous, hub, rq),
+                    ButtonCode::Forward => self.go_to_neighbor(CycleDir::Next, hub, rq),
+                    _ => (),
                 }
                 true
             },
             Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
-                self.follow_link(center, rq, context);
+                self.follow_link(center, hub, rq, context);
                 true
             },
             Event::Gesture(GestureEvent::HoldFingerLong(pt, _)) => {
