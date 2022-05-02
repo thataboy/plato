@@ -556,7 +556,7 @@ pub fn run() -> Result<(), Error> {
                         view.children_mut().push(Box::new(notif) as Box<dyn View>);
                         if view.is::<Home>() || view.is::<Translate>() || view.is::<Wiki>() {
                             view.handle_event(&evt, &tx, &mut bus, &mut rq, &mut context);
-                        } else if let Some(entry) = history.get_mut(0).filter(|entry| entry.view.is::<Home>()) {
+                        } else if let Some(entry) = history.get_mut(0).filter(|entry| entry.view.is::<Home>() || view.is::<Translate>() || view.is::<Wiki>()) {
                             let (tx, _rx) = mpsc::channel();
                             entry.view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);
                         }

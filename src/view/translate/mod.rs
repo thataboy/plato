@@ -321,10 +321,9 @@ impl View for Translate {
                 if context.online {
                     self.translate(rq, context);
                 } else {
-                    // when not online but wifi is on, NetUp doesn't seem to get triggered
-                    // switch off wifi to ensure view gets notified when NetUp
-                    hub.send(Event::SetWifi(false)).ok();
-                    hub.send(Event::SetWifi(true)).ok();
+                    if !context.settings.wifi {
+                        hub.send(Event::SetWifi(true)).ok();
+                    }
                     hub.send(Event::Notify("Waiting for network connection.".to_string())).ok();
                 }
                 true
