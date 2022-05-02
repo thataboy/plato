@@ -43,6 +43,8 @@ wikipedia-languages = ["en"]
 # If ommited, html docs will be saved in first library
 # If set to "", html docs will be saved in app's install directory
 # save-to-library = "library-name"
+# maximum value for warm light slider
+max-warmth = 100.0
 
 # You can create libraries by adding further [[libraries]] entries.
 [[libraries]]

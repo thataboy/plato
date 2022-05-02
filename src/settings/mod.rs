@@ -116,6 +116,7 @@ pub struct Settings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_urls_queue: Option<PathBuf>,
     pub refresh_light_off_duration: u64,
+    pub max_warmth: f32,
     pub google_translate_server: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub save_to_library: Option<String>,
@@ -600,6 +601,7 @@ impl Default for Settings {
             frontlight_levels: LightLevels::default(),
             frontlight_presets: Vec::new(),
             refresh_light_off_duration: 500,
+            max_warmth: 100.0,
             google_translate_server: "https://translate.googleapis.com".to_string(),
             save_to_library: None,
             wikipedia_languages: vec![String::from("en")],

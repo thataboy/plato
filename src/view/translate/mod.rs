@@ -90,10 +90,11 @@ impl Translate {
         children.push(Box::new(bottom_bar) as Box<dyn View>);
 
         let wifi = context.settings.wifi;
-        let is_stand_alone = query.trim().is_empty();
+        let is_stand_alone = query.is_empty();
 
         suppress_flash(hub, context);
         rq.add(RenderData::new(id, rect, UpdateMode::Full));
+
         if is_stand_alone {
             hub.send(Event::Show(ViewId::SearchBar)).ok();
         } else {

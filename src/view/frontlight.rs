@@ -106,10 +106,10 @@ impl FrontlightWindow {
                                        Align::Right(padding / 2));
                 children.push(Box::new(label) as Box<dyn View>);
 
-                let value = if *slider_id == SliderId::LightIntensity {
-                    levels.intensity
+                let (value, max_value) = if *slider_id == SliderId::LightIntensity {
+                    (levels.intensity, 100.0)
                 } else {
-                    levels.warmth
+                    (levels.warmth, context.settings.max_warmth.clamp(10.0, 100.0))
                 };
 
                 let slider = Slider::new(rect![rect.min.x + max_label_width + 3 * padding,
@@ -119,7 +119,7 @@ impl FrontlightWindow {
                                          *slider_id,
                                          value,
                                          0.0,
-                                         100.0);
+                                         max_value);
                 children.push(Box::new(slider) as Box<dyn View>);
             }
 
