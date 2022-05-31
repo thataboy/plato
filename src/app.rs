@@ -126,7 +126,6 @@ impl Context {
             let library_settings = &self.settings.libraries[index];
             let mut library = Library::new(&library_settings.path, library_settings.mode);
             library.import(&self.settings.import);
-            library.flush();
         }
     }
 

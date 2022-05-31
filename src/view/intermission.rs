@@ -13,6 +13,13 @@ use globset::GlobBuilder;
 use walkdir::WalkDir;
 use std::fs::metadata;
 use chrono::Local;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    // index to next image in screensaver folder
+    static ref IMGIDX: Mutex<Option<usize>> = Mutex::new(None);
+}
 
 pub struct Intermission {
     id: Id,
@@ -60,8 +67,13 @@ impl Intermission {
                             }
                         }
                         if images.len() > 0 {
-                            let index = (Local::now().timestamp_nanos() as u64 % images.len() as u64) as usize;
-                            Message::Image(images[index].clone())
+                            let mut midx = IMGIDX.lock().unwrap();
+                            let index = match *midx {
+                                Some(i) => i,
+                                None => Local::now().timestamp_nanos() as usize,
+                            };
+                            *midx = Some(index.wrapping_add(1));
+                            Message::Image(images[index % images.len()].clone())
                         } else {
                             Message::Text(kind.text().to_string())
                         }
