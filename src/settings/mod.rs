@@ -124,8 +124,6 @@ pub struct Settings {
     pub languages: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<LibrarySettings>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub themes: Vec<Theme>,
     pub intermissions: Intermissions,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub frontlight_presets: Vec<LightPreset>,
@@ -137,6 +135,10 @@ pub struct Settings {
     pub calculator: CalculatorSettings,
     pub battery: BatterySettings,
     pub frontlight_levels: LightLevels,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub themes: Vec<Theme>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub css_styles: Vec<CssStyle>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -219,6 +221,22 @@ impl Default for Theme {
             frontlight: None,
             frontlight_levels: None,
             dismiss: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct CssStyle {
+    pub name: String,
+    pub css: String,
+}
+
+impl Default for CssStyle {
+    fn default() -> Self {
+        CssStyle {
+            name: "Unnamed".to_string(),
+            css: "".to_string(),
         }
     }
 }
@@ -573,7 +591,6 @@ impl Default for Settings {
                 },
             ],
             external_urls_queue: Some(PathBuf::from("bin/article_fetcher/urls.txt")),
-            themes: Vec::new(),
             keyboard_layout: "English".to_string(),
             frontlight: true,
             wifi: false,
@@ -606,6 +623,8 @@ impl Default for Settings {
             save_to_library: None,
             wikipedia_languages: vec![String::from("en")],
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
+            themes: Vec::new(),
+            css_styles: Vec::new(),
         }
     }
 }

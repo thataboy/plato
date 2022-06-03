@@ -44,6 +44,7 @@ pub struct EpubDocument {
     spine: Vec<Chunk>,
     cache: FxHashMap<usize, Vec<Page>>,
     ignore_document_css: bool,
+    extra_css: Option<String>,
 }
 
 #[derive(Debug)]
@@ -125,6 +126,7 @@ impl EpubDocument {
             spine,
             cache: FxHashMap::default(),
             ignore_document_css: false,
+            extra_css: None,
         })
     }
 
@@ -355,6 +357,11 @@ impl EpubDocument {
 
         if let Ok(text) = fs::read_to_string(USER_STYLESHEET) {
             let mut css = CssParser::new(&text).parse();
+            stylesheet.append(&mut css, true);
+        }
+
+        if let Some(ref text) = self.extra_css {
+            let mut css = CssParser::new(text).parse();
             stylesheet.append(&mut css, true);
         }
 
@@ -925,6 +932,66 @@ impl Document for EpubDocument {
     fn set_ignore_document_css(&mut self, ignore: bool) {
         self.ignore_document_css = ignore;
         self.cache.clear();
+    }
+
+    fn get_extra_css(&self) -> Option<String> {
+        if let Some(ref css) = self.extra_css {
+            Some(css.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// set or append to self.extra_css
+    fn set_extra_css(&mut self, text: &str, append: bool) {
+        if append {
+            if !text.is_empty() {
+                if let Some(ref css) = self.extra_css {
+                    // remove rule if already exists before appending to end
+                    let css = str::replacen(css, text, "", 1);
+                    self.extra_css = Some(css + text);
+                } else {
+                    self.extra_css = Some(text.to_string());
+                }
+            }
+        } else {
+            if text.is_empty() {
+                self.extra_css = None;
+            } else {
+                self.extra_css = Some(text.to_string());
+            }
+        }
+        self.cache.clear();
+    }
+
+    /// return class name(s) and text of block element at given offset
+    fn get_node_data_at(&mut self, offset: usize) -> Option<(String, String)> {
+        let (index, start_offset) = self.vertebra_coordinates(offset)?;
+        let mut text = String::new();
+        {
+            let path = &self.spine[index].path;
+            if let Ok(mut zf) = self.archive.by_name(path) {
+                zf.read_to_string(&mut text).ok();
+            }
+        }
+        if text.is_empty() {
+            return None;
+        }
+        let root = XmlParser::new(&text).parse();
+        let target = offset - start_offset;
+        let mut last = None;
+        for node in root.root().descendants() {
+            if node.offset() > target {
+                break;
+            }
+            if node.is_block() {
+                last = Some(node);
+            }
+        }
+
+        let node = last?;
+        let cls = node.attribute("class")?;
+        Some((cls.to_string(), node.text()))
     }
 
     fn title(&self) -> Option<String> {

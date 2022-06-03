@@ -201,6 +201,8 @@ pub struct ReaderInfo {
     pub finished: bool,
     pub dithered: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_css: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub zoom_mode: Option<ZoomMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_offset: Option<Point>,
@@ -266,6 +268,7 @@ impl Default for ReaderInfo {
             pages_count: 1,
             finished: false,
             dithered: false,
+            extra_css: None,
             zoom_mode: None,
             page_offset: None,
             rotation: None,

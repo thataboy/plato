@@ -326,6 +326,11 @@ impl Reader {
                 if let Some(gray) = r.contrast_gray {
                     contrast.gray = gray;
                 }
+
+                if let Some(ref css) = r.extra_css {
+                    doc.set_extra_css(css, false);
+                }
+
             } else {
                 current_page = first_location;
 
@@ -1729,6 +1734,29 @@ impl Reader {
             entries.push(EntryKind::Separator);
             entries.push(EntryKind::Command("Adjust Selection".to_string(), EntryId::AdjustSelection));
 
+            if self.info.file.kind == "epub" {
+                let has_extra_css = self.doc.lock().unwrap().get_extra_css().is_some();
+                if has_extra_css || !context.settings.css_styles.is_empty() {
+                    let mut tweaks = context.settings.css_styles.iter()
+                                     .enumerate()
+                                     .filter(|(_, x)| !x.css.trim().is_empty())
+                                     .map(|(i, x)| { EntryKind::Command(format!("{}", x.name.clone()),
+                                                                        EntryId::SetCssTweak(i)) })
+                                     .collect::<Vec<EntryKind>>();
+                    if has_extra_css {
+                        if !tweaks.is_empty() {
+                            tweaks.push(EntryKind::Separator);
+                        }
+                        tweaks.push(EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak));
+                        tweaks.push(EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks));
+                    }
+                    if !tweaks.is_empty() {
+                        entries.push(EntryKind::Separator);
+                        entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
+                    }
+                }
+            }
+
             let selection_menu = Menu::new(rect, ViewId::SelectionMenu, MenuKind::Contextual, entries, context);
             rq.add(RenderData::new(selection_menu.id(), *selection_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(selection_menu) as Box<dyn View>);
@@ -2219,6 +2247,35 @@ impl Reader {
         }
     }
 
+    fn apply_css_tweak(&mut self, index: usize, hub: &Hub, context: &mut Context) {
+        if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
+            let mut dirty = false;
+            let mut doc = self.doc.lock().unwrap();
+            if let Some((cls, txt)) = doc.get_node_data_at(offset) {
+                // change "class1 class2 class3" to "class1.class2.class3"
+                let re = Regex::new(r" +").unwrap();
+                let cls = re.replace_all(&cls.trim(), ".");
+                let css = context.settings.css_styles[index].css.trim();
+                // the starting space is crucial
+                let css = format!(" .{} {}{}{}",
+                                  cls,
+                                  if css.starts_with('{') {""} else {"{"},
+                                  css,
+                                  if css.ends_with('}') {""} else {"}"});
+                doc.set_extra_css(&css, true);
+                dirty = true;
+                hub.send(Event::Notify(format!("{} > {} {}",
+                                               context.settings.css_styles[index].name,
+                                               cls, txt))).ok();
+            } else {
+                hub.send(Event::Notify("unable to determine element class".to_string())).ok();
+            }
+            if dirty {
+                self.cache.clear();
+            }
+        }
+    }
+
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
@@ -2626,6 +2683,8 @@ impl Reader {
             r.pages_count = self.pages_count;
             r.finished = self.finished;
             r.dithered = context.fb.dithered();
+            let doc = self.doc.lock().unwrap();
+            r.extra_css = doc.get_extra_css();
 
             if self.view_port.zoom_mode == ZoomMode::FitToPage {
                 r.zoom_mode = None;
@@ -3730,6 +3789,37 @@ impl View for Reader {
                     hub.send(Event::Select(EntryId::Launch(AppCmd::Wiki { query }))).ok();
                 }
                 self.selection = None;
+                true
+            },
+            Event::Select(EntryId::SetCssTweak(index)) => {
+                self.apply_css_tweak(index, hub, context);
+                self.selection = None;
+                self.update(None, hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::UndoLastCssTweak) => {
+                {
+                    let mut doc = self.doc.lock().unwrap();
+                    let css = doc.get_extra_css().unwrap();
+                    let re = Regex::new(r" \S+ \{[^}]+\}$").unwrap();
+                    let css = re.replace(&css, "");
+                    doc.set_extra_css(&css, false);
+                }
+                hub.send(Event::Notify("last tweak cleared".to_string())).ok();
+                self.selection = None;
+                self.cache.clear();
+                self.update(None, hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::UndoAllCssTweaks) => {
+                {
+                    let mut doc = self.doc.lock().unwrap();
+                    doc.set_extra_css("", false);
+                }
+                hub.send(Event::Notify("all tweaks cleared".to_string())).ok();
+                self.selection = None;
+                self.cache.clear();
+                self.update(None, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SearchForSelection) => {

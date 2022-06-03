@@ -111,6 +111,14 @@ pub trait Document: Send+Sync {
     fn set_hyphen_penalty(&mut self, hyphen_penalty: i32);
     fn set_stretch_tolerance(&mut self, stretch_tolerance: f32);
     fn set_ignore_document_css(&mut self, ignore: bool);
+    fn get_extra_css(&self) -> Option<String> {
+        None
+    }
+    fn set_extra_css(&mut self, _text: &str, _append: bool) {
+    }
+    fn get_node_data_at(&mut self, _offset: usize) -> Option<(String, String)> {
+        None
+    }
 
     fn title(&self) -> Option<String>;
     fn author(&self) -> Option<String>;
