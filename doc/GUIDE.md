@@ -1,6 +1,11 @@
 ## Install
 
-Pick one of the [one-click install packages](https://www.mobileread.com/forums/showthread.php?t=314220).
+If this is your first time installing Plato, the easiest way is to get the
+[Plato one-click install package from mobileread.com](https://www.mobileread.com/forums/showthread.php?t=314220).
+
+This will install the original Plato and the necessary launchers.
+
+Next, go to the [Releases page](https://github.com/thataboy/plato/releases) and download the latest. Unzip to location where Plato is installed (usually `.adds/plato/`) and overwrite all files. Your settings will be preserved.
 
 ## Configure
 
@@ -10,7 +15,11 @@ You can also edit `Settings-sample.toml` and rename it to `Settings.toml` before
 
 `plato.sh` has a few settings that you can override by with `config.sh` (use `config-sample.sh` as a starting point).
 
-The following style sheets : `css/{epub,html,dictionary}.css` can be overridden via `css/{epub,html,dictionary}-user.css`.
+The following style sheets : `css/{epub,html,dictionary,toc}.css` can be overridden via `css/{epub,html,dictionary,toc}-user.css`.
+
+Read [THEMES.md](THEMES.md) to learn about themes, which provide a quick way to set several reader settings at once.
+
+Read [CSS_TWEAKS.md](CSS_TWEAKS.md) to learn how to tweak CSS styles for individual epubs.
 
 The hyphenation bounds for a particular language can be overridden by creating a file name `LANGUAGE_CODE.bounds` in the `hyphenation-patterns` directory. The content of this file must the minimum number of letters before the hyphenation point relative to the beginning and end of the word, separated by a space. You can disable hyphenation all together by uncommenting the corresponding line in `config.sh`.
 
@@ -20,4 +29,6 @@ The four scripts `scripts/wifi-{pre,post}-{up,down}.sh` can be created with comm
 
 ## Upgrade
 
-Install the corresponding one-click package on top of the previous one. Check out the [release notes](https://github.com/baskerville/plato/releases) before upgrading: manual intervention might be required.
+Go to the [Releases page](https://github.com/thataboy/plato/releases) and download the latest. Unzip to location where Plato is installed (usually `.adds/plato/`) and overwrite all files. Your settings will be preserved.
+
+Always read the release notes as they contain actual, useful information!
