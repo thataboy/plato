@@ -180,6 +180,16 @@ impl Default for Contrast {
     }
 }
 
+macro_rules! set_extra_css {
+    ($doc:expr, $css:expr, $settings:expr) => {
+        $doc.set_extra_css(
+            &$css.replace("%FONTSIZE%", &format!("{:.1}pt", $settings.reader.font_size))
+                 .replace("%LINEHEIGHT%", &format!("{:.3}em", $settings.reader.line_height))
+                 .replace("%TEXTALIGN%", &$settings.reader.text_align.to_string().to_lowercase())
+        )
+    }
+}
+
 fn scaling_factor(rect: &Rectangle, cropping_margin: &Margin, screen_margin_width: i32, dims: (f32, f32), zoom_mode: ZoomMode) -> f32 {
     if let ZoomMode::Custom(sf) = zoom_mode {
         return sf;
@@ -303,6 +313,11 @@ impl Reader {
                     r.page_offset = None;
                 }
 
+                // need to do this before resolving location
+                if let Some(ref css) = r.extra_css {
+                    set_extra_css!(doc, css, settings);
+                }
+
                 current_page = doc.resolve_location(Location::Exact(r.current_page))
                                   .unwrap_or(first_location);
 
@@ -325,10 +340,6 @@ impl Reader {
 
                 if let Some(gray) = r.contrast_gray {
                     contrast.gray = gray;
-                }
-
-                if let Some(ref css) = r.extra_css {
-                    doc.set_extra_css(css, false);
                 }
 
             } else {
@@ -1735,7 +1746,7 @@ impl Reader {
             entries.push(EntryKind::Command("Adjust Selection".to_string(), EntryId::AdjustSelection));
 
             if self.info.file.kind == "epub" {
-                let has_extra_css = self.doc.lock().unwrap().get_extra_css().is_some();
+                let has_extra_css = self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some());
                 if has_extra_css || !context.settings.css_styles.is_empty() {
                     let mut tweaks = context.settings.css_styles.iter()
                                      .enumerate()
@@ -2251,29 +2262,52 @@ impl Reader {
         if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
             let mut dirty = false;
             let mut doc = self.doc.lock().unwrap();
-            if let Some((cls, txt)) = doc.get_node_data_at(offset) {
-                // change "class1 class2 class3" to "class1.class2.class3"
-                let re = Regex::new(r" +").unwrap();
-                let cls = re.replace_all(&cls.trim(), ".");
-                let css = context.settings.css_styles[index].css.trim();
-                // the starting space is crucial
-                let css = format!(" .{} {}{}{}",
-                                  cls,
+            if let Some((selector, txt)) = doc.get_node_data_at(offset) {
+                if let Some(ref mut r) = self.info.reader {
+                    let mut css = context.settings.css_styles[index].css.trim().to_string();
+                    // leading space used to separate rules
+                    css = format!(" {} {}{}{}",
+                                  selector,
                                   if css.starts_with('{') {""} else {"{"},
                                   css,
                                   if css.ends_with('}') {""} else {"}"});
-                doc.set_extra_css(&css, true);
-                dirty = true;
-                hub.send(Event::Notify(format!("{} > {} {}",
-                                               context.settings.css_styles[index].name,
-                                               cls, txt))).ok();
+                    if let Some(ref old_css) = r.extra_css {
+                        css = str::replacen(old_css, &css, "", 1) + &css;
+                    }
+                    r.extra_css = Some(css.to_string());
+                    set_extra_css!(doc, css, &context.settings);
+                    dirty = true;
+                    hub.send(Event::Notify(format!("{} > {} {}",
+                                                   context.settings.css_styles[index].name,
+                                                   selector, txt))).ok();
+                }
             } else {
-                hub.send(Event::Notify("unable to determine element class".to_string())).ok();
+                hub.send(Event::Notify("Unable to determine element".to_string())).ok();
             }
             if dirty {
                 self.cache.clear();
             }
         }
+    }
+
+    fn undo_last_tweak(&mut self, hub: &Hub, context: &mut Context) {
+        let mut css = "".to_string();
+        if let Some(ref mut r) = self.info.reader {
+            css = r.extra_css.as_ref().unwrap().to_string();
+            let re = Regex::new(r" \S+ \{[^}]+\}$").unwrap();
+            css = re.replace(&css, "").to_string();
+            r.extra_css = if !css.is_empty() {
+                Some(css.to_string())
+            } else {
+                None
+            };
+        }
+        {
+            let mut doc = self.doc.lock().unwrap();
+            set_extra_css!(doc, css, &context.settings);
+        }
+        hub.send(Event::Notify("Last tweak cleared".to_string())).ok();
+        self.cache.clear();
     }
 
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -2683,8 +2717,6 @@ impl Reader {
             r.pages_count = self.pages_count;
             r.finished = self.finished;
             r.dithered = context.fb.dithered();
-            let doc = self.doc.lock().unwrap();
-            r.extra_css = doc.get_extra_css();
 
             if self.view_port.zoom_mode == ZoomMode::FitToPage {
                 r.zoom_mode = None;
@@ -3798,25 +3830,20 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::UndoLastCssTweak) => {
-                {
-                    let mut doc = self.doc.lock().unwrap();
-                    let css = doc.get_extra_css().unwrap();
-                    let re = Regex::new(r" \S+ \{[^}]+\}$").unwrap();
-                    let css = re.replace(&css, "");
-                    doc.set_extra_css(&css, false);
-                }
-                hub.send(Event::Notify("last tweak cleared".to_string())).ok();
+                self.undo_last_tweak(hub, context);
                 self.selection = None;
-                self.cache.clear();
                 self.update(None, hub, rq, context);
                 true
             },
             Event::Select(EntryId::UndoAllCssTweaks) => {
                 {
                     let mut doc = self.doc.lock().unwrap();
-                    doc.set_extra_css("", false);
+                    doc.set_extra_css("");
                 }
-                hub.send(Event::Notify("all tweaks cleared".to_string())).ok();
+                if let Some(ref mut r) = self.info.reader {
+                    r.extra_css = None;
+                }
+                hub.send(Event::Notify("All tweaks cleared".to_string())).ok();
                 self.selection = None;
                 self.cache.clear();
                 self.update(None, hub, rq, context);

@@ -32,13 +32,13 @@ other of their daughters.</p>
 we want to add these rules:
 
 ```
-.para { text-align: left !important;}
-.first-para { text-align: left !important;}
+p.para { text-align: left !important;}
+p.first-para { text-align: left !important;}
 ```
 
 ## CSS Tweaks
 
-The `CSS Tweaks` feature provides a way to do just this -- adding specific CSS rules to individual epubs without having to edit them in a program like Calibre.
+The `CSS Tweaks` feature provides a way to do just this: add specific CSS rules to individual epubs without having to edit them in a program like Calibre.
 
 First, add styles into `Settings.toml` using the following format:
 
@@ -58,7 +58,7 @@ css = "style declarations"
 
 ## Examples
 
-The following define two styles intended for indent and non-indented paragraphs, with zero margins and paddings. The `indent` style may be used for normal prose paragraphs, while the `no indent` style may be used for paragraphs at start of chapters or sections.
+The following define two styles intended called `indent` and `no indent`. The `indent` style may be used for normal prose paragraphs, while the `no indent` style may be used for paragraphs at start of chapters or sections.
 
 ```
 [[css-style]]
@@ -85,18 +85,51 @@ To apply a style to a paragraph (block element, to be more precise), select any 
 Repeat said procedure to apply multiple styles to the same paragraph. In the example above, after we apply `indent` and `left align` to the second paragraph, the following CSS rules will be added to the book's stylesheet
 
 ```
-.para { text-indent: 1.5em !important; margin: 0 !important; padding: 0 !important; }
-.para { text-align: left !important; }
+p.para { text-indent: 1.5em !important; margin: 0 !important; padding: 0 !important; }
+p.para { text-align: left !important; }
 ```
 
 Voilà! This will make all paragraphs with class  `.para` to be left aligned, first line indented, with no margin or padding.
+
+## Variable substitution
+
+CSS values may contain the following variables (*case sensitive*)
+
+* `%FONTSIZE%`
+* `%LINEHEIGHT%`
+* `%TEXTALIGN%`
+* `%fontsize%`
+* `%lineheight%`
+* `%textalign%`
+
+`%FONTSIZE%`, `%LINEHEIGHT%`, and `%TEXTALIGN%` (all uppercase) will be substituted with their corresponding default values as defined in `Settings.toml`. For example, if you have `font-size = 14.5` in `Settings.toml`, then this style
+
+```
+[[css-style]]
+name = "force font size"
+css = "font-size: %FONTSIZE% !important"
+```
+
+after substitution becomes `font-size: 14.5pt !important`. Note that the appropriate unit will be supplied for you.
+
+Use `%fontsize%`, `%lineheight%`, and `%textalign%` (all lowercase) if you want the values that you selected in the user interface. These are more flexible as you can change them on the fly and override the defaults in `Settings.toml`.
+
+Here's an example of when a style like `force font size` will be useful. Sometimes, epub creators will set main paragraph's font size to something like `0.85em`, making the main text smaller (why??). You can fiddle with increasing the font size, or you can apply this style to force the font size to your preference. Similarly, you can use the style below to force all values to your preferences without hard coding the values.
+
+```
+[[css-style]]
+name = "force preferences"
+css = "font-size: %fontsize% !important; line-height: %lineheight% !important; text-align: %textalign% !important"
+```
 
 ## Notes and caveats
 
 * The created CSS rules are saved externally in `.reading-states`. The epubs are left unmodified.
 
-* Applying the same style more than once to the same class will simple move the corresponding rule to the end, allowing it to override any other styles.
+* Applying the same style more than once to the same element will move the corresponding CSS rule to the end, allowing it to override other rules.
 
 * Currently, only block elements (p, div, h1, h2, ..., etc) can have styles applied to them.
+
+* Modifying a style in `Settings.toml` does not change previous applications of the style. You can use the `Undo last` or `Undo all` option under the `CSS tweaks` menu then re-apply the modified style.
 
 * The markup in most epubs is not so clean and simple as our example, so the feature may fail in many instances. Hopefully, it works often enough to be worthwhile.

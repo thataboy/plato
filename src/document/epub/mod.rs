@@ -6,6 +6,7 @@ use fxhash::FxHashMap;
 use zip::ZipArchive;
 use percent_encoding::percent_decode_str;
 use anyhow::{Error, format_err};
+use regex::Regex;
 use crate::framebuffer::Pixmap;
 use crate::helpers::{Normalize, decode_entities};
 use crate::document::{Document, Location, TextLocation, TocEntry, BoundedText, chapter_from_uri};
@@ -361,7 +362,11 @@ impl EpubDocument {
         }
 
         if let Some(ref text) = self.extra_css {
-            let mut css = CssParser::new(text).parse();
+            let text = text.replace("%fontsize%", &format!("{:.1}pt", self.engine.font_size))
+                           .replace("%lineheight%", &format!("{:.3}em", self.engine.line_height))
+                           .replace("%textalign%", &self.engine.text_align.to_string().to_lowercase());
+            // println!("extra css {} {}", chrono::offset::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"), text);
+            let mut css = CssParser::new(&text).parse();
             stylesheet.append(&mut css, true);
         }
 
@@ -934,37 +939,17 @@ impl Document for EpubDocument {
         self.cache.clear();
     }
 
-    fn get_extra_css(&self) -> Option<String> {
-        if let Some(ref css) = self.extra_css {
-            Some(css.to_string())
+    fn set_extra_css(&mut self, text: &str) {
+        self.extra_css = if !text.is_empty() {
+            Some(text.to_string())
         } else {
             None
-        }
-    }
-
-    /// set or append to self.extra_css
-    fn set_extra_css(&mut self, text: &str, append: bool) {
-        if append {
-            if !text.is_empty() {
-                if let Some(ref css) = self.extra_css {
-                    // remove rule if already exists before appending to end
-                    let css = str::replacen(css, text, "", 1);
-                    self.extra_css = Some(css + text);
-                } else {
-                    self.extra_css = Some(text.to_string());
-                }
-            }
-        } else {
-            if text.is_empty() {
-                self.extra_css = None;
-            } else {
-                self.extra_css = Some(text.to_string());
-            }
-        }
+        };
         self.cache.clear();
     }
 
-    /// return class name(s) and text of block element at given offset
+    /// return node selector e.g., "p.indent" or "p",
+    /// and text of block element at given offset
     fn get_node_data_at(&mut self, offset: usize) -> Option<(String, String)> {
         let (index, start_offset) = self.vertebra_coordinates(offset)?;
         let mut text = String::new();
@@ -990,8 +975,15 @@ impl Document for EpubDocument {
         }
 
         let node = last?;
-        let cls = node.attribute("class")?;
-        Some((cls.to_string(), node.text()))
+        let tag_name = node.tag_name()?;
+        if let Some(ref cls) = node.attribute("class") {
+            // change "class1 class2 class3" to "class1.class2.class3"
+            let re = Regex::new(r" +").unwrap();
+            let cls = re.replace_all(cls.trim(), ".");
+            Some((format!("{}.{}", tag_name, cls), node.text()))
+        } else {
+            Some((tag_name.to_string(), node.text()))
+        }
     }
 
     fn title(&self) -> Option<String> {
