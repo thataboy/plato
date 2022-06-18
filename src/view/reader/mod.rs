@@ -2198,6 +2198,10 @@ impl Reader {
     }
 
     fn apply_theme(&mut self, theme_name: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if Arc::strong_count(&self.doc) > 1 {
+            return;
+        }
+
         if let Some(theme) = context.settings.themes.iter().find(|x| x.name == theme_name) {
             let theme = theme.clone(); // make borrow checker happy
             if theme.dismiss.unwrap_or(true) {
@@ -2259,6 +2263,9 @@ impl Reader {
     }
 
     fn apply_css_tweak(&mut self, index: usize, hub: &Hub, context: &mut Context) {
+        if Arc::strong_count(&self.doc) > 1 {
+            return;
+        }
         if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
             let mut dirty = false;
             let mut doc = self.doc.lock().unwrap();
@@ -2291,6 +2298,10 @@ impl Reader {
     }
 
     fn undo_last_tweak(&mut self, hub: &Hub, context: &mut Context) {
+        if Arc::strong_count(&self.doc) > 1 {
+            return;
+        }
+
         let mut css = "".to_string();
         if let Some(ref mut r) = self.info.reader {
             css = r.extra_css.as_ref().unwrap().to_string();

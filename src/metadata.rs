@@ -675,17 +675,12 @@ pub fn sort_added(i1: &Info, i2: &Info) -> Ordering {
 // luu
 
 pub fn sort_added_opened(i1: &Info, i2: &Info) -> Ordering {
-    match i2.reader.as_ref() {
-        Some(reader) => i1.added.cmp(&reader.opened),
-        None => Ordering::Greater,
-    }
+    Some(i1.added).cmp(&i2.reader.as_ref().map(|r2| r2.opened))
 }
 
 pub fn sort_opened_added(i1: &Info, i2: &Info) -> Ordering {
-    match i1.reader.as_ref() {
-        Some(reader) => reader.opened.cmp(&i2.added),
-        None => Ordering::Less,
-    }
+    i1.reader.as_ref().map(|r1| r1.opened)
+      .cmp(&Some(i2.added))
 }
 
 pub fn sort_pages(i1: &Info, i2: &Info) -> Ordering {
