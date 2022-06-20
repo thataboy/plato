@@ -181,6 +181,11 @@ impl Engine {
             _ => (),
         }
 
+        style.retain_whitespace |= props.get("white-space")
+                                        .map(String::as_str)
+                                        .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
+                                        .unwrap_or(false);
+
         style.language = props.get("lang").cloned()
                               .or_else(|| parent_style.language.clone());
 
@@ -594,7 +599,11 @@ impl Engine {
                 style.font_style = parent_style.font_style;
                 style.line_height = parent_style.line_height;
                 style.text_indent = parent_style.text_indent;
-                style.retain_whitespace = parent_style.retain_whitespace;
+                style.retain_whitespace = parent_style.retain_whitespace
+                                          || props.get("white-space")
+                                                  .map(String::as_str)
+                                                  .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
+                                                  .unwrap_or(false);
                 style.language = parent_style.language.clone();
                 style.uri = parent_style.uri.clone();
 

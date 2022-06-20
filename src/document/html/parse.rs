@@ -110,7 +110,7 @@ pub fn parse_font_kind(value: &str) -> Option<FontKind> {
             "monospace" => Some(FontKind::Monospace),
             "cursive" => Some(FontKind::Cursive),
             "fantasy" => Some(FontKind::Fantasy),
-            _ => None,
+            _ => if value.to_lowercase().contains("mono") { Some(FontKind::Monospace) } else { None },
         }
     })
 }
