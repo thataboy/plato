@@ -106,6 +106,17 @@ pub fn first_n_words(text: &str, n: usize) -> String {
     text.split_whitespace().take(n).collect::<Vec<&str>>().join(" ")
 }
 
+/// unicode safe string slicing
+pub fn safe_slice(text: &str, mut a: usize, mut b: usize) -> &str {
+    while a > 0 && !text.is_char_boundary(a) {
+        a -= 1;
+    }
+    while b < text.len() && !text.is_char_boundary(b) {
+        b += 1;
+    }
+    &text[a..b]
+}
+
 pub fn encode_entities(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }

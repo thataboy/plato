@@ -27,7 +27,7 @@ use crate::view::{ViewId, Id, ID_FEEDER, EntryKind, EntryId, SliderId};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::unit::{scale_by_dpi, mm_to_px};
 use crate::device::CURRENT_DEVICE;
-use crate::helpers::{AsciiExtension, first_n_words, trim_non_alphanumeric};
+use crate::helpers::{AsciiExtension, first_n_words, trim_non_alphanumeric, encode_entities, safe_slice};
 use crate::font::Fonts;
 use crate::font::family_names;
 use self::margin_cropper::{MarginCropper, BUTTON_DIAMETER};
@@ -1751,7 +1751,7 @@ impl Reader {
                     let mut tweaks = context.settings.css_styles.iter()
                                      .enumerate()
                                      .filter(|(_, x)| !x.css.trim().is_empty())
-                                     .map(|(i, x)| { EntryKind::Command(format!("{}", x.name.clone()),
+                                     .map(|(i, x)| { EntryKind::Command(x.name.clone(),
                                                                         EntryId::SetCssTweak(i)) })
                                      .collect::<Vec<EntryKind>>();
                     if has_extra_css {
@@ -1763,6 +1763,7 @@ impl Reader {
                     }
                     if !tweaks.is_empty() {
                         entries.push(EntryKind::Separator);
+                        entries.push(EntryKind::Command("Inspect".to_string(), EntryId::ShowCssTweaks));
                         entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
                     }
                 }
@@ -1825,6 +1826,20 @@ impl Reader {
 
             if !entries.is_empty() {
                 entries.push(EntryKind::Separator);
+            }
+
+            if self.info.file.kind == "epub" {
+                if self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some()) {
+                    let tweaks = vec![
+                        EntryKind::Command("Show info".to_string(), EntryId::ShowCssTweaks),
+                        EntryKind::Separator,
+                        EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak),
+                        EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks),
+                    ];
+                    entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
+                } else if !context.settings.css_styles.is_empty() {
+                    entries.push(EntryKind::Command("CSS tweaks".to_string(), EntryId::ShowCssTweaks));
+                }
             }
 
             entries.push(EntryKind::CheckBox("Apply Dithering".to_string(),
@@ -2017,12 +2032,9 @@ impl Reader {
                 return;
             }
 
-            if context.settings.themes.len() == 0 {
-                return;
-            }
             let entries = context.settings.themes.iter()
                              .filter(|x| !x.name.starts_with("__"))
-                             .map(|x| { EntryKind::Command(format!("{}", x.name.clone()),
+                             .map(|x| { EntryKind::Command(x.name.clone(),
                                                            EntryId::SetTheme(x.name.clone()))
             }).collect();
             let theme_menu = Menu::new(rect, ViewId::ThemeMenu, MenuKind::Contextual, entries, context);
@@ -2269,7 +2281,7 @@ impl Reader {
         if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
             let mut dirty = false;
             let mut doc = self.doc.lock().unwrap();
-            if let Some((selector, txt)) = doc.get_node_data_at(offset) {
+            if let Some((selector, txt, _)) = doc.get_node_data_at(offset, 0) {
                 if let Some(ref mut r) = self.info.reader {
                     let mut css = context.settings.css_styles[index].css.trim().to_string();
                     // leading space used to separate rules
@@ -2284,7 +2296,7 @@ impl Reader {
                     r.extra_css = Some(css.to_string());
                     set_extra_css!(doc, css, &context.settings);
                     dirty = true;
-                    hub.send(Event::Notify(format!("{} > {} {}",
+                    hub.send(Event::Notify(format!("{} applied to {} {}",
                                                    context.settings.css_styles[index].name,
                                                    selector, txt))).ok();
                 }
@@ -2293,8 +2305,53 @@ impl Reader {
             }
             if dirty {
                 self.cache.clear();
+                self.text.clear();
             }
         }
+    }
+
+    fn css_tweaks_as_html(&mut self, context: &mut Context) -> Option<String> {
+        if Arc::strong_count(&self.doc) > 1 {
+            return None;
+        }
+
+        if let Some(ref r) = self.info.reader {
+            let mut buf =  "<html><head><title>CSS tweaks</title>\n\
+                            <link rel=\"stylesheet\" type=\"text/css\" href=\"css/css-tweaks.css\"/>\n\
+                            </head>\n<body>\n".to_string();
+            if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
+                let mut doc = self.doc.lock().unwrap();
+                if let Some((selector, txt, html)) = doc.get_node_data_at(offset, 300) {
+                    buf.push_str(&format!("<p><strong>node</strong>: {}<br />\n\
+                                           <strong>text</strong>: {}{}<br />\n\
+                                           <strong>html</strong>: <pre>... {} ...</pre></p>\n",
+                                          encode_entities(&selector),
+                                          encode_entities(safe_slice(&txt, 0, txt.len().min(200))),
+                                          if txt.len() > 200 {" ..."} else {""},
+                                          encode_entities(&html)));
+                }
+            }
+            if let Some(ref css) = r.extra_css {
+                buf.push_str("<h3>Applied styles</h3>\n");
+                buf.push_str(&format!("<ul>\n<li><code>{}</code></li>\n</ul>\n",
+                                      encode_entities(css).trim().replace("} ", "}</code></li>\n<li><code>")));
+            }
+            if !context.settings.css_styles.is_empty() {
+                buf.push_str("<h3>Available styles</h3>\n");
+                let styles = context.settings.css_styles.iter()
+                                    .filter(|x| !x.css.trim().is_empty())
+                                    .map(|x| format!("<li><strong>{}</strong>: <code>{}</code></li>\n",
+                                                     encode_entities(&x.name),
+                                                     encode_entities(&x.css)))
+                                    .collect::<String>();
+                buf.push_str(&format!("<ul>\n{}\n</ul>\n", styles));
+            }
+            buf.push_str("\n</body></html>");
+            Some(buf)
+        } else {
+            None
+        }
+
     }
 
     fn undo_last_tweak(&mut self, hub: &Hub, context: &mut Context) {
@@ -2317,8 +2374,9 @@ impl Reader {
             let mut doc = self.doc.lock().unwrap();
             set_extra_css!(doc, css, &context.settings);
         }
-        hub.send(Event::Notify("Last tweak cleared".to_string())).ok();
+        hub.send(Event::Notify("Last tweak removed".to_string())).ok();
         self.cache.clear();
+        self.text.clear();
     }
 
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -3840,6 +3898,14 @@ impl View for Reader {
                 self.update(None, hub, rq, context);
                 true
             },
+            Event::Select(EntryId::ShowCssTweaks) => {
+                self.toggle_bars(Some(false), hub, rq, context);
+                if let Some(html) = self.css_tweaks_as_html(context) {
+                    hub.send(Event::OpenHtml(html, None)).ok();
+                }
+                self.selection = None;
+                true
+            },
             Event::Select(EntryId::UndoLastCssTweak) => {
                 self.undo_last_tweak(hub, context);
                 self.selection = None;
@@ -3854,9 +3920,10 @@ impl View for Reader {
                 if let Some(ref mut r) = self.info.reader {
                     r.extra_css = None;
                 }
-                hub.send(Event::Notify("All tweaks cleared".to_string())).ok();
+                hub.send(Event::Notify("All tweaks removed".to_string())).ok();
                 self.selection = None;
                 self.cache.clear();
+                self.text.clear();
                 self.update(None, hub, rq, context);
                 true
             },

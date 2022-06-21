@@ -8,7 +8,7 @@ use percent_encoding::percent_decode_str;
 use anyhow::{Error, format_err};
 use regex::Regex;
 use crate::framebuffer::Pixmap;
-use crate::helpers::{Normalize, decode_entities};
+use crate::helpers::{Normalize, decode_entities, safe_slice};
 use crate::document::{Document, Location, TextLocation, TocEntry, BoundedText, chapter_from_uri};
 use crate::unit::pt_to_px;
 use crate::geom::{Rectangle, Boundary, Edge, CycleDir};
@@ -949,8 +949,9 @@ impl Document for EpubDocument {
     }
 
     /// return node selector e.g., "p.indent" or "p",
-    /// and text of block element at given offset
-    fn get_node_data_at(&mut self, offset: usize) -> Option<(String, String)> {
+    ///        text of block element at given offset,
+    ///        raw html around given offset
+    fn get_node_data_at(&mut self, offset: usize, chunk_size: usize) -> Option<(String, String, String)> {
         let (index, start_offset) = self.vertebra_coordinates(offset)?;
         let mut text = String::new();
         {
@@ -976,13 +977,19 @@ impl Document for EpubDocument {
 
         let node = last?;
         let tag_name = node.tag_name()?;
+
+        let offset = node.offset();
+        let a = if offset > chunk_size / 2 { offset - chunk_size / 2 } else { 0 };
+        let b = (offset + chunk_size).min(text.len());
+        let html = safe_slice(&text, a, b).trim();
+
         if let Some(ref cls) = node.attribute("class") {
             // change "class1 class2 class3" to "class1.class2.class3"
             let re = Regex::new(r" +").unwrap();
             let cls = re.replace_all(cls.trim(), ".");
-            Some((format!("{}.{}", tag_name, cls), node.text()))
+            Some((format!("{}.{}", tag_name, cls), node.text(), html.to_string()))
         } else {
-            Some((tag_name.to_string(), node.text()))
+            Some((tag_name.to_string(), node.text(), html.to_string()))
         }
     }
 

@@ -586,6 +586,7 @@ pub enum EntryId {
     SetCssTweak(usize),
     UndoLastCssTweak,
     UndoAllCssTweaks,
+    ShowCssTweaks,
     SetRotationLock(Option<RotationLock>),
     SetSearchTarget(Option<String>),
     SetSourceLang(String),

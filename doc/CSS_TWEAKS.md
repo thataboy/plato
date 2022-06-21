@@ -124,7 +124,9 @@ css = "font-size: %fontsize% !important; line-height: %lineheight% !important; t
 
 ## Notes and caveats
 
-* The created CSS rules are saved externally in `.reading-states`. The epubs are left unmodified.
+* You can look at the underlying html code by making a selection then choosing `Inspect` from the pop up menu. You can also access a `CSS Tweaks` menu by tapping anywhere on the screen then tapping the book's title at the top of the screen.
+
+* The created CSS rules are saved externally in `.reading-states` (do not edit the files found there). The epubs are left unmodified.
 
 * Applying the same style more than once to the same element will move the corresponding CSS rule to the end, allowing it to override other rules.
 
