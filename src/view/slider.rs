@@ -63,7 +63,7 @@ impl View for Slider {
         match *evt {
             Event::Device(DeviceEvent::Finger { status, position, .. }) => {
                 match status {
-                    FingerStatus::Down if self.rect.includes(position) => {
+                    FingerStatus::Down if !self.active && self.rect.includes(position) => {
                         self.active = true;
                         self.update_value(position.x);
                         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
@@ -71,11 +71,15 @@ impl View for Slider {
                         self.last_x = position.x;
                         true
                     },
-                    FingerStatus::Motion if self.active && position.x != self.last_x => {
-                        self.update_value(position.x);
-                        rq.add(RenderData::no_wait(self.id, self.rect, UpdateMode::FastMono));
-                        bus.push_back(Event::Slider(self.slider_id, self.value, status));
-                        self.last_x = position.x;
+                    FingerStatus::Motion if self.active => {
+                        let delta = (self.rect.max.x - self.rect.min.x) / 100;
+                        let dpi = CURRENT_DEVICE.dpi;
+                        if (position.x - self.last_x).abs() > delta.max(scale_by_dpi(5.0, dpi) as i32) {
+                            self.update_value(position.x);
+                            rq.add(RenderData::no_wait(self.id, self.rect, UpdateMode::FastMono));
+                            bus.push_back(Event::Slider(self.slider_id, self.value, status));
+                            self.last_x = position.x;
+                        }
                         true
                     },
                     FingerStatus::Up if self.active => {
