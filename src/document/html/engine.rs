@@ -737,7 +737,7 @@ impl Engine {
                     style: parent_style.clone(),
                 }));
             },
-            NodeData::Whitespace(TextData { offset, text }) if parent_style.retain_whitespace => {
+            NodeData::Whitespace(TextData { offset, text }) => {
                 inlines.push(InlineMaterial::Text(TextMaterial {
                     offset: *offset,
                     text: text.to_string(),
