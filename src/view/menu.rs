@@ -89,7 +89,7 @@ impl Menu {
             2 * border_thickness
         };
 
-        let max_entries = ((usable_space - border_space) / entry_height) as usize;
+        let max_entries = 1 + ((usable_space - border_space) / entry_height) as usize;
         let total_entries = entries.iter().filter(|e| !e.is_separator()).count();
 
         if total_entries > max_entries {

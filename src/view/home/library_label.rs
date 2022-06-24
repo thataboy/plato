@@ -56,9 +56,9 @@ impl LibraryLabel {
             }
         } else {
             if self.count != 1 {
-                "books"
+                "items"
             } else {
-                "book"
+                "item"
             }
         };
 
