@@ -883,8 +883,8 @@ impl Reader {
     }
 
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
+        let current_page = self.current_page;
         if let Some(index) = locate::<BottomBar>(self) {
-            let current_page = self.current_page;
             let mut doc = self.doc.lock().unwrap();
             let rtoc = self.toc().or_else(|| doc.toc());
             let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(current_page, toc));
@@ -898,18 +898,11 @@ impl Reader {
                 next_page: doc.resolve_location(Location::Next(current_page)),
             };
             bottom_bar.update_chapter_label(title, progress, rq);
-            bottom_bar.update_page_label(self.current_page, self.pages_count, rq);
+            bottom_bar.update_page_label(current_page, self.pages_count, rq);
             bottom_bar.update_icons(&neighbors, rq);
-        }
-        self.set_scrubber(self.current_page, rq);
-    }
 
-   fn page_to_loc(&self, page: f32) -> usize {
-        if self.synthetic {
-            (page * BYTES_PER_PAGE as f32) as usize
-        } else {
-            page as usize
         }
+        self.set_scrubber(current_page, rq);
     }
 
     fn set_scrubber(&mut self, loc: usize, rq: &mut RenderQueue) {
@@ -919,6 +912,7 @@ impl Reader {
         }
     }
 
+    #[inline]
     fn update_scrubber(&mut self, page: f32, rq: &mut RenderQueue) {
         if let Some(index) = locate::<Scrubber>(self) {
             let scrubber = self.children[index].as_mut().downcast_mut::<Scrubber>().unwrap();
@@ -3624,7 +3618,12 @@ impl View for Reader {
                 true
             },
             Event::Slider(SliderId::Scrubber, page, FingerStatus::Up) => {
-                self.go_to_page(self.page_to_loc(page), true, hub, rq, context);
+                let loc = if self.synthetic {
+                    (page * BYTES_PER_PAGE as f32) as usize
+                } else {
+                    page as usize
+                };
+                self.go_to_page(loc, true, hub, rq, context);
                 true
             },
             Event::Slider(SliderId::Scrubber, page, FingerStatus::Motion) => {

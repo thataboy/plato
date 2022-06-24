@@ -15,15 +15,15 @@ use crate::font::Fonts;
 use crate::color::SEPARATOR_NORMAL;
 use crate::app::Context;
 
-const CHANGE_THRESHOLD:f32 = 0.5;
-
 #[derive(Debug)]
 pub struct Scrubber {
     id: Id,
     rect: Rectangle,
     children: Vec<Box<dyn View>>,
     original_loc: usize,
+    original_page: f32,
     current_page: f32,
+    precision: usize,
     synthetic: bool,
     back_enabled: bool,
 }
@@ -52,12 +52,19 @@ impl Scrubber {
                            } else {
                                current_loc as f32
                            };
+
+        let pcount = if synthetic { pages_count as f32 / BYTES_PER_PAGE as f32 } else { pages_count as f32 };
+
+        let precision = if !synthetic || pcount > 10.0 { 0 }
+                        else if pcount > 5.0 { 1 }
+                        else { 2 };
+
         let slider = Slider::new(rect![rect.min.x + label_width, y,
                                        rect.max.x - side, rect.max.y],
                                  SliderId::Scrubber,
                                  current_page,
                                  0.0,
-                                 pages_count as f32 / if synthetic {BYTES_PER_PAGE as f32} else {1.0});
+                                 pcount);
         children.push(Box::new(slider) as Box<dyn View>);
 
         let back_rect = rect![pt!(rect.max.x - side, y),
@@ -70,17 +77,11 @@ impl Scrubber {
             rect,
             children,
             original_loc: current_loc,
+            original_page: current_page,
             current_page,
+            precision,
             synthetic,
             back_enabled: false,
-        }
-    }
-
-    pub fn current_loc(&self) -> usize {
-        if self.synthetic {
-            (self.current_page * BYTES_PER_PAGE as f32) as usize
-        } else {
-            self.current_page as usize
         }
     }
 
@@ -90,29 +91,23 @@ impl Scrubber {
                    } else {
                        loc as f32
                    };
-        if (self.current_page - page).abs() > CHANGE_THRESHOLD {
-            self.update_value(page, rq);
-            let slider = self.child_mut(2).downcast_mut::<Slider>().unwrap();
-            slider.update(page, rq);
-        }
+        self.update_value(page, rq);
+        let slider = self.child_mut(2).downcast_mut::<Slider>().unwrap();
+        slider.update(page, rq);
         self.current_page = page;
         self.update_back_icon(self.original_loc != loc, rq);
     }
 
     pub fn update_value(&mut self, page: f32, rq: &mut RenderQueue) {
-        let render = (self.current_page - page).abs() > CHANGE_THRESHOLD;
         self.current_page = page;
-        if render {
-            let mut diff = self.current_loc() as f32 - self.original_loc as f32;
-            if self.synthetic {
-                diff /= BYTES_PER_PAGE as f32;
-            }
-            let label = self.child_mut(1).downcast_mut::<Label>().unwrap();
-            label.fast_update(&format!("{}{:.0}p",
-                                       if diff >= 0.0 {"+"} else {"-"},
-                                       diff.abs()),
-                              rq);
-        }
+        let diff = page - self.original_page;
+        let precision = self.precision;
+        let label = self.child_mut(1).downcast_mut::<Label>().unwrap();
+        label.fast_update(&format!("{0}{1:.2$}p",
+                                   if diff > 0.0 {"+"} else if diff < 0.0 {"-"} else {""},
+                                   diff.abs(),
+                                   precision),
+                          rq);
     }
 
     pub fn update_back_icon(&mut self, enable: bool, rq: &mut RenderQueue) {
