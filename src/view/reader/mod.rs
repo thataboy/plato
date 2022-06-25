@@ -1158,17 +1158,26 @@ impl Reader {
                         break;
                     }
                     if let Some((ref words, _)) = doc.words(Location::Exact(location)) {
-                        for word in words {
-                            if !running.load(AtomicOrdering::Relaxed) {
-                                break;
+                        if !words.is_empty() {
+                            let mut prev = &words[0]; // this initial value will never be used
+                            for word in words {
+                                if !running.load(AtomicOrdering::Relaxed) {
+                                    break;
+                                }
+                                if text.ends_with('\u{00AD}') {
+                                    text.pop();
+                                } else if !text.ends_with('-') && !text.is_empty()
+                                    && match word.location {
+                                        TextLocation::Static(_, _) => true,
+                                        TextLocation::Dynamic(offset) =>
+                                            offset > prev.location.location() + prev.text.len(),
+                                    } {
+                                    text.push(' ');
+                                }
+                                rects.insert(text.len(), word.rect);
+                                text += &word.text;
+                                prev = word;
                             }
-                            if text.ends_with('\u{00AD}') {
-                                text.pop();
-                            } else if !text.ends_with('-') && !text.is_empty() {
-                                text.push(' ');
-                            }
-                            rects.insert(text.len(), word.rect);
-                            text += &word.text;
                         }
                         for m in query.find_iter(&text) {
                             if let Some((first, _)) = rects.range(..= m.start()).next_back() {
@@ -2673,21 +2682,27 @@ impl Reader {
         let [start, end] = sel;
         let parts = self.text.values().flatten()
                         .filter(|bnd| bnd.location >= start && bnd.location <= end)
-                        .map(|bnd| bnd.text.as_str()).collect::<Vec<&str>>();
+                        .collect::<Vec<_>>();
 
         if parts.is_empty() {
             return None;
         }
 
-        let mut text = parts[0].to_string();
+        let mut text = parts[0].text.to_string();
+        let mut prev = &parts[0];
 
         for p in &parts[1..] {
             if text.ends_with('\u{00AD}') {
                 text.pop();
-            } else if !text.ends_with('-') {
+            } else if !text.ends_with('-')
+                && match p.location {
+                    TextLocation::Static(_, _) => true,
+                    TextLocation::Dynamic(offset) => offset > prev.location.location() + prev.text.len(),
+                } {
                 text.push(' ');
             }
-            text += p;
+            text += &p.text;
+            prev = p;
         }
 
         Some(text)
