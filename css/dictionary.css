@@ -9,3 +9,15 @@
 	margin-top: 1.0em;
 	font-weight: bold;
 }
+
+ul, ol, li, dd {
+	margin-left: 1em;
+}
+
+ul {
+	list-style-type: square;
+}
+
+ol {
+	list-style-type: decimal;
+}
