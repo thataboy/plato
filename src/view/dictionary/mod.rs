@@ -69,7 +69,9 @@ fn query_to_content(query: &str, language: &String, fuzzy: bool, target: Option<
                 if !body.trim_start().starts_with("<h2") {
                     content.push_str(&format!("<h2 class=\"headword\">{}</h2>\n", head.replace('<', "&lt;").replace('>', "&gt;")));
                 }
-                if body.trim_start().starts_with('<') {
+                // regex does not support back reference so this will have to do
+                let detect_html = Regex::new(r"<[a-zA-Z]+(\s+[^>]+)?>[^<]+</[a-zA-Z]+>").unwrap();
+                if detect_html.is_match(&body) {
                     content.push_str(&body);
                 } else {
                     content.push_str(&format!("<pre>{}</pre>", body.replace('<', "&lt;").replace('>', "&gt;")));
