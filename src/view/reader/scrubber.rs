@@ -47,23 +47,28 @@ impl Scrubber {
                                "".to_string(), Align::Center);
         children.push(Box::new(label) as Box<dyn View>);
 
-        let current_page = if synthetic {
-                               current_loc as f32 / BYTES_PER_PAGE as f32
-                           } else {
-                               current_loc as f32
-                           };
-
-        let pcount = if synthetic { pages_count as f32 / BYTES_PER_PAGE as f32 } else { pages_count as f32 };
-
-        let precision = if !synthetic || pcount > 10.0 { 0 }
-                        else if pcount > 5.0 { 1 }
-                        else { 2 };
-
+        let current_loc = if synthetic { current_loc } else { current_loc + 1 };
+        let (current_page, pcount, min) =
+            if synthetic {
+                (current_loc as f32 / BYTES_PER_PAGE as f32,
+                 pages_count as f32 / BYTES_PER_PAGE as f32,
+                 0.0)
+            } else {
+                (current_loc as f32,
+                 pages_count as f32,
+                 1.0)
+            };
+        let precision =
+            if synthetic {
+                if pcount > 10.0 { 0 } else if pcount > 5.0 { 1 } else { 2 }
+            } else {
+                0
+            };
         let slider = Slider::new(rect![rect.min.x + label_width, y,
                                        rect.max.x - side, rect.max.y],
                                  SliderId::Scrubber,
                                  current_page,
-                                 0.0,
+                                 min,
                                  pcount);
         children.push(Box::new(slider) as Box<dyn View>);
 
@@ -89,7 +94,7 @@ impl Scrubber {
         let page = if self.synthetic {
                        loc as f32 / BYTES_PER_PAGE as f32
                    } else {
-                       loc as f32
+                       loc as f32 + 1.0
                    };
         self.update_value(page, rq);
         let slider = self.child_mut(2).downcast_mut::<Slider>().unwrap();

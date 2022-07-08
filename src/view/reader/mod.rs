@@ -3675,8 +3675,8 @@ impl View for Reader {
                 let loc = if self.synthetic {
                     (page * BYTES_PER_PAGE as f32) as usize
                 } else {
-                    page as usize
-                };
+                    (page as usize).saturating_sub(1)
+                }.min(self.pages_count.saturating_sub(1));
                 self.go_to_page(loc, true, hub, rq, context);
                 true
             },
