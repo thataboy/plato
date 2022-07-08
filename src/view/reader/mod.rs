@@ -67,6 +67,7 @@ const HIGHLIGHT_DRIFT: u8 =  0x22;
 const MEM_SCHEME: &str = "mem:";
 const ON_INVERTED: &str = "__inverted";
 const ON_UNINVERTED: &str = "__uninverted";
+const MAX_SEARCH_RESULTS: usize = 200;
 
 pub struct Reader {
     id: Id,
@@ -879,6 +880,13 @@ impl Reader {
             self.update_results_bar(rq);
             self.update_bottom_bar(rq);
             self.update(None, hub, rq, context);
+        } else if let Some(ref s) = self.search {
+            let msg = if s.running.load(AtomicOrdering::Relaxed) {
+                "Still searching".to_string()
+            } else {
+                format!("Reached {} results page", if dir == CycleDir::Next {"last"} else {"first"} )
+            };
+            hub.send(Event::Notify(msg)).ok();
         }
     }
 
@@ -1137,12 +1145,15 @@ impl Reader {
         let hub2 = hub.clone();
         let doc2 = Arc::clone(&self.doc);
         let running = Arc::clone(&s.running);
-        let current_page = self.current_page;
         let search_direction = self.search_direction;
+        let pages_count = self.pages_count;
 
         thread::spawn(move || {
-            let mut loc = Location::Exact(current_page);
-            let mut started = false;
+            let mut results_count = 0;
+            let mut loc = match search_direction {
+                LinearDir::Forward => Location::Exact(0),
+                LinearDir::Backward => Location::Exact(pages_count-1),
+            };
 
             loop {
                 if !running.load(AtomicOrdering::Relaxed) {
@@ -1154,38 +1165,47 @@ impl Reader {
                 let mut rects = BTreeMap::new();
 
                 if let Some(location) = doc.resolve_location(loc) {
-                    if location == current_page && started {
-                        break;
-                    }
                     if let Some((ref words, _)) = doc.words(Location::Exact(location)) {
                         if !words.is_empty() {
-                            let mut prev = &words[0]; // this initial value will never be used
+                            let mut end_offset = 0;
                             for word in words {
                                 if !running.load(AtomicOrdering::Relaxed) {
                                     break;
                                 }
+                                let (is_dyn, offset) =
+                                    if let TextLocation::Dynamic(offset) = word.location {
+                                        (true, offset)
+                                    } else {
+                                        (false, 1)
+                                    };
                                 if text.ends_with('\u{00AD}') {
                                     text.pop();
-                                } else if !text.ends_with('-') && !text.is_empty()
-                                    && match word.location {
-                                        TextLocation::Static(_, _) => true,
-                                        TextLocation::Dynamic(offset) =>
-                                            offset > prev.location.location() + prev.text.len(),
-                                    } {
+                                } else if !text.ends_with('-') && !text.is_empty() && offset > end_offset {
                                     text.push(' ');
                                 }
                                 rects.insert(text.len(), word.rect);
                                 text += &word.text;
-                                prev = word;
+                                if is_dyn {
+                                    end_offset = offset + word.text.len();
+                                }
                             }
                         }
                         for m in query.find_iter(&text) {
                             if let Some((first, _)) = rects.range(..= m.start()).next_back() {
                                 let mut match_rects = Vec::new();
                                 for (_, rect) in rects.range(*first .. m.end()) {
+                                    if !running.load(AtomicOrdering::Relaxed) {
+                                        break;
+                                    }
                                     match_rects.push(*rect);
                                 }
+                                results_count += 1;
                                 hub2.send(Event::SearchResult(location, match_rects)).ok();
+                                if results_count >= MAX_SEARCH_RESULTS && running.load(AtomicOrdering::Relaxed) {
+                                    hub2.send(Event::Notify(format!("Maximum {MAX_SEARCH_RESULTS} results reached. Search stopped."))).ok();
+                                    running.store(false, AtomicOrdering::Relaxed);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1194,13 +1214,8 @@ impl Reader {
                         LinearDir::Backward => Location::Previous(location),
                     };
                 } else {
-                    loc = match search_direction {
-                        LinearDir::Forward => Location::Exact(0),
-                        LinearDir::Backward => Location::Exact(doc.pages_count()-1),
-                    };
+                    break;
                 }
-
-                started = true;
             }
 
             running.store(false, AtomicOrdering::Relaxed);
@@ -1212,6 +1227,22 @@ impl Reader {
         }
 
         self.search = Some(s);
+    }
+
+    /// stop search or exit search mode if search already stopped or only 1 page of results
+    fn stop_search(&mut self, hub: &Hub, rq: &mut RenderQueue) {
+        if let Some(ref mut s) = self.search {
+            let was_running = s.running.swap(false, AtomicOrdering::Relaxed);
+            let pages_count = s.highlights.len();
+            self.render_results(rq);
+            let msg = if !was_running || pages_count <= 1 {
+                self.search = None;
+                "Back to normal mode."
+            } else {
+                "Search halted."
+            };
+            hub.send(Event::Notify(msg.to_string())).ok();
+        }
     }
 
     fn toggle_keyboard(&mut self, enable: bool, id: Option<ViewId>, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -1229,6 +1260,18 @@ impl Reader {
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             } else {
                 self.children.drain(index - 1 ..= index);
+
+                let start_index = locate::<TopBar>(self).map(|index| index+2).unwrap_or(0);
+                let y_min = self.child(start_index).rect().min.y;
+                let delta_y = rect.height() as i32;
+
+                for i in start_index..index-1 {
+                    let shifted_rect = *self.child(i).rect() + pt!(0, delta_y);
+                    self.child_mut(i).resize(shifted_rect, hub, rq, context);
+                    rq.add(RenderData::new(self.child(i).id(), shifted_rect, UpdateMode::Gui));
+                }
+
+                let rect = rect![self.rect.min.x, y_min, self.rect.max.x, y_min + delta_y];
                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
             }
 
@@ -1409,16 +1452,13 @@ impl Reader {
 
             if let Some(bottom_index) = locate::<BottomBar>(self) {
                 let mut top_rect = *self.child(top_index).rect();
-                top_rect.absorb(self.child(top_index+1).rect());
-                let mut bottom_rect = *self.child(bottom_index).rect();
-                for i in top_index+2 .. bottom_index {
-                    bottom_rect.absorb(self.child(i).rect());
+                for i in top_index+1 ..= bottom_index {
+                    top_rect.absorb(self.child(i).rect());
                 }
 
                 self.children.drain(top_index..=bottom_index);
 
                 rq.add(RenderData::expose(top_rect, UpdateMode::Gui));
-                rq.add(RenderData::expose(bottom_rect, UpdateMode::Gui));
                 hub.send(Event::Focus(None)).ok();
             }
         } else {
@@ -1599,9 +1639,7 @@ impl Reader {
             rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
             self.children.remove(index);
 
-            if self.focus.map(|focus_id| focus_id == ViewId::EditNoteInput).unwrap_or(false) {
-                self.toggle_keyboard(false, None, hub, rq, context);
-            }
+            self.toggle_keyboard(false, None, hub, rq, context);
         } else {
             if let Some(false) = enable {
                 return;
@@ -1628,9 +1666,7 @@ impl Reader {
             rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
             self.children.remove(index);
 
-            if self.focus.map(|focus_id| focus_id == ViewId::NamePageInput).unwrap_or(false) {
-                self.toggle_keyboard(false, None, hub, rq, context);
-            }
+            self.toggle_keyboard(false, None, hub, rq, context);
         } else {
             if let Some(false) = enable {
                 return;
@@ -1666,10 +1702,9 @@ impl Reader {
 
             rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
             self.children.remove(index);
+            self.toggle_keyboard(false, None, hub, rq, context);
+            self.toggle_bars(Some(false), hub, rq, context);
 
-            if self.focus.map(|focus_id| focus_id == input_id).unwrap_or(false) {
-                self.toggle_keyboard(false, None, hub, rq, context);
-            }
         } else {
             if let Some(false) = enable {
                 return;
@@ -2688,21 +2723,25 @@ impl Reader {
             return None;
         }
 
-        let mut text = parts[0].text.to_string();
-        let mut prev = &parts[0];
+        let mut text = String::new();
+        let mut end_offset = 0;
 
-        for p in &parts[1..] {
+        for p in &parts {
+            let (is_dyn, offset) =
+                if let TextLocation::Dynamic(offset) = p.location {
+                    (true, offset)
+                } else {
+                    (false, 1)
+                };
             if text.ends_with('\u{00AD}') {
                 text.pop();
-            } else if !text.ends_with('-')
-                && match p.location {
-                    TextLocation::Static(_, _) => true,
-                    TextLocation::Dynamic(offset) => offset > prev.location.location() + prev.text.len(),
-                } {
+            } else if !text.ends_with('-') && !text.is_empty() && offset > end_offset {
                 text.push(' ');
             }
             text += &p.text;
-            prev = p;
+            if is_dyn {
+                end_offset = offset + p.text.len();
+            }
         }
 
         Some(text)
@@ -3340,7 +3379,7 @@ impl View for Reader {
                                         },
                                     }
                                 } else {
-                                    self.go_to_neighbor(CycleDir::Next, hub, rq, context);
+                                    self.stop_search(hub, rq);
                                 }
                             },
                             DiagDir::SouthWest => {
@@ -3352,7 +3391,7 @@ impl View for Reader {
                                         hub.send(Event::Show(ViewId::TableOfContents)).ok();
                                     }
                                 } else {
-                                    self.go_to_neighbor(CycleDir::Previous, hub, rq, context);
+                                    self.stop_search(hub, rq);
                                 }
                             },
                         }
@@ -3714,12 +3753,10 @@ impl View for Reader {
                 true
             },
             Event::Close(ViewId::SearchBar) => {
-                self.toggle_results_bar(false, rq, context);
-                self.toggle_search_bar(false, hub, rq, context);
-                if let Some(ref mut s) = self.search {
-                    s.running.store(false, AtomicOrdering::Relaxed);
-                    self.render_results(rq);
-                    self.search = None;
+                self.stop_search(hub, rq);
+                if self.search.is_none() {
+                    self.toggle_results_bar(false, rq, context);
+                    self.toggle_search_bar(false, hub, rq, context);
                 }
                 true
             },
@@ -3816,44 +3853,47 @@ impl View for Reader {
                 true
             },
             Event::SearchResult(location, ref rects) => {
-                if self.search.is_none() {
-                    return true;
-                }
-
-                let mut results_count = 0;
-
                 if let Some(ref mut s) = self.search {
                     let pages_count = s.highlights.len();
                     s.highlights.entry(location).or_insert_with(Vec::new).push(rects.clone());
                     s.results_count += 1;
-                    results_count = s.results_count;
+                    let results_count = s.results_count;
                     if results_count > 1 && location <= self.current_page && s.highlights.len() > pages_count {
                         s.current_page += 1;
                     }
+
+                    self.update_results_bar(rq);
+
+                    if results_count == 1 {
+                        self.toggle_results_bar(false, rq, context);
+                        self.toggle_search_bar(false, hub, rq, context);
+                        self.go_to_page(location, true, hub, rq, context);
+                    } else if location == self.current_page {
+                        self.update(None, hub, rq, context);
+                    }
                 }
-
-                self.update_results_bar(rq);
-
-                if results_count == 1 {
-                    self.toggle_results_bar(false, rq, context);
-                    self.toggle_search_bar(false, hub, rq, context);
-                    self.go_to_page(location, true, hub, rq, context);
-                } else if location == self.current_page {
-                    self.update(None, hub, rq, context);
-                }
-
                 true
             },
             Event::EndOfSearch => {
-                let results_count = self.search.as_ref().map(|s| s.results_count)
-                                        .unwrap_or(usize::MAX);
+                if self.search.is_none() {
+                    return true;
+                }
+                let (results_count, pages_count) =
+                     self.search.as_ref().map(|s| (s.results_count, s.highlights.len())).unwrap();
                 if results_count == 0 {
-                    let notif = Notification::new("No search results.".to_string(),
-                                                  hub, rq, context);
-                    self.children.push(Box::new(notif) as Box<dyn View>);
                     self.toggle_search_bar(true, hub, rq, context);
                     hub.send(Event::Focus(Some(ViewId::ReaderSearchInput))).ok();
                 }
+                let mut msg = if results_count > 0 {
+                    results_count.to_string()
+                } else {
+                    "No".to_string()
+                } + " search result" + if results_count != 1 {"s"} else {""};
+                if pages_count > 0 {
+                    msg += &format!(" in {} page{}", pages_count, if pages_count > 1 {"s"} else {""});
+                }
+                let notif = Notification::new(msg, hub, rq, context);
+                self.children.push(Box::new(notif) as Box<dyn View>);
                 true
             },
             Event::Select(EntryId::AnnotateSelection) => {
@@ -4000,7 +4040,7 @@ impl View for Reader {
             },
             Event::Select(EntryId::RemoveAnnotation(sel)) => {
                 if let Some(annotations) = self.info.reader.as_mut().map(|r| &mut r.annotations) {
-                    annotations.retain(|annot| annot.selection[0] != sel[0] || annot.selection[1] != sel[1]); 
+                    annotations.retain(|annot| annot.selection[0] != sel[0] || annot.selection[1] != sel[1]);
                     self.update_annotations();
                 }
                 if let Some(rect) = self.text_rect(sel) {

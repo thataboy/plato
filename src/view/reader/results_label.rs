@@ -38,7 +38,11 @@ impl ResultsLabel {
         };
 
         if self.count == 0 {
-            format!("No {}", qualifier)
+            if self.completed {
+                format!("No {}", qualifier)
+            } else {
+                "Searching...".to_string()
+            }
         } else {
             format!("{} {}", self.count, qualifier)
         }
