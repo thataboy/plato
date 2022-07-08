@@ -169,7 +169,7 @@ impl Default for LibrarySettings {
             path: env::current_dir().ok()
                       .unwrap_or_else(|| PathBuf::from("/")),
             mode: LibraryMode::Database,
-            sort_method: SortMethod::Opened,
+            sort_method: SortMethod::Status,
             first_column: FirstColumn::TitleAndAuthor,
             second_column: SecondColumn::Progress,
             thumbnail_previews: true,
@@ -617,7 +617,7 @@ impl Default for Settings {
             battery: BatterySettings::default(),
             frontlight_levels: LightLevels::default(),
             frontlight_presets: Vec::new(),
-            refresh_light_off_duration: 500,
+            refresh_light_off_duration: 700,
             max_warmth: 100.0,
             google_translate_server: "https://translate.googleapis.com".to_string(),
             save_to_library: None,
