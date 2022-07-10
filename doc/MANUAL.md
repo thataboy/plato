@@ -87,7 +87,8 @@ Tap gestures by region:
 - *ES* (East Strip):
 	- Normal Mode: next page.
 	- Search Mode: next results page.
-- *CR* (Center Rectangle), *SS* (South Strip) and *NS* (North Strip): toggle the top and bottom bars.
+- *CR* (Center Rectangle) and *SS* (South Strip): toggle the top and bottom bars.
+- *NS* (North Strip): bring up the book menu.
 - *NWC* (North-West Corner): previous location.
 - *NEC* (North-East Corner): toggle bookmark.
 - *SWC* (South-West Corner):
