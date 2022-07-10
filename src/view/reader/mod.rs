@@ -57,7 +57,7 @@ use crate::metadata::{Margin, CroppingMargins, make_query};
 use crate::metadata::{DEFAULT_CONTRAST_EXPONENT, DEFAULT_CONTRAST_GRAY};
 use crate::geom::{Point, Vec2, Rectangle, Boundary, CornerSpec, BorderSpec};
 use crate::geom::{Dir, DiagDir, CycleDir, LinearDir, Axis, Region, halves};
-use crate::color::{BLACK, WHITE};
+use crate::color::{BLACK, WHITE, GRAY03};
 use crate::app::{Context, suppress_flash};
 
 const HISTORY_SIZE: usize = 32;
@@ -2582,13 +2582,10 @@ impl Reader {
                 r.bookmarks.remove(&self.current_page);
             }
         }
-        let dpi = CURRENT_DEVICE.dpi;
-        let thickness = scale_by_dpi(3.0, dpi) as u16;
-        let radius = mm_to_px(0.4, dpi) as i32 + thickness as i32;
-        let center = pt!(self.rect.max.x - 5 * radius,
-                         self.rect.min.y + 5 * radius);
-        let rect = Rectangle::from_disk(center, radius);
-        rq.add(RenderData::new(self.id, rect, UpdateMode::Gui));
+        let w = self.rect.width() as i32 / 25;
+        let min = pt!(self.rect.max.x - w, self.rect.min.y);
+        let max = pt!(self.rect.max.x, self.rect.min.y + w);
+        rq.add(RenderData::new(self.id, rect![min, max], UpdateMode::Gui));
     }
 
     fn set_contrast_exponent(&mut self, exponent: f32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -4315,15 +4312,11 @@ impl View for Reader {
         }
 
         if self.info.reader.as_ref().map_or(false, |r| r.bookmarks.contains(&self.current_page)) {
-            let dpi = CURRENT_DEVICE.dpi;
-            let thickness = scale_by_dpi(3.0, dpi) as u16;
-            let radius = mm_to_px(0.4, dpi) as i32 + thickness as i32;
-            let center = pt!(self.rect.max.x - 5 * radius,
-                             self.rect.min.y + 5 * radius);
-            fb.draw_rounded_rectangle_with_border(&Rectangle::from_disk(center, radius),
-                                                  &CornerSpec::Uniform(radius),
-                                                  &BorderSpec { thickness, color: WHITE },
-                                                  &BLACK);
+            let w = self.rect.width() as i32 / 25;
+            let a = pt!(self.rect.max.x - w, self.rect.min.y);
+            let b = pt!(self.rect.max.x, self.rect.min.y);
+            let c = pt!(self.rect.max.x, self.rect.min.y + w);
+            fb.draw_triangle(&[a, b, c], GRAY03);
         }
     }
 
