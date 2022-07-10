@@ -1889,11 +1889,20 @@ impl Reader {
                 }
             }
 
+            if !entries.is_empty() {
+                entries.push(EntryKind::Separator);
+            }
+
             entries.push(EntryKind::CheckBox("Apply Dithering".to_string(),
                                              EntryId::ToggleDithered,
                                              context.fb.dithered()));
 
-            let title_menu = Menu::new(rect, ViewId::TitleMenu, MenuKind::DropDown, entries, context);
+            let kind = if let Some(_) = locate::<TopBar>(self) {
+                MenuKind::DropDown
+            } else {
+                MenuKind::Contextual
+            };
+            let title_menu = Menu::new(rect, ViewId::TitleMenu, kind, entries, context);
             rq.add(RenderData::new(title_menu.id(), *title_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(title_menu) as Box<dyn View>);
         }
@@ -3442,7 +3451,11 @@ impl View for Reader {
                                     self.go_to_neighbor(CycleDir::Next, hub, rq, context);
                                 }
                             },
-                            Dir::North => self.toggle_bars(None, hub, rq, context),
+                            Dir::North => if let Some(_) = locate::<TopBar>(self) {
+                                self.toggle_bars(None, hub, rq, context);
+                            } else {
+                                self.toggle_title_menu(rect![center, center], Some(true), rq, context);
+                            }
                         }
                     },
                     Region::Center => self.toggle_bars(None, hub, rq, context),

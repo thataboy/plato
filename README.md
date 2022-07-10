@@ -1,8 +1,27 @@
 ![Logo](artworks/plato-logo.svg)
 
-*Plato* is a document reader for *Kobo*'s e-readers.
+*Plato* is a document reader for *Kobo*'s e-readers, created by [Bastien Dejean](https://github.com/baskerville)
 
-Documentation: [GUIDE](doc/GUIDE.md), [MANUAL](doc/MANUAL.md) and [BUILD](doc/BUILD.md).
+This fork by me contains changes and additional features you may find useful, including:
+
+- Themes, CSS tweaking.
+- Google translate and wikipedia search.
+- Page scrubber.
+- Updated library view.
+- lots more.
+
+## Installation
+
+If you already have Plato installed, simply download latest release [here](https://github.com/thataboy/plato/releases) then extract the entire zip file's content into where Plato is installed, usually `./adds/plato`, overwriting everything (your settings will be preserved).
+
+If this is your first time installing Plato, the easiest way is to get the
+[Plato one-click install package from mobileread.com](https://www.mobileread.com/forums/showthread.php?t=314220). After installing that, do the step above to install my version of Plato.
+
+## Documentation
+
+Read the [full install and set up guide](doc/GUIDE.md) and [user manual](doc/MANUAL.md).
+
+Read the [build guide](doc/BUILD.md) if you want to build the app yourself.
 
 ## Supported firmwares
 
