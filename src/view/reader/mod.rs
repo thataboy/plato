@@ -1866,6 +1866,15 @@ impl Reader {
                 entries.push(EntryKind::Separator);
             }
 
+            let themes = context.settings.themes.iter()
+                             .filter(|x| !x.name.starts_with("__"))
+                             .map(|x| { EntryKind::Command(x.name.clone(),
+                                                           EntryId::SetTheme(x.name.clone()))
+            }).collect::<Vec<EntryKind>>();
+            if !themes.is_empty() {
+                entries.push(EntryKind::SubMenu("Themes".to_string(), themes));
+            }
+
             if self.info.file.kind == "epub" {
                 if self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some()) {
                     let tweaks = vec![
