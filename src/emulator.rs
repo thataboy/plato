@@ -292,7 +292,7 @@ fn main() -> Result<(), Error> {
         context.frontlight.set_intensity(0.0);
     }
 
-    println!("{} is running on a Kobo {}.", APP_NAME,
+    println!("\n\n{} is running on a Kobo {}.", APP_NAME,
                                             CURRENT_DEVICE.model);
     println!("The framebuffer resolution is {} by {}.", context.fb.rect().width(),
                                                         context.fb.rect().height());
