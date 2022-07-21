@@ -948,10 +948,16 @@ impl Document for EpubDocument {
         self.cache.clear();
     }
 
-    /// return node selector e.g., "p.indent" or "p",
-    ///        text of block element at given offset,
-    ///        raw html around given offset
-    fn get_node_data_at(&mut self, offset: usize, chunk_size: usize) -> Option<(String, String, String)> {
+    /**
+    return selector of block level element containing offset;
+           selector of span level element with class attribute, if any;
+           text of block containing given offset;
+           snippet of raw html around given offset.
+           e.g., given <p class="indent">hello, <span class="bold">world</span></p>
+           and offset points at "world"
+           return ("p.indent", "span.bold", "hello, world",  "llo, <span class=\"bold\">world</span></p>")
+    */
+    fn get_node_data_at(&mut self, offset: usize, chunk_size: usize) -> Option<(String, String, String, String)> {
         let (index, start_offset) = self.vertebra_coordinates(offset)?;
         let mut text = String::new();
         {
@@ -965,31 +971,44 @@ impl Document for EpubDocument {
         }
         let root = XmlParser::new(&text).parse();
         let target = offset - start_offset;
-        let mut last = None;
-        for node in root.root().descendants() {
-            if node.offset() > target {
-                break;
-            }
-            if node.is_block() {
-                last = Some(node);
-            }
-        }
 
-        let node = last?;
-        let tag_name = node.tag_name()?;
+        // find text node containing target
+        let node = root.root().descendants()
+                       .find(|n| !n.has_children() && n.offset() + n.text().len() > target)?;
+        // find parent div or block-level element
+        let div = node.ancestors().find(|n| n.is_block())?;
+        // find parent wrapper with class attribute, if any
+        let span = node.ancestors()
+                       .take_while(|n| n.offset() > div.offset())
+                       .find(|n| n.attribute("class").is_some());
 
-        let offset = node.offset();
-        let a = if offset > chunk_size / 2 { offset - chunk_size / 2 } else { 0 };
-        let b = (offset + chunk_size).min(text.len());
-        let html = safe_slice(&text, a, b).trim();
-
-        if let Some(ref cls) = node.attribute("class") {
+        let div_tag = div.tag_name()?;
+        let re = Regex::new(r" +").unwrap();
+        let div_selector = if let Some(ref cls) = div.attribute("class") {
             // change "class1 class2 class3" to "class1.class2.class3"
-            let re = Regex::new(r" +").unwrap();
             let cls = re.replace_all(cls.trim(), ".");
-            Some((format!("{}.{}", tag_name, cls), node.text(), html.to_string()))
+            format!("{}.{}", div_tag, cls)
         } else {
-            Some((tag_name.to_string(), node.text(), html.to_string()))
+            div_tag.to_string()
+        };
+
+        let span_selector = if let Some(span) = span {
+            let cls = span.attribute("class").unwrap();
+            let cls = re.replace_all(cls.trim(), ".");
+            let tag = span.tag_name().unwrap_or("");
+            format!("{}.{}", tag, cls)
+        } else {
+            "".to_string()
+        };
+
+        if chunk_size > 0 {
+            let offset = div.offset();
+            let a = if offset > chunk_size / 2 { offset - chunk_size / 2 } else { 0 };
+            let b = (offset + chunk_size).min(text.len());
+            let html = safe_slice(&text, a, b).trim();
+            Some((div_selector, span_selector, div.text(), html.to_string()))
+        } else {
+            Some((div_selector, span_selector, "".to_string(), "".to_string()))
         }
     }
 

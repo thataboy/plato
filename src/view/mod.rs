@@ -458,6 +458,7 @@ pub enum ViewId {
     SubMenu(u8),
     Scrubber,
     ThemeMenu,
+    CssSelectorMenu,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -584,6 +585,7 @@ pub enum EntryId {
     SetContrastGray(i32),
     SetTheme(String),
     SetCssTweak(usize),
+    SetCssTweakEx(String, usize),
     UndoLastCssTweak,
     UndoAllCssTweaks,
     ShowCssTweaks,

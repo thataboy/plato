@@ -119,18 +119,18 @@ Here's an example of when a style like `force font size` will be useful. Sometim
 ```
 [[css-style]]
 name = "force preferences"
-css = "font-size: %fontsize% !important; line-height: %lineheight% !important; text-align: %textalign% !important"
+css = "font-family: serif !important; font-size: %fontsize% !important; line-height: %lineheight% !important; text-align: %textalign% !important"
 ```
 
 ## Notes and caveats
 
-* You can look at the underlying html code by making a selection then choosing `Inspect` from the pop up menu. You can also access a `CSS Tweaks` menu by tapping anywhere on the screen then tapping the book's title at the top of the screen.
+* You can look at the underlying html code by making a selection then choosing `Inspect` from the pop up menu. You can also access a `CSS Tweaks` menu by tapping anywhere on the north strip (the upper part of the screen).
 
 * The created CSS rules are saved externally in `.reading-states` (do not edit the files found there). The epubs are left unmodified.
 
 * Applying the same style more than once to the same element will move the corresponding CSS rule to the end, allowing it to override other rules.
 
-* Currently, only block elements (p, div, h1, h2, ..., etc) can have styles applied to them.
+* When the text you select is inside a wrapper element (e.g., `span`) which in turn is inside a block element (e.g., `div`), Plato cannot determine which to apply styles to, the `div`, the `span`, both, or the `span` but only when appearing inside the `div`. It will therefore asks you to decide. Generally, it is probably best to choose the most specific CSS selector.
 
 * Modifying a style in `Settings.toml` does not change previous applications of the style. You can use the `Undo last` or `Undo all` option under the `CSS tweaks` menu then re-apply the modified style.
 

@@ -113,7 +113,7 @@ pub trait Document: Send+Sync {
     fn set_ignore_document_css(&mut self, ignore: bool);
     fn set_extra_css(&mut self, _text: &str) {
     }
-    fn get_node_data_at(&mut self, _offset: usize, _chunk_size: usize) -> Option<(String, String, String)> {
+    fn get_node_data_at(&mut self, _offset: usize, _chunk_size: usize) -> Option<(String, String, String, String)> {
         None
     }
 

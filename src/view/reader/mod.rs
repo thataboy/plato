@@ -297,8 +297,6 @@ impl Reader {
                 doc.set_ignore_document_css(true);
             }
 
-            let first_location = doc.resolve_location(Location::Exact(0))?;
-
             let mut view_port = ViewPort::default();
             let mut contrast = Contrast::default();
             let pages_count = doc.pages_count();
@@ -310,7 +308,7 @@ impl Reader {
 
                 if r.finished {
                     r.finished = false;
-                    r.current_page = first_location;
+                    r.current_page = 0;
                     r.page_offset = None;
                 }
 
@@ -320,7 +318,7 @@ impl Reader {
                 }
 
                 current_page = doc.resolve_location(Location::Exact(r.current_page))
-                                  .unwrap_or(first_location);
+                                  .unwrap_or_else(|| doc.resolve_location(Location::Exact(0)).unwrap());
 
                 if let Some(zoom_mode) = r.zoom_mode {
                     view_port.zoom_mode = zoom_mode;
@@ -344,7 +342,7 @@ impl Reader {
                 }
 
             } else {
-                current_page = first_location;
+                current_page = doc.resolve_location(Location::Exact(0))?;
 
                 info.reader = Some(ReaderInfo {
                     current_page,
@@ -1878,7 +1876,7 @@ impl Reader {
             if self.info.file.kind == "epub" {
                 if self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some()) {
                     let tweaks = vec![
-                        EntryKind::Command("Show info".to_string(), EntryId::ShowCssTweaks),
+                        EntryKind::Command("Show status".to_string(), EntryId::ShowCssTweaks),
                         EntryKind::Separator,
                         EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak),
                         EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks),
@@ -2330,39 +2328,68 @@ impl Reader {
         }
     }
 
-    fn apply_css_tweak(&mut self, index: usize, hub: &Hub, context: &mut Context) {
+    fn apply_css_tweak(&mut self, index: usize, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
         if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
-            let mut dirty = false;
-            let mut doc = self.doc.lock().unwrap();
-            if let Some((selector, txt, _)) = doc.get_node_data_at(offset, 0) {
-                if let Some(ref mut r) = self.info.reader {
-                    let mut css = context.settings.css_styles[index].css.trim().to_string();
-                    // leading space used to separate rules
-                    css = format!(" {} {}{}{}",
-                                  selector,
-                                  if css.starts_with('{') {""} else {"{"},
-                                  css,
-                                  if css.ends_with('}') {""} else {"}"});
-                    if let Some(ref old_css) = r.extra_css {
-                        css = str::replacen(old_css, &css, "", 1) + &css;
-                    }
-                    r.extra_css = Some(css.to_string());
-                    set_extra_css!(doc, css, &context.settings);
-                    dirty = true;
-                    hub.send(Event::Notify(format!("{} applied to {} {}",
-                                                   context.settings.css_styles[index].name,
-                                                   selector, txt))).ok();
+            let (div_sel, span_sel);
+            {
+                let mut doc = self.doc.lock().unwrap();
+                if let Some((dsel, ssel, _, _)) = doc.get_node_data_at(offset, 0) {
+                    (div_sel, span_sel) = (dsel, ssel);
+                } else {
+                    hub.send(Event::Notify("Unable to determine CSS selector".to_string())).ok();
+                    return;
                 }
+            }
+            if span_sel.is_empty() {
+                self.apply_css_tweak_aux(&div_sel, index, hub, context);
             } else {
-                hub.send(Event::Notify("Unable to determine element".to_string())).ok();
+                let entries = vec![div_sel.to_owned(),
+                                   span_sel.to_owned(),
+                                   format!("{} {}", div_sel, span_sel),
+                                   format!("{}, {}", div_sel, span_sel),
+                                   format!("{0}, {0} {1}", div_sel, span_sel)];
+                let entries = entries.iter()
+                    .map(|x| { EntryKind::Command(x.clone(),
+                                                  EntryId::SetCssTweakEx(x.clone(), index))
+                }).collect();
+                let pt = pt!(self.rect().width() as i32 / 2, self.rect().height() as i32 / 3);
+                let menu = Menu::new(rect![pt, pt], ViewId::CssSelectorMenu, MenuKind::Contextual, entries, context);
+                rq.add(RenderData::new(menu.id(), *menu.rect(), UpdateMode::Gui));
+                self.children.push(Box::new(menu) as Box<dyn View>);
             }
-            if dirty {
-                self.cache.clear();
-                self.text.clear();
+        }
+    }
+
+    fn apply_css_tweak_aux(&mut self, selector: &str, index: usize, hub: &Hub, context: &mut Context) {
+        if Arc::strong_count(&self.doc) > 1 {
+            return;
+        }
+        let mut dirty = false;
+        let mut doc = self.doc.lock().unwrap();
+        if let Some(ref mut r) = self.info.reader {
+            let mut css = context.settings.css_styles[index].css.trim().to_string();
+            // \n used to separate rules
+            css = format!("\n{} {}{}{}",
+                          selector,
+                          if css.starts_with('{') {""} else {"{"},
+                          css,
+                          if css.ends_with('}') {""} else {"}"});
+            if let Some(ref old_css) = r.extra_css {
+                css = str::replacen(old_css, &css, "", 1) + &css;
             }
+            r.extra_css = Some(css.to_string());
+            set_extra_css!(doc, css, &context.settings);
+            dirty = true;
+            hub.send(Event::Notify(format!("{} applied to {}",
+                                           context.settings.css_styles[index].name,
+                                           selector))).ok();
+        }
+        if dirty {
+            self.cache.clear();
+            self.text.clear();
         }
     }
 
@@ -2377,8 +2404,12 @@ impl Reader {
                             </head>\n<body>\n".to_string();
             if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
                 let mut doc = self.doc.lock().unwrap();
-                if let Some((selector, txt, html)) = doc.get_node_data_at(offset, 300) {
-                    buf.push_str(&format!("<p><strong>node</strong>: {}<br />\n\
+                if let Some((div_sel, span_sel, txt, html)) = doc.get_node_data_at(offset, 300) {
+                    let selector = format!("{}{}{}",
+                                           div_sel,
+                                           if span_sel.is_empty() {""} else {", "},
+                                           span_sel);
+                    buf.push_str(&format!("<p><strong>selector</strong>: {}<br />\n\
                                            <strong>text</strong>: {}{}<br />\n\
                                            <strong>html</strong>: <pre>... {} ...</pre></p>\n",
                                           encode_entities(&selector),
@@ -2390,7 +2421,7 @@ impl Reader {
             if let Some(ref css) = r.extra_css {
                 buf.push_str("<h3>Applied styles</h3>\n");
                 buf.push_str(&format!("<ul>\n<li><code>{}</code></li>\n</ul>\n",
-                                      encode_entities(css).trim().replace("} ", "}</code></li>\n<li><code>")));
+                                      encode_entities(css).trim().replace("}", "}</code></li>\n<li><code>")));
             }
             if !context.settings.css_styles.is_empty() {
                 buf.push_str("<h3>Available styles</h3>\n");
@@ -2407,7 +2438,6 @@ impl Reader {
         } else {
             None
         }
-
     }
 
     fn undo_last_tweak(&mut self, hub: &Hub, context: &mut Context) {
@@ -2416,23 +2446,31 @@ impl Reader {
         }
 
         let mut css = "".to_string();
+        let changed;
         if let Some(ref mut r) = self.info.reader {
-            css = r.extra_css.as_ref().unwrap().to_string();
-            let re = Regex::new(r" \S+ \{[^}]+\}$").unwrap();
-            css = re.replace(&css, "").to_string();
-            r.extra_css = if !css.is_empty() {
-                Some(css.to_string())
-            } else {
-                None
-            };
+            let old_css = r.extra_css.as_ref().unwrap().to_string();
+            let re = Regex::new(r"\n[^\n]+$").unwrap();
+            css = re.replace(&old_css, "").to_string();
+            changed = css != old_css;
+            if changed {
+                r.extra_css = if !css.is_empty() {
+                    Some(css.to_string())
+                } else {
+                    None
+                };
+            }
+        } else {
+            changed = false;
         }
-        {
-            let mut doc = self.doc.lock().unwrap();
-            set_extra_css!(doc, css, &context.settings);
+        if changed {
+            {
+                let mut doc = self.doc.lock().unwrap();
+                set_extra_css!(doc, css, &context.settings);
+            }
+            hub.send(Event::Notify("Last tweak removed".to_string())).ok();
+            self.cache.clear();
+            self.text.clear();
         }
-        hub.send(Event::Notify("Last tweak removed".to_string())).ok();
-        self.cache.clear();
-        self.text.clear();
     }
 
     fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -3966,7 +4004,13 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::SetCssTweak(index)) => {
-                self.apply_css_tweak(index, hub, context);
+                self.apply_css_tweak(index, hub, rq, context);
+                self.selection = None;
+                self.update(None, hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::SetCssTweakEx(ref selector, index)) => {
+                self.apply_css_tweak_aux(selector, index, hub, context);
                 self.selection = None;
                 self.update(None, hub, rq, context);
                 true
