@@ -24,6 +24,10 @@ h2. h3, h4, h5 {
 h2 {
 	font-weight: bold;
 	font-size: 1.1em;
-	margin-top: 0.8em;
+	margin-top: 1.2em;
 	margin-bottom: 0.6em;
+}
+
+h2.title {
+	margin-top: 0;
 }
