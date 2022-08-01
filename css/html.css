@@ -10,7 +10,7 @@ i, em, cite, var, address {
 	font-style: italic;
 }
 
-b, strong {
+b, strong, h1, h2, h3, h4, h5, h6 {
 	font-weight: bold;
 }
 

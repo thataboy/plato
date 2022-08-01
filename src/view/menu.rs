@@ -11,7 +11,7 @@ use super::menu_entry::MenuEntry;
 use super::common::locate_by_id;
 use super::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use super::{EntryKind, ViewId, Id, ID_FEEDER, CLOSE_IGNITION_DELAY};
-use super::{SMALL_BAR_HEIGHT, THICKNESS_MEDIUM, THICKNESS_LARGE, BORDER_RADIUS_MEDIUM};
+use super::{MENU_HEIGHT, THICKNESS_MEDIUM, THICKNESS_LARGE, BORDER_RADIUS_MEDIUM};
 use crate::app::Context;
 
 pub struct Menu {
@@ -45,7 +45,7 @@ impl Menu {
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
         let (width, height) = context.display.dims;
-        let small_height = scale_by_dpi(SMALL_BAR_HEIGHT, dpi) as i32;
+        let small_height = scale_by_dpi(MENU_HEIGHT, dpi) as i32;
 
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let border_thickness = scale_by_dpi(THICKNESS_LARGE, dpi) as i32;
@@ -107,7 +107,7 @@ impl Menu {
 
         let mut y_pos = y_start + dir * (border_space - border_thickness);
 
-        let max_width = 2 * width as i32 / 3;
+        let max_width = 9 * width as i32 / 10;
         let free_width = padding + 2 * border_thickness +
                          entries.iter().map(|e| font.plan(e.text(), None, None).width)
                                 .max().unwrap();

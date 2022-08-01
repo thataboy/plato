@@ -79,8 +79,9 @@ pub const BORDER_RADIUS_LARGE: f32 = 12.0;
 
 // Big and small bar heights in pixels, at 300 DPI.
 // On the *Aura ONE*, the height is exactly `2 * sb + 10 * bb`.
-pub const SMALL_BAR_HEIGHT: f32 = 121.0;
-pub const BIG_BAR_HEIGHT: f32 = 163.0;
+pub const SMALL_BAR_HEIGHT: f32 = 111.0; // 121.0;
+pub const BIG_BAR_HEIGHT: f32 = 165.0; // 163.0;
+pub const MENU_HEIGHT: f32 = 121.0;
 
 pub const CLOSE_IGNITION_DELAY: Duration = Duration::from_millis(150);
 

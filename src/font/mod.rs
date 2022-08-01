@@ -26,8 +26,7 @@ use crate::device::CURRENT_DEVICE;
 
 // Font sizes in 1/64th of a point
 // pub const FONT_SIZES: [u32; 3] = [349, 524, 629];
-// luu bigger title font
-pub const FONT_SIZES: [u32; 3] = [349, 524, 730];
+pub const FONT_SIZES: [u32; 3] = [440, 590, 730];
 
 pub const KEYBOARD_FONT_SIZES: [u32; 2] = [337, 843];
 

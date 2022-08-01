@@ -17,7 +17,7 @@ pub struct LightLevels {
 impl Default for LightLevels {
     fn default() -> Self {
         LightLevels {
-            intensity: 0.0,
+            intensity: 50.0,
             warmth: 0.0,
         }
     }
