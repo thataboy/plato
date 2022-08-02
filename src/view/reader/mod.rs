@@ -1548,6 +1548,7 @@ impl Reader {
                                                   self.rect.max.x,
                                                   y_top + tb_height],
                                             self.reflowable,
+                                            self.synthetic,
                                             self.info.reader.as_ref(),
                                             context);
                 self.children.insert(index, Box::new(tool_bar) as Box<dyn View>);
@@ -1765,21 +1766,9 @@ impl Reader {
             }
             let mut entries = vec![
                 EntryKind::Command("Highlight".to_string(), EntryId::HighlightSelection),
-                EntryKind::Command("Add Note".to_string(), EntryId::AnnotateSelection)
+                EntryKind::Command("Add Note".to_string(), EntryId::AnnotateSelection),
+                EntryKind::Command("Adjust Selection".to_string(), EntryId::AdjustSelection),
             ];
-
-            entries.push(EntryKind::Separator);
-            entries.push(EntryKind::Command("Define".to_string(), EntryId::DefineSelection));
-            entries.push(EntryKind::Command("Translate".to_string(), EntryId::TranslateSelection));
-            entries.push(EntryKind::Command("Wikipedia".to_string(), EntryId::WikiSelection));
-            entries.push(EntryKind::Command("Search".to_string(), EntryId::SearchForSelection));
-
-            if self.info.reader.as_ref().map_or(false, |r| !r.page_names.is_empty()) {
-                entries.push(EntryKind::Command("Go To".to_string(), EntryId::GoToSelectedPageName));
-            }
-
-            entries.push(EntryKind::Separator);
-            entries.push(EntryKind::Command("Adjust Selection".to_string(), EntryId::AdjustSelection));
 
             if self.info.file.kind == "epub" {
                 let has_extra_css = self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some());
@@ -1803,6 +1792,16 @@ impl Reader {
                         entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
                     }
                 }
+            }
+
+            entries.push(EntryKind::Separator);
+            entries.push(EntryKind::Command("Define".to_string(), EntryId::DefineSelection));
+            entries.push(EntryKind::Command("Translate".to_string(), EntryId::TranslateSelection));
+            entries.push(EntryKind::Command("Wikipedia".to_string(), EntryId::WikiSelection));
+            entries.push(EntryKind::Command("Search".to_string(), EntryId::SearchForSelection));
+
+            if self.info.reader.as_ref().map_or(false, |r| !r.page_names.is_empty()) {
+                entries.push(EntryKind::Command("Go To".to_string(), EntryId::GoToSelectedPageName));
             }
 
             let selection_menu = Menu::new(rect, ViewId::SelectionMenu, MenuKind::Contextual, entries, context);
@@ -1852,25 +1851,33 @@ impl Reader {
                                             zoom_mode == ZoomMode::Custom(sf))])]
             };
 
-            if self.info.reader.as_ref().map_or(false, |r| !r.annotations.is_empty()) {
-                entries.push(EntryKind::Command("Annotations".to_string(), EntryId::Annotations));
-            }
+            entries.push(EntryKind::Separator);
+            entries.push(EntryKind::CheckBox("Apply Dithering".to_string(),
+                                             EntryId::ToggleDithered,
+                                             context.fb.dithered()));
+            entries.push(EntryKind::Separator);
 
-            if self.info.reader.as_ref().map_or(false, |r| !r.bookmarks.is_empty()) {
-                entries.push(EntryKind::Command("Bookmarks".to_string(), EntryId::Bookmarks));
-            }
+            let l = entries.len();
 
-            if !entries.is_empty() {
-                entries.push(EntryKind::Separator);
-            }
+            if self.synthetic {
+                if self.info.reader.as_ref().map_or(false,
+                                                    |r| r.font_family.is_some()
+                                                    || r.font_size.is_some()
+                                                    || r.margin_width.is_some()
+                                                    || r.text_align.is_some()
+                                                    || r.line_height.is_some()) {
+                    entries.push(EntryKind::Command("Use default settings".to_string(), EntryId::ResetToDefaults));
+                    entries.push(EntryKind::Separator);
+                }
 
-            let themes = context.settings.themes.iter()
-                             .filter(|x| !x.name.starts_with("__"))
-                             .map(|x| { EntryKind::Command(x.name.clone(),
-                                                           EntryId::SetTheme(x.name.clone()))
-            }).collect::<Vec<EntryKind>>();
-            if !themes.is_empty() {
-                entries.push(EntryKind::SubMenu("Themes".to_string(), themes));
+                let themes = context.settings.themes.iter()
+                                 .filter(|x| !x.name.starts_with("__"))
+                                 .map(|x| { EntryKind::Command(x.name.clone(),
+                                                               EntryId::SetTheme(x.name.clone()))
+                }).collect::<Vec<EntryKind>>();
+                if !themes.is_empty() {
+                    entries.push(EntryKind::SubMenu("Themes".to_string(), themes));
+                }
             }
 
             if self.info.file.kind == "epub" {
@@ -1887,13 +1894,17 @@ impl Reader {
                 }
             }
 
-            if !entries.is_empty() {
+            if entries.len() > l {
                 entries.push(EntryKind::Separator);
             }
 
-            entries.push(EntryKind::CheckBox("Apply Dithering".to_string(),
-                                             EntryId::ToggleDithered,
-                                             context.fb.dithered()));
+            if self.info.reader.as_ref().map_or(false, |r| !r.annotations.is_empty()) {
+                entries.push(EntryKind::Command("Annotations".to_string(), EntryId::Annotations));
+            }
+
+            if self.info.reader.as_ref().map_or(false, |r| !r.bookmarks.is_empty()) {
+                entries.push(EntryKind::Command("Bookmarks".to_string(), EntryId::Bookmarks));
+            }
 
             let kind = if let Some(_) = locate::<TopBar>(self) {
                 MenuKind::DropDown
@@ -2229,7 +2240,7 @@ impl Reader {
         }
     }
 
-    fn set_font_size(&mut self, font_size: f32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn set_font_size(&mut self, font_size: f32, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
@@ -2243,6 +2254,8 @@ impl Reader {
             let mut doc = self.doc.lock().unwrap();
 
             doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
+
+            if !redraw { return; }
 
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
@@ -2263,6 +2276,110 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
+    fn set_default(&mut self, name: &str, hub: &Hub, context: &mut Context) {
+        let mut changed = false;
+        if let Some(ref r) = self.info.reader {
+            let defaults = &mut context.settings.reader;
+            match name {
+                "font family" => if let Some(ref font) = r.font_family {
+                    let font_family = font.to_string();
+                    if defaults.font_family != font_family {
+                        defaults.font_family = font_family;
+                        changed = true;
+                    }
+                },
+                "font size" => if let Some(font_size) = r.font_size {
+                    if defaults.font_size != font_size {
+                        defaults.font_size = font_size;
+                        changed = true;
+                    }
+                },
+                "margin" => if self.reflowable {
+                    if let Some(margin_width) = r.margin_width {
+                        if defaults.margin_width != margin_width {
+                            defaults.margin_width = margin_width;
+                            changed = true;
+                        }
+                    }
+                } else {
+                    return;
+                },
+                "text align" => if let Some(text_align) = r.text_align {
+                    if defaults.text_align != text_align {
+                        defaults.text_align = text_align;
+                        changed = true;
+                    }
+                },
+                "line height" => if let Some(line_height) = r.line_height {
+                    if defaults.line_height != line_height {
+                        defaults.line_height = line_height;
+                        changed = true;
+                    }
+                },
+                _ => (),
+            };
+        }
+        let msg = if changed {
+            format!("Default {} set", name)
+        } else {
+            "Already the default".to_string()
+        };
+        hub.send(Event::Notify(msg)).ok();
+    }
+
+    fn reset_to_defaults(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let r = self.info.reader.clone();
+        let defaults = &context.settings.reader.clone();
+        if let Some(ref r) = r {
+            if self.reflowable {
+                if let Some(ref font) = r.font_family {
+                    if &defaults.font_family[..] != font {
+                        self.set_font_family(&defaults.font_family[..], false, hub, rq, context);
+                    }
+                }
+                if let Some(font_size) = r.font_size {
+                    if defaults.font_size != font_size {
+                        self.set_font_size(defaults.font_size, false, hub, rq, context);
+                    }
+                }
+                if let Some(margin_width) = r.margin_width {
+                    if defaults.margin_width != margin_width {
+                        self.set_margin_width(defaults.margin_width, false, hub, rq, context);
+                    }
+                }
+                if let Some(text_align) = r.text_align {
+                    if defaults.text_align != text_align {
+                        self.set_text_align(defaults.text_align, false, hub, rq, context);
+                    }
+                }
+                if let Some(line_height) = r.line_height {
+                    if defaults.line_height != line_height {
+                        self.set_line_height(defaults.line_height, false, hub, rq, context);
+                    }
+                }
+            }
+        }
+        if let Some(ref mut r) = self.info.reader {
+            r.font_family = None;
+            r.font_size = None;
+            r.margin_width = None;
+            r.text_align = None;
+            r.line_height = None;
+        }
+        {
+            let mut doc = self.doc.lock().unwrap();
+            let current_page = self.current_page.min(doc.pages_count() - 1);
+            if let Some(location) =  doc.resolve_location(Location::Exact(current_page)) {
+                self.current_page = location;
+            }
+        }
+        self.cache.clear();
+        self.text.clear();
+        self.update(None, hub, rq, context);
+        self.update_tool_bar(rq, context);
+        self.update_bottom_bar(rq);
+    }
+
     fn apply_theme(&mut self, theme_name: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
@@ -2273,8 +2390,10 @@ impl Reader {
             if theme.dismiss.unwrap_or(true) {
                 self.toggle_bars(Some(false), hub, rq, context);
             }
+            let mut dirty = false;
             if let Some(ref v) = theme.font_family {
-                self.set_font_family(v, hub, rq, context);
+                self.set_font_family(v, false, hub, rq, context);
+                dirty = true;
             }
             if let Some(v) = theme.font_size {
                 let v = if v < 0.0 || theme.font_size_relative.unwrap_or(false) {
@@ -2286,19 +2405,23 @@ impl Reader {
                 };
                 let min_font_size = context.settings.reader.font_size / 2.0;
                 let max_font_size = 3.0 * context.settings.reader.font_size / 2.0;
-                self.set_font_size(v.clamp(min_font_size, max_font_size), hub, rq, context);
+                self.set_font_size(v.clamp(min_font_size, max_font_size), false, hub, rq, context);
+                dirty = true;
             }
             if let Some(v) = theme.text_align {
-                self.set_text_align(v, hub, rq, context);
+                self.set_text_align(v, false, hub, rq, context);
+                dirty = true;
             }
             if let Some(v) = theme.margin_width {
                 let min_margin_width = context.settings.reader.min_margin_width;
                 let max_margin_width = context.settings.reader.max_margin_width;
                 let mw = v.clamp(min_margin_width, max_margin_width);
-                self.set_margin_width(mw, hub, rq, context);
+                self.set_margin_width(mw, false, hub, rq, context);
+                dirty = true;
             }
             if let Some(v) = theme.line_height {
-                self.set_line_height(v.clamp(0.5, 2.0), hub, rq, context);
+                self.set_line_height(v.clamp(0.5, 2.0), false, hub, rq, context);
+                dirty = true;
             }
             if let Some(v) = theme.frontlight {
                 if context.settings.frontlight != v {
@@ -2319,6 +2442,16 @@ impl Reader {
                 {
                     let mut doc = self.doc.lock().unwrap();
                     doc.set_ignore_document_css(v);
+                }
+                dirty = true;
+            }
+            if dirty {
+                {
+                    let mut doc = self.doc.lock().unwrap();
+                    let current_page = self.current_page.min(doc.pages_count() - 1);
+                    if let Some(location) =  doc.resolve_location(Location::Exact(current_page)) {
+                        self.current_page = location;
+                    }
                 }
                 self.cache.clear();
                 self.text.clear();
@@ -2446,21 +2579,21 @@ impl Reader {
         }
 
         let mut css = "".to_string();
-        let changed;
+        let mut changed = false;
         if let Some(ref mut r) = self.info.reader {
-            let old_css = r.extra_css.as_ref().unwrap().to_string();
-            let re = Regex::new(r"\n[^\n]+$").unwrap();
-            css = re.replace(&old_css, "").to_string();
-            changed = css != old_css;
-            if changed {
+            let old_css = r.extra_css.as_ref().unwrap().trim().to_string();
+            // locate the next to last } (the last } isn't followed by \n thanks to trim() )
+            if let Some(i) = old_css.rfind("}\n") {
+                css = old_css[..=i].to_string();
+            }
+            if css != old_css {
                 r.extra_css = if !css.is_empty() {
                     Some(css.to_string())
                 } else {
                     None
                 };
+                changed = true;
             }
-        } else {
-            changed = false;
         }
         if changed {
             {
@@ -2473,7 +2606,7 @@ impl Reader {
         }
     }
 
-    fn set_text_align(&mut self, text_align: TextAlign, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn set_text_align(&mut self, text_align: TextAlign, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
@@ -2485,6 +2618,8 @@ impl Reader {
         {
             let mut doc = self.doc.lock().unwrap();
             doc.set_text_align(text_align);
+
+            if !redraw { return; }
 
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
@@ -2504,7 +2639,7 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
-    fn set_font_family(&mut self, font_family: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn set_font_family(&mut self, font_family: &str, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
@@ -2523,6 +2658,8 @@ impl Reader {
 
             doc.set_font_family(font_family, font_path);
 
+            if !redraw { return; }
+
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
                 if let Some(location) =  doc.resolve_location(Location::Exact(current_page)) {
@@ -2541,7 +2678,7 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
-    fn set_line_height(&mut self, line_height: f32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn set_line_height(&mut self, line_height: f32, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
@@ -2554,6 +2691,8 @@ impl Reader {
             let mut doc = self.doc.lock().unwrap();
             doc.set_line_height(line_height);
 
+            if !redraw { return; }
+
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
                 if let Some(location) =  doc.resolve_location(Location::Exact(current_page)) {
@@ -2572,7 +2711,7 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
-    fn set_margin_width(&mut self, width: i32, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn set_margin_width(&mut self, width: i32, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
@@ -2616,11 +2755,13 @@ impl Reader {
             self.view_port.margin_width = next_margin_width;
         }
 
-        self.text.clear();
-        self.cache.clear();
-        self.update(None, hub, rq, context);
-        self.update_tool_bar(rq, context);
-        self.update_bottom_bar(rq);
+        if redraw {
+            self.text.clear();
+            self.cache.clear();
+            self.update(None, hub, rq, context);
+            self.update_tool_bar(rq, context);
+            self.update_bottom_bar(rq);
+        }
     }
 
     fn toggle_bookmark(&mut self, rq: &mut RenderQueue) {
@@ -3713,7 +3854,7 @@ impl View for Reader {
                 true
             },
             Event::Slider(SliderId::FontSize, font_size, FingerStatus::Up) => {
-                self.set_font_size(font_size, hub, rq, context);
+                self.set_font_size(font_size, true, hub, rq, context);
                 true
             },
             Event::Slider(SliderId::ContrastExponent, exponent, FingerStatus::Up) => {
@@ -3795,6 +3936,14 @@ impl View for Reader {
             },
             Event::ToggleNear(ViewId::ContrastGrayMenu, rect) => {
                 self.toggle_contrast_gray_menu(rect, None, rq, context);
+                true
+            },
+            Event::SetDefault(ref name) => {
+                self.set_default(name, hub, context);
+                true
+            },
+            Event::Select(EntryId::ResetToDefaults) => {
+                self.reset_to_defaults(hub, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::ThemeMenu, rect) => {
@@ -4153,11 +4302,11 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::SetFontFamily(ref font_family)) => {
-                self.set_font_family(font_family, hub, rq, context);
+                self.set_font_family(font_family, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetTextAlign(text_align)) => {
-                self.set_text_align(text_align, hub, rq, context);
+                self.set_text_align(text_align, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetFontSize(v)) => {
@@ -4165,17 +4314,17 @@ impl View for Reader {
                                     .and_then(|r| r.font_size)
                                     .unwrap_or(context.settings.reader.font_size);
                 let font_size = font_size - 1.0 + v as f32 / 10.0;
-                self.set_font_size(font_size, hub, rq, context);
+                self.set_font_size(font_size, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetMarginWidth(width)) => {
-                self.set_margin_width(width, hub, rq, context);
+                self.set_margin_width(width, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetLineHeight(v)) => {
                 let lh_gradient = context.settings.reader.line_height_gradient.clamp(MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT);
                 let line_height = 1.0 + v as f32 * lh_gradient;
-                self.set_line_height(line_height, hub, rq, context);
+                self.set_line_height(line_height, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetContrastExponent(v)) => {

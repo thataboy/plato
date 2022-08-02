@@ -24,7 +24,7 @@ pub struct ToolBar {
 }
 
 impl ToolBar {
-    pub fn new(rect: Rectangle, reflowable: bool, reader_info: Option<&ReaderInfo>, context: &Context) -> ToolBar {
+    pub fn new(rect: Rectangle, reflowable: bool, synthetic: bool, reader_info: Option<&ReaderInfo>, context: &Context) -> ToolBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -205,9 +205,9 @@ impl ToolBar {
 
         let last_rect = rect![rect.max.x - side, rect.max.y - side,
                               rect.max.x, rect.max.y];
-        if context.settings.themes
+        if synthetic && context.settings.themes
                            .iter().filter(|t| !t.name.starts_with("__")).count() > 0 {
-            let theme_icon = Icon::new("enclosed_menu",
+            let theme_icon = Icon::new("themes",
                                        last_rect,
                                        Event::ToggleNear(ViewId::ThemeMenu, last_rect));
             children.push(Box::new(theme_icon) as Box<dyn View>);

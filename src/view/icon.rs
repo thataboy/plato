@@ -115,6 +115,17 @@ impl View for Icon {
                     Event::History(dir, false) => {
                         bus.push_back(Event::History(dir, true));
                     },
+                    Event::ToggleNear(ViewId::FontSizeMenu, _) => {
+                        bus.push_back(Event::SetDefault("font size".to_string()));
+                    },
+                    Event::ToggleNear(ViewId::TextAlignMenu, _) => {
+                        bus.push_back(Event::SetDefault("text align".to_string()));
+                    },
+                    // must belong to a LabeledIcon
+                    // a kludge but I can't seem to handle GestureEvent::HoldFingerShort inside labeled_icon.rs
+                    Event::Validate => if matches!(&self.name[..], "margin" | "font_family" | "line_height") {
+                        bus.push_back(Event::SetDefault(self.name.replacen("_", " ", 1)));
+                    },
                     _ => (),
                 }
                 true

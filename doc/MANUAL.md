@@ -1,3 +1,34 @@
+Table of Contents
+=================
+
+* [Home](#home)
+   * [Address bar](#address-bar)
+   * [Navigation bar](#navigation-bar)
+   * [Shelf](#shelf)
+   * [Search bar](#search-bar)
+      * [Field selectors](#field-selectors)
+      * [State selectors](#state-selectors)
+   * [Bottom bar](#bottom-bar)
+* [Reader](#reader)
+   * [Viewer](#viewer)
+      * [Text Selection](#text-selection)
+   * [Changing settings and defaults](#changing-settings-and-defaults)
+   * [Bottom bar](#bottom-bar-1)
+   * [Top bar](#top-bar)
+* [Home &amp; Reader](#home--reader)
+   * [Menus](#menus)
+   * [Top bar](#top-bar-1)
+   * [Bottom bar](#bottom-bar-2)
+   * [Keyboard](#keyboard)
+* [Applications](#applications)
+   * [Dictionary](#dictionary)
+   * [Calculator](#calculator)
+* [Input Fields](#input-fields)
+* [Annex](#annex)
+   * [Combination Sequences](#combination-sequences)
+
+<!-- Created by https://github.com/ekalinin/github-markdown-toc -->
+
 # Home
 
 The following swipe sequences are recognized:
@@ -131,6 +162,12 @@ Simultaneous swipe sequences:
 ### Text Selection
 
 To select text, tap and hold the first or last word of the selection. Wait for the selection feedback. Move your finger on the other end of the selection and lift it. If you've made a mistake, select *Adjust Selection* and tap on the correct ends; tap and hold the selection when you're done.
+
+## Changing settings and defaults
+
+When you change the margin width / font family / font size / line height / text align setting via the user interface, the change only applies to the book you are reading; the default setting is unchanged. This is by design and it's usually the behavior you want. To save a setting as the default, long press on the corresponding icon. The new default will apply to subsequent books you open.
+
+Conversely, you can set all the above settings to use default values via the book menu.
 
 ## Bottom bar
 
