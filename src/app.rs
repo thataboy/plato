@@ -33,7 +33,7 @@ use crate::document::sys_info_as_html;
 use crate::input::{DeviceEvent, PowerSource, ButtonCode, ButtonStatus, VAL_RELEASE, VAL_PRESS};
 use crate::input::{raw_events, device_events, usb_events, display_rotate_event, button_scheme_event};
 use crate::gesture::{GestureEvent, gesture_events};
-use crate::helpers::{load_json, load_toml, save_toml, IsHidden};
+use crate::helpers::{load_json, load_toml, save_toml, IsHidden, CANNOT_PARSE_TOML};
 use crate::settings::{ButtonScheme, Settings, SETTINGS_PATH, RotationLock, IntermKind};
 use crate::frontlight::{Frontlight, StandardFrontlight, NaturalFrontlight, PremixedFrontlight};
 use crate::lightsensor::{LightSensor, KoboLightSensor};
@@ -242,7 +242,15 @@ fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
                   .ok();
     let path = Path::new(SETTINGS_PATH);
     let mut settings = load_toml::<Settings, _>(path)
-                                .map_err(|e| eprintln!("Can't load settings: {:#}.", e))
+                                .map_err(|e| {
+                                    let err = format!("Can't load settings: {:#}.", e);
+                                    eprintln!("\n{}", err);
+                                    if err.contains(CANNOT_PARSE_TOML) {
+                                        panic!("{}", CANNOT_PARSE_TOML);
+                                    } else {
+                                        eprintln!("Creating default {}", SETTINGS_PATH);
+                                    }
+                                })
                                 .unwrap_or_default();
 
     if settings.libraries.is_empty() {
