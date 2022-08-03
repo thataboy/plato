@@ -732,20 +732,11 @@ impl Engine {
             NodeData::Text(TextData { offset, text }) => {
                 inlines.push(InlineMaterial::Text(TextMaterial {
                     offset: *offset,
-                    text: decode_entities(
-                        if parent_style.display == Display::Block
-                           && node.next_sibling().is_none()
-                           && !parent_style.retain_whitespace {
-                            text.trim_end()
-                        } else {
-                            text
-                        }).into_owned(),
+                    text: decode_entities(text).into_owned(),
                     style: parent_style.clone(),
                 }));
             },
-            NodeData::Whitespace(TextData { offset, text })
-                if node.next_sibling().is_some() && node.previous_sibling().is_some()
-                   || parent_style.retain_whitespace => {
+            NodeData::Whitespace(TextData { offset, text }) => {
                 inlines.push(InlineMaterial::Text(TextMaterial {
                     offset: *offset,
                     text: text.to_string(),
