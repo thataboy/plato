@@ -2537,7 +2537,7 @@ impl Reader {
                             </head>\n<body>\n".to_string();
             if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
                 let mut doc = self.doc.lock().unwrap();
-                if let Some((div_sel, span_sel, txt, html)) = doc.get_node_data_at(offset, 300) {
+                if let Some((div_sel, span_sel, txt, html)) = doc.get_node_data_at(offset, 700) {
                     let selector = format!("{}{}{}",
                                            div_sel,
                                            if span_sel.is_empty() {""} else {", "},

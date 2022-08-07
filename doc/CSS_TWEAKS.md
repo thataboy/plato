@@ -32,15 +32,17 @@ other of their daughters.</p>
 we want to add these rules:
 
 ```
-p.para { text-align: left !important;}
-p.first-para { text-align: left !important;}
+p.para { text-align: left;}
+p.first-para { text-align: left;}
 ```
+
+This is a rather trivial example that is not necessary per se, since there's built-in capability to change text alignment. However, the built-in text align adjuster does not work if the epub is coded a bit differently, e.g., if the `<p>` is wrapped in a `<div>` and the `<div>` is justified.
 
 ## CSS Tweaks
 
-The `CSS Tweaks` feature provides a way to do just this: add specific CSS rules to individual epubs without having to edit them in a program like Calibre.
+`CSS Tweaks` provides a way to add CSS styles to individual epubs and override their styles, without resorting to editing books in a program like Calibre.
 
-First, add styles into `Settings.toml` using the following format:
+Styles are defined in `Settings.toml` using the following format:
 
 ```
 [[css-styles]]
@@ -56,40 +58,42 @@ css = "style declarations"
 
 `style declarations` are `CSS-attribute: value` pairs separated by `;` per usual.  The `{ }` braces are optional and may be omitted.
 
-## Examples
-
-The following define two styles intended called `indent` and `no indent`. The `indent` style may be used for normal prose paragraphs, while the `no indent` style may be used for paragraphs at start of chapters or sections.
+Out of the box, there are 3 pre-defined styles you can use:
 
 ```
-[[css-style]]
-name = "indent"
-css = "text-indent: 1.5em !important; margin: 0 !important; padding: 0 !important;"
+[[css-styles]]
+name = "Main paragraph"
+css = "margin:0; padding:0; text-indent:1.5em; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;"
 
-[[css-style]]
-name = "no indent"
-css = "text-indent: 0 !important; margin: 0 !important; padding: 0 !important;"
+[[css-styles]]
+name = "Opening paragraph"
+css = "margin:2em 0 0 0; padding:0; text-indent:0; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;"
+
+[[css-styles]]
+name = "Force preferences"
+css = "font-family:serif; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;"
 ```
 
-A style to force left alignment:
-
-```
-[[css-style]]
-name = "left align"
-css = "text-align: left !important;"
-```
+As you can see, values can be absolute (`2em`) or variables in the form of `%variable_name%`. They will be substituted with the values you set in the user interface or `Settings.toml`. (More later.)
 
 ## Applying the CSS styles
 
-To apply a style to a paragraph (block element, to be more precise), select any word in the paragraph by holding down for a short interval. The word will be highlighted and the context menu will pop up. Now select `CSS Tweaks` > `style-name`. That style will then be applied to the paragraph and all other paragraphs having the same class name.
+To apply a style to a paragraph (block element, to be more precise), select any word in the paragraph by holding down for a short interval. The word will be highlighted and a context menu will pop up. Now select `CSS Tweaks` > `style-name`. That style will then be applied to the paragraph and all other paragraphs having the same class name. (You can apply multiple styles to the same paragraph by repeating the procedure.)
 
-Repeat said procedure to apply multiple styles to the same paragraph. In the example above, after we apply `indent` and `left align` to the second paragraph, the following CSS rules will be added to the book's stylesheet
+If we apply `Opening paragraph` to the first paragraph and `Main paragraph` to the second paragraph (or third, take your pick) to the above example, we end up adding the following styles to the book:
 
 ```
-p.para { text-indent: 1.5em !important; margin: 0 !important; padding: 0 !important; }
-p.para { text-align: left !important; }
+p.first-para { margin:2em 0 0 0; padding:0; text-indent:0; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%; }
+p.para { margin:0; padding:0; text-indent:1.5em; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%; }
 ```
 
-Voilà! This will make all paragraphs with class  `.para` to be left aligned, first line indented, with no margin or padding.
+So now, all `<p>` with class `first-para` will have top margin, no indent, and use our preferred text align, font size, and line height, while all `<p>` with class `para` will have no margins, small text indent, and use our preferred text align, font size, and line height.
+
+Most narrative fiction / non-fiction books (as opposed to textbooks or technical books) will have two main types of paragraphs: those at the start of chapters or sections, and those in the main body. So just these two rules cover most of what we usually need to make books look consistently the way we like.
+
+The `Force preferences` style does not set any margin or text-indent, but forces your choice of font size, line height, text align, *and* font family. The last is only needed when the publisher sets the main text font to a sans serif font. Setting `font-family` to serif does not mean the font will be a serif, only that it will be *your* chosen font.
+
+BONUS: Many (most?) book publishers inexplicably like to set a font size and/or line height for the main text, forcing the reader to twiddle with font size and line height adjustment. Using CSS Tweaks lets us bypass all that.
 
 ## Variable substitution
 
@@ -102,36 +106,44 @@ CSS values may contain the following variables (*case sensitive*)
 * `%lineheight%`
 * `%textalign%`
 
-`%FONTSIZE%`, `%LINEHEIGHT%`, and `%TEXTALIGN%` (all uppercase) will be substituted with their corresponding default values as defined in `Settings.toml`. For example, if you have `font-size = 14.5` in `Settings.toml`, then this style
+`%FONTSIZE%`, `%LINEHEIGHT%`, and `%TEXTALIGN%` (all uppercase) will be substituted with their corresponding default values as defined in `Settings.toml`. `%fontsize%`, `%lineheight%`, and `%textalign%` (all lowercase) use values that you select in the user interface. These are more flexible as you can change them on the fly.
+
+Note: do *not* specify units such as `em` or `pt`. That is only necessary for absolute values.
+
+## Customizing styles
+
+Of course you are free to change the pre-defined styles as well as add your own. For example, if you want to have a little bit more spacing between paragraphs, you can modify `Main paragraph` and `Opening paragraph` as follows:
 
 ```
-[[css-style]]
-name = "force font size"
-css = "font-size: %FONTSIZE% !important"
+[[css-styles]]
+name = "Main paragraph"
+css = "margin:0.1em 0; padding:0; text-indent:1.5em; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;"
+
+[[css-styles]]
+name = "Opening paragraph"
+css = "margin:2em 0 0.1em 0; padding:0; text-indent:0; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;"
 ```
 
-after substitution becomes `font-size: 14.5pt !important`. Note that the appropriate unit will be supplied for you.
-
-Use `%fontsize%`, `%lineheight%`, and `%textalign%` (all lowercase) if you want the values that you selected in the user interface. These are more flexible as you can change them on the fly and override the defaults in `Settings.toml`.
-
-Here's an example of when a style like `force font size` will be useful. Sometimes, epub creators will set main paragraph's font size to something like `0.85em`, making the main text smaller (why??). You can fiddle with increasing the font size, or you can apply this style to force the font size to your preference. Similarly, you can use the style below to force all values to your preferences without hard coding the values.
+You can add a style to apply to chapter headings:
 
 ```
-[[css-style]]
-name = "force preferences"
-css = "font-family: serif !important; font-size: %fontsize% !important; line-height: %lineheight% !important; text-align: %textalign% !important"
+[[css-styles]]
+name = "Chapter header"
+css = "font-family:"Open Sans"; margin: 3em 0 2em 0; text-align:right; font-weight:bold; font-size:2.5em"
 ```
 
 ## Notes and caveats
 
-* You can look at the underlying html code by making a selection then choosing `Inspect` from the pop up menu. You can also access a `CSS Tweaks` menu by tapping anywhere on the north strip (the upper part of the screen).
+* You can look at the underlying html code by making a selection then choosing `Inspect` from the pop up menu. You can also access the `CSS Tweaks` menu by tapping anywhere on the north strip (the upper part of the screen).
 
 * The created CSS rules are saved externally in `.reading-states` (do not edit the files found there). The epubs are left unmodified.
 
 * Applying the same style more than once to the same element will move the corresponding CSS rule to the end, allowing it to override other rules.
 
-* When the text you select is inside a wrapper element (e.g., `span`) which in turn is inside a block element (e.g., `div`), Plato cannot determine which to apply styles to, the `div`, the `span`, both, or the `span` but only when appearing inside the `div`. It will therefore asks you to decide. Generally, it is probably best to choose the most specific CSS selector.
+* When the text you select is inside a wrapper element (e.g., `<span>`) which in turn is inside a block element (e.g., `<div>`), Plato cannot determine which to apply styles to -- the `<div>`, the `<span>`, or some combination thereof. It will therefore ask you to decide. If you're not sure what to do, choose the most comprehensive CSS selector, i.e., the last one on the list.
 
-* Modifying a style in `Settings.toml` does not change previous applications of the style. You can use the `Undo last` or `Undo all` option under the `CSS tweaks` menu then re-apply the modified style.
+* Use `Undo last` or `Undo all` option under the `CSS tweaks` menu when not getting the results you expected.
 
-* The markup in most epubs is not so clean and simple as our example, so the feature may fail in many instances. Hopefully, it works often enough to be worthwhile.
+* Modifying a style in `Settings.toml` does not change previous applications of the style. You can use `Undo last` or `Undo all` then re-apply the modified style.
+
+* Due to the vagaries of epub markups, this feature may fail in some instances. Hopefully, it works often enough to be worthwhile.

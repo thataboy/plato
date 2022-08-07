@@ -624,7 +624,20 @@ impl Default for Settings {
             wikipedia_languages: vec![String::from("en")],
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
             themes: Vec::new(),
-            css_styles: Vec::new(),
+            css_styles: vec![
+                CssStyle {
+                    name: "Main paragraph".to_string(),
+                    css: "margin:0; padding:0; text-indent:1.5em; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;".to_string(),
+                },
+                CssStyle {
+                    name: "Opening paragraph".to_string(),
+                    css: "margin:2em 0 0 0; padding:0; text-indent:0; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;".to_string(),
+                },
+                CssStyle {
+                    name: "Force preferences".to_string(),
+                    css: "font-family:serif; text-align:%textalign%; font-size:%fontsize%; line-height:%lineheight%;".to_string(),
+                },
+            ],
         }
     }
 }

@@ -361,15 +361,6 @@ impl EpubDocument {
             stylesheet.append(&mut css, true);
         }
 
-        if let Some(ref text) = self.extra_css {
-            let text = text.replace("%fontsize%", &format!("{:.1}pt", self.engine.font_size))
-                           .replace("%lineheight%", &format!("{:.3}em", self.engine.line_height))
-                           .replace("%textalign%", &self.engine.text_align.to_string().to_lowercase());
-            // println!("extra css {} {}", chrono::offset::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"), text);
-            let mut css = CssParser::new(&text).parse();
-            stylesheet.append(&mut css, true);
-        }
-
         if !self.ignore_document_css {
             let mut inner_css = StyleSheet::new();
             if let Some(head) = root.root().find("head") {
@@ -393,6 +384,14 @@ impl EpubDocument {
             }
 
             stylesheet.append(&mut inner_css, true);
+        }
+
+        if let Some(ref text) = self.extra_css {
+            let text = text.replace("%fontsize%", &format!("{:.1}pt", self.engine.font_size))
+                           .replace("%lineheight%", &format!("{:.3}em", self.engine.line_height))
+                           .replace("%textalign%", &self.engine.text_align.to_string().to_lowercase());
+            let mut css = CssParser::new(&text).parse();
+            stylesheet.append(&mut css, true);
         }
 
         let mut display_list = Vec::new();
