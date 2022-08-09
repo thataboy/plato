@@ -38,6 +38,7 @@ use self::bottom_bar::BottomBar;
 use self::results_bar::ResultsBar;
 use crate::view::common::{locate, rlocate, locate_by_id, get_save_path};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
+use crate::view::icon::ICONS_PIXMAPS;
 use crate::view::filler::Filler;
 use crate::view::named_input::NamedInput;
 use crate::view::search_bar::SearchBar;
@@ -1228,18 +1229,14 @@ impl Reader {
     }
 
     /// stop search or exit search mode if search already stopped or only 1 page of results
-    fn stop_search(&mut self, hub: &Hub, rq: &mut RenderQueue) {
+    fn stop_search(&mut self, rq: &mut RenderQueue) {
         if let Some(ref mut s) = self.search {
             let was_running = s.running.swap(false, AtomicOrdering::Relaxed);
             let pages_count = s.highlights.len();
             self.render_results(rq);
-            let msg = if !was_running || pages_count <= 1 {
+            if !was_running || pages_count <= 1 {
                 self.search = None;
-                "Back to normal mode."
-            } else {
-                "Search halted."
-            };
-            hub.send(Event::Notify(msg.to_string())).ok();
+            }
         }
     }
 
@@ -2259,7 +2256,7 @@ impl Reader {
 
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
-                if let Some(location) =  doc.resolve_location(Location::Exact(current_page)) {
+                if let Some(location) = doc.resolve_location(Location::Exact(current_page)) {
                     self.current_page = location;
                 }
             } else {
@@ -3561,8 +3558,17 @@ impl View for Reader {
                     Region::Corner(diag_dir) => {
                         match diag_dir {
                             DiagDir::NorthWest => self.go_to_last_page(hub, rq, context),
-                            DiagDir::NorthEast => self.toggle_bookmark(rq),
-                            DiagDir::SouthEast => {
+                            DiagDir::NorthEast =>
+                                if self.search.is_some() {
+                                    self.stop_search(rq);
+                                    self.update(Some(UpdateMode::Partial), hub, rq, context);
+                                } else if self.ephemeral {
+                                    self.quit(context);
+                                    hub.send(Event::Back).ok();
+                                } else {
+                                    self.toggle_bookmark(rq);
+                                },
+                            DiagDir::SouthEast =>
                                 if self.search.is_none() {
                                     match context.settings.reader.south_east_corner {
                                         SouthEastCornerAction::GoToPage => {
@@ -3573,21 +3579,19 @@ impl View for Reader {
                                         },
                                     }
                                 } else {
-                                    self.stop_search(hub, rq);
-                                }
-                            },
-                            DiagDir::SouthWest => {
+                                    self.go_to_neighbor(CycleDir::Next, hub, rq, context);
+                                },
+                            DiagDir::SouthWest =>
                                 if self.search.is_none() {
-                                    if self.ephemeral && self.info.file.path == PathBuf::from(MEM_SCHEME) {
+                                    if self.ephemeral {
                                         self.quit(context);
                                         hub.send(Event::Back).ok();
                                     } else {
                                         hub.send(Event::Show(ViewId::TableOfContents)).ok();
                                     }
                                 } else {
-                                    self.stop_search(hub, rq);
-                                }
-                            },
+                                    self.go_to_neighbor(CycleDir::Previous, hub, rq, context);
+                                },
                         }
                     },
                     Region::Strip(dir) => {
@@ -3959,11 +3963,12 @@ impl View for Reader {
                 true
             },
             Event::Close(ViewId::SearchBar) => {
-                self.stop_search(hub, rq);
+                self.stop_search(rq);
                 if self.search.is_none() {
                     self.toggle_results_bar(false, rq, context);
                     self.toggle_search_bar(false, hub, rq, context);
                 }
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Close(ViewId::GoToPage) => {
@@ -4075,7 +4080,7 @@ impl View for Reader {
                         self.toggle_search_bar(false, hub, rq, context);
                         self.go_to_page(location, true, hub, rq, context);
                     } else if location == self.current_page {
-                        self.update(None, hub, rq, context);
+                        self.update(Some(UpdateMode::Partial), hub, rq, context);
                     }
                 }
                 true
@@ -4100,6 +4105,7 @@ impl View for Reader {
                 }
                 let notif = Notification::new(msg, hub, rq, context);
                 self.children.push(Box::new(notif) as Box<dyn View>);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::AnnotateSelection) => {
@@ -4155,13 +4161,13 @@ impl View for Reader {
             Event::Select(EntryId::SetCssTweak(index)) => {
                 self.apply_css_tweak(index, hub, rq, context);
                 self.selection = None;
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetCssTweakEx(ref selector, index)) => {
                 self.apply_css_tweak_aux(selector, index, hub, context);
                 self.selection = None;
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::ShowCssTweaks) => {
@@ -4175,7 +4181,7 @@ impl View for Reader {
             Event::Select(EntryId::UndoLastCssTweak) => {
                 self.undo_last_tweak(hub, context);
                 self.selection = None;
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::UndoAllCssTweaks) => {
@@ -4190,7 +4196,7 @@ impl View for Reader {
                 self.selection = None;
                 self.cache.clear();
                 self.text.clear();
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::SearchForSelection) => {
@@ -4516,6 +4522,30 @@ impl View for Reader {
                 }
             }
         }
+
+        // stop / close button
+        if self.ephemeral || self.search.is_some() && locate::<SearchBar>(self).is_none() {
+            let dpi = CURRENT_DEVICE.dpi;
+            let margin = scale_by_dpi(30.0, dpi) as i32;
+            let icon = if let Some(ref s) = self.search {
+                if s.running.load(AtomicOrdering::Relaxed) {
+                    "stop"
+                } else {
+                    "exit"
+                }
+            } else {
+                "close2"
+            };
+            let pixmap = ICONS_PIXMAPS.get(icon).unwrap();
+            let pw = pixmap.width as i32;
+            let background = rect![pt!(self.rect.max.x - 2 * margin - pw,
+                                       self.rect.min.y),
+                                   pt!(self.rect.max.x,
+                                       self.rect.min.y + 2 * margin + pw)];
+            fb.draw_rectangle(&background, WHITE);
+            fb.draw_pixmap(pixmap, pt!(self.rect.max.x - margin - pw,
+                                       self.rect.min.y + margin));
+        } else
 
         if self.info.reader.as_ref().map_or(false, |r| r.bookmarks.contains(&self.current_page)) {
             let w = self.rect.width() as i32 / 25;
