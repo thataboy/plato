@@ -34,7 +34,7 @@ pub const DEFAULT_FONT_FAMILY: &str = "Libertinus Serif";
 pub const DEFAULT_TEXT_ALIGN: TextAlign = TextAlign::Left;
 pub const HYPHEN_PENALTY: i32 = 50;
 pub const STRETCH_TOLERANCE: f32 = 1.26;
-pub const MIN_LINE_HEIGHT_GRADIENT: f32 = 0.025;
+pub const MIN_LINE_HEIGHT_GRADIENT: f32 = 0.0125;
 pub const MAX_LINE_HEIGHT_GRADIENT: f32 = 0.25;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -391,6 +391,15 @@ pub struct RefreshRateSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+pub struct ProgressBarSettings {
+    pub enabled: bool,
+    pub height: i32,
+    pub horz_margin: i32,
+    pub vert_margin: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct ReaderSettings {
     pub finished: FinishedAction,
     pub south_east_corner: SouthEastCornerAction,
@@ -415,6 +424,7 @@ pub struct ReaderSettings {
     pub dithered_kinds: FxHashSet<String>,
     pub paragraph_breaker: ParagraphBreakerSettings,
     pub refresh_rate: RefreshRateSettings,
+    pub progress_bar: ProgressBarSettings,
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -484,6 +494,17 @@ impl Default for RefreshRateSettings {
     }
 }
 
+impl Default for ProgressBarSettings {
+    fn default() -> Self {
+        ProgressBarSettings {
+            enabled: true,
+            height: 12,
+            horz_margin: 20,
+            vert_margin: 12,
+        }
+    }
+}
+
 impl Default for HomeSettings {
     fn default() -> Self {
         HomeSettings {
@@ -530,6 +551,7 @@ impl Default for ReaderSettings {
             dithered_kinds: ["cbz", "png", "jpg", "jpeg"].iter().map(|k| k.to_string()).collect(),
             paragraph_breaker: ParagraphBreakerSettings::default(),
             refresh_rate: RefreshRateSettings::default(),
+            progress_bar: ProgressBarSettings::default(),
         }
     }
 }

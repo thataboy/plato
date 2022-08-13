@@ -157,6 +157,16 @@ stretch-tolerance = 1.26
 regular = 8
 inverted = 2
 
+[reader.progress-bar]
+# whether to show the progress bar
+enabled = true
+# bar height in pixels
+height = 12
+# left and right margin in pixels
+horz_margin = 20
+# bottom margin in pixels
+vert_margin = 12
+
 [import]
 # Start the import process when the device is unplugged from a computer.
 unshare-trigger = true

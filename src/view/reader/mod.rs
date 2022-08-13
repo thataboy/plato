@@ -28,7 +28,7 @@ use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
 use crate::unit::{scale_by_dpi, mm_to_px};
 use crate::device::CURRENT_DEVICE;
 use crate::helpers::{AsciiExtension, first_n_words, trim_non_alphanumeric, encode_entities, safe_slice};
-use crate::font::Fonts;
+use crate::font::{Fonts, font_from_style, SMALL_STYLE};
 use crate::font::family_names;
 use self::margin_cropper::{MarginCropper, BUTTON_DIAMETER};
 use super::top_bar::TopBar;
@@ -45,7 +45,7 @@ use crate::view::search_bar::SearchBar;
 use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::notification::Notification;
-use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction};
+use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction, ProgressBarSettings};
 use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH, MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::frontlight::LightLevels;
@@ -58,7 +58,7 @@ use crate::metadata::{Margin, CroppingMargins, make_query};
 use crate::metadata::{DEFAULT_CONTRAST_EXPONENT, DEFAULT_CONTRAST_GRAY};
 use crate::geom::{Point, Vec2, Rectangle, Boundary, CornerSpec, BorderSpec};
 use crate::geom::{Dir, DiagDir, CycleDir, LinearDir, Axis, Region, halves};
-use crate::color::{BLACK, WHITE, GRAY03};
+use crate::color::{BLACK, WHITE, GRAY03, GRAY10};
 use crate::app::{Context, suppress_flash};
 
 const HISTORY_SIZE: usize = 32;
@@ -98,6 +98,7 @@ pub struct Reader {
     reflowable: bool,
     ephemeral: bool,
     finished: bool,
+    progress_bar: ProgressBarSettings,
 }
 
 #[derive(Debug)]
@@ -261,6 +262,10 @@ impl Reader {
                 doc.set_margin_width(margin_width);
             }
 
+            let mut progress_bar = settings.reader.progress_bar.clone();
+            progress_bar.enabled = info.reader.as_ref().and_then(|r| r.show_progress_bar)
+                                       .unwrap_or(progress_bar.enabled);
+
             let font_family = info.reader.as_ref().and_then(|r| r.font_family.as_ref())
                                   .unwrap_or(&settings.reader.font_family);
 
@@ -387,6 +392,7 @@ impl Reader {
                 ephemeral: false,
                 reflowable,
                 finished: false,
+                progress_bar,
             })
         })
     }
@@ -411,6 +417,8 @@ impl Reader {
         doc.set_margin_width(margin_width);
         let pages_count = doc.pages_count();
         info.title = doc.title().unwrap_or_default();
+        let mut progress_bar = context.settings.reader.progress_bar.clone();
+        progress_bar.enabled = false;
 
         let mut current_page = 0;
         if let Some(link_uri) = link_uri {
@@ -454,6 +462,7 @@ impl Reader {
             ephemeral: true,
             reflowable: true,
             finished: false,
+            progress_bar,
         }
     }
 
@@ -3626,12 +3635,22 @@ impl View for Reader {
                                     self.go_to_results_neighbor(CycleDir::Next, hub, rq, context);
                                 }
                             },
-                            Dir::South => match context.settings.reader.south_strip {
-                                SouthStripAction::ToggleBars => {
-                                    self.toggle_bars(None, hub, rq, context);
+                            Dir::South => if self.synthetic
+                                             && center.y > self.rect.max.y
+                                                           - scale_by_dpi(70.0, CURRENT_DEVICE.dpi) as i32 {
+                                self.progress_bar.enabled = !self.progress_bar.enabled;
+                                if let Some(ref mut r) = self.info.reader {
+                                    r.show_progress_bar = Some(self.progress_bar.enabled);
                                 }
-                                SouthStripAction::NextPage => {
-                                    self.go_to_neighbor(CycleDir::Next, hub, rq, context);
+                                self.update(Some(UpdateMode::Partial), hub, rq, context);
+                            } else {
+                                match context.settings.reader.south_strip {
+                                    SouthStripAction::ToggleBars => {
+                                        self.toggle_bars(None, hub, rq, context);
+                                    },
+                                    SouthStripAction::NextPage => {
+                                        self.go_to_neighbor(CycleDir::Next, hub, rq, context);
+                                    }
                                 }
                             },
                             Dir::North => if let Some(_) = locate::<TopBar>(self) {
@@ -4411,7 +4430,7 @@ impl View for Reader {
         }
     }
 
-    fn render(&self, fb: &mut dyn Framebuffer, rect: Rectangle, _fonts: &mut Fonts) {
+    fn render(&self, fb: &mut dyn Framebuffer, rect: Rectangle, fonts: &mut Fonts) {
         fb.draw_rectangle(&rect, WHITE);
 
         for chunk in &self.chunks {
@@ -4553,6 +4572,38 @@ impl View for Reader {
             let b = pt!(self.rect.max.x, self.rect.min.y);
             let c = pt!(self.rect.max.x, self.rect.min.y + w);
             fb.draw_triangle(&[a, b, c], GRAY03);
+        }
+
+        let pb = &self.progress_bar;
+
+        if self.synthetic && pb.enabled && locate::<BottomBar>(self).is_none() {
+            let dpi = CURRENT_DEVICE.dpi;
+            let font = font_from_style(fonts, &SMALL_STYLE, dpi);
+            let margin = scale_by_dpi(pb.horz_margin as f32, dpi) as i32;
+            let y_margin = scale_by_dpi(pb.vert_margin as f32, dpi) as i32;
+            let gap = scale_by_dpi(15.0 as f32, dpi) as i32;
+            let available_width = self.rect.width() as i32 - 2 * margin;
+            let label_width = (available_width / 11).max(font.x_heights.0 as i32 * 7);
+            let bar_width = available_width - gap - label_width;
+            let bar_height = scale_by_dpi(pb.height as f32, dpi) as i32;
+            let mut x = self.rect.min.x as i32 + margin;
+            let mut y = self.rect.max.y as i32 - bar_height - y_margin;
+            let page_size = x + self.current_page as i32 * bar_width / self.pages_count as i32;
+            fb.draw_rounded_rectangle_with_border(
+                    &rect![pt!(x, y), pt!(x + bar_width, y + bar_height)],
+                    &CornerSpec::Uniform(bar_height / 2),
+                    &BorderSpec { thickness: 0, color: GRAY10 },
+                    &|x, _| if x < page_size { GRAY03 } else { GRAY10 });
+            let mut doc = self.doc.lock().unwrap();
+            let rtoc = self.toc().or_else(|| doc.toc());
+            let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(self.current_page, toc));
+            let progress = chapter.map(|(_, p)| p).unwrap_or_default();
+            let plan = font.plan(&format!("{:.1}p", progress),
+                                          Some(label_width + margin), // allow text to exceed margin
+                                          None);
+            x += bar_width + gap;
+            y += bar_height;
+            font.render(fb, BLACK, &plan, pt!(x, y));
         }
     }
 

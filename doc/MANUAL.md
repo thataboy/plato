@@ -125,6 +125,8 @@ Tap gestures by region:
 - *SWC* (South-West Corner): toggle the table of contents in normal mode, previous page in search mode.
 - *SEC* (South-East Corner): go to page in normal mode, next page in search mode.
 
+While reading epub or html, tap the bottom edge of the screen to toggle the progress bar.
+
 Swipe west/east to go to the next/previous page.
 
 Swipe north/south to scroll the page stream when the zoom mode is fit-to-width.
