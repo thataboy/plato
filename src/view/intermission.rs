@@ -15,10 +15,16 @@ use std::fs::metadata;
 use chrono::Local;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use rand_core::{RngCore, SeedableRng};
+use rand_xoshiro::Xoroshiro128Plus;
 
 lazy_static! {
-    // index to next image in screensaver folder
-    static ref IMGIDX: Mutex<Option<usize>> = Mutex::new(None);
+    // count of images in screensaver folder
+    static ref IMG_COUNT: Mutex<usize> = Mutex::new(0);
+    // shuffled vec of indices for screensaver images
+    static ref SHUFFLE: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    // rng for shuffling
+    static ref RNG: Mutex<Xoroshiro128Plus> = Mutex::new(Xoroshiro128Plus::seed_from_u64(Local::now().timestamp_nanos() as u64));
 }
 
 pub struct Intermission {
@@ -66,14 +72,21 @@ impl Intermission {
                                 images.push(path.to_path_buf());
                             }
                         }
-                        if images.len() > 0 {
-                            let mut midx = IMGIDX.lock().unwrap();
-                            let index = match *midx {
-                                Some(i) => i,
-                                None => Local::now().timestamp_nanos() as usize,
-                            };
-                            *midx = Some(index.wrapping_add(1));
-                            Message::Image(images[index % images.len()].clone())
+                        let n = images.len();
+                        if n > 0 {
+                            let mut count = IMG_COUNT.lock().unwrap();
+                            let mut v = SHUFFLE.lock().unwrap();
+                            let mut rng = RNG.lock().unwrap();
+                            if *count != n || v.is_empty() {
+                                *count = n;
+                                *v = Vec::from_iter(0..n);
+                                // https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle
+                                for i in (1..n).rev() {
+                                    let j = rng.next_u64() as usize % (i + 1);
+                                    (v[j], v[i]) = (v[i], v[j]);
+                                }
+                            }
+                            Message::Image(images[v.pop().unwrap()].clone())
                         } else {
                             Message::Text(kind.text().to_string())
                         }
