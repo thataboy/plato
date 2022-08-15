@@ -15,7 +15,7 @@ use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_me
 use crate::gesture::GestureEvent;
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
-use crate::app::{Context, suppress_flash};
+use crate::app::Context;
 use crate::view::filler::Filler;
 use crate::view::image::Image;
 use crate::view::keyboard::Keyboard;
@@ -92,8 +92,7 @@ impl Translate {
         let wifi = context.settings.wifi;
         let is_stand_alone = query.is_empty();
 
-        suppress_flash(hub, context);
-        rq.add(RenderData::new(id, rect, UpdateMode::Full));
+        rq.add(RenderData::new(id, rect, UpdateMode::Gui));
 
         if is_stand_alone {
             hub.send(Event::Show(ViewId::SearchBar)).ok();

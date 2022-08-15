@@ -106,6 +106,7 @@ pub struct Settings {
     pub inverted: bool,
     pub sleep_cover: bool,
     pub auto_share: bool,
+    pub suppress_screen_flash: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation_lock: Option<RotationLock>,
     pub button_scheme: ButtonScheme,
@@ -115,7 +116,6 @@ pub struct Settings {
     pub date_format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_urls_queue: Option<PathBuf>,
-    pub refresh_light_off_duration: u64,
     pub max_warmth: f32,
     pub google_translate_server: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -488,8 +488,8 @@ pub enum WestStripAction {
 impl Default for RefreshRateSettings {
     fn default() -> Self {
         RefreshRateSettings {
-            regular: 8,
-            inverted: 2,
+            regular: 10,
+            inverted: 5,
         }
     }
 }
@@ -619,6 +619,7 @@ impl Default for Settings {
             inverted: false,
             sleep_cover: true,
             auto_share: false,
+            suppress_screen_flash: true,
             rotation_lock: None,
             button_scheme: ButtonScheme::Natural,
             auto_suspend: 30,
@@ -639,7 +640,6 @@ impl Default for Settings {
             battery: BatterySettings::default(),
             frontlight_levels: LightLevels::default(),
             frontlight_presets: Vec::new(),
-            refresh_light_off_duration: 700,
             max_warmth: 100.0,
             google_translate_server: "https://translate.googleapis.com".to_string(),
             save_to_library: None,

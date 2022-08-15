@@ -15,7 +15,7 @@ use rand_core::SeedableRng;
 use rand_xoshiro::Xoroshiro128Plus;
 use crate::dictionary::{Dictionary, load_dictionary_from_file};
 use crate::framebuffer::{Framebuffer, KoboFramebuffer1, KoboFramebuffer2, Display, UpdateMode};
-use crate::view::{View, Hub, Event, EntryId, EntryKind, ViewId, AppCmd, RenderData, RenderQueue, UpdateData};
+use crate::view::{View, Event, EntryId, EntryKind, ViewId, AppCmd, RenderData, RenderQueue, UpdateData};
 use crate::view::{handle_event, process_render_queue, wait_for_all};
 use crate::view::common::{locate, locate_by_id, transfer_notifications, overlapping_rectangle};
 use crate::view::common::{toggle_input_history_menu, toggle_keyboard_layout_menu};
@@ -353,20 +353,6 @@ fn set_wifi(enable: bool, context: &mut Context) {
                 .status()
                 .ok();
         context.online = false;
-    }
-}
-
-pub fn suppress_flash(hub: &Hub, context: &Context) {
-    if context.settings.frontlight
-       && context.fb.inverted()
-       && context.settings.refresh_light_off_duration > 0 {
-        hub.send(Event::ToggleFrontlight).ok();
-        let hub1 = hub.clone();
-        let delay = Duration::from_millis(context.settings.refresh_light_off_duration);
-        thread::spawn(move || {
-            thread::sleep(delay);
-            hub1.send(Event::ToggleFrontlight).ok();
-        });
     }
 }
 
@@ -861,7 +847,6 @@ pub fn run() -> Result<(), Error> {
                                                     context.settings.reader.corner_width);
                         match (r1, r2) {
                             (Region::Corner(DiagDir::SouthWest), Region::Corner(DiagDir::NorthEast)) => {
-                                suppress_flash(&tx, &context);
                                 rq.add(RenderData::new(view.id(), context.fb.rect(), UpdateMode::Full));
                             },
                             (Region::Corner(DiagDir::NorthWest), Region::Corner(DiagDir::SouthEast)) => {

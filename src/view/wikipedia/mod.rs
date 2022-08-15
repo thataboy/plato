@@ -11,7 +11,7 @@ use crate::gesture::GestureEvent;
 use crate::helpers::{save_text, first_n_words};
 use crate::input::{DeviceEvent, ButtonCode, ButtonStatus};
 use crate::color::BLACK;
-use crate::app::{Context, suppress_flash};
+use crate::app::Context;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{ViewId, Id, ID_FEEDER, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
@@ -101,8 +101,7 @@ impl Wiki {
         let is_stand_alone = query.is_empty();
         let lang = context.settings.wikipedia_languages[0].to_owned();
 
-        suppress_flash(hub, context);
-        rq.add(RenderData::new(id, rect, UpdateMode::Full));
+        rq.add(RenderData::new(id, rect, UpdateMode::Gui));
 
         if is_stand_alone {
             hub.send(Event::Show(ViewId::SearchBar)).ok();

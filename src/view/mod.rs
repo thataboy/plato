@@ -270,8 +270,26 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
                context.fb.as_mut(), &mut context.fonts, updating);
 
         for rect in rects {
+            let normal_update = if mode == UpdateMode::Full
+                                   && context.fb.inverted()
+                                   && context.settings.frontlight
+                                   && context.settings.suppress_screen_flash {
+                context.set_frontlight(false);
+                false
+            } else {
+                true
+            };
             match context.fb.update(&rect, mode) {
-                Ok(token) => { updating.push(UpdateData { token, rect, time: Instant::now()}); },
+                Ok(token) =>
+                    if normal_update {
+                        updating.push(UpdateData { token, rect, time: Instant::now()});
+                    } else {
+                        context.fb.wait(token)
+                                  .map_err(|e| eprintln!("process_render_queue can't wait for {}, {}: {:#}",
+                                                         token, rect, e))
+                                  .ok();
+                        context.set_frontlight(true);
+                    },
                 Err(err) => { eprintln!("Can't update {}: {:#}.", rect, err); },
             }
         }

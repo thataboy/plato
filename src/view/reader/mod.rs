@@ -59,7 +59,7 @@ use crate::metadata::{DEFAULT_CONTRAST_EXPONENT, DEFAULT_CONTRAST_GRAY};
 use crate::geom::{Point, Vec2, Rectangle, Boundary, CornerSpec, BorderSpec};
 use crate::geom::{Dir, DiagDir, CycleDir, LinearDir, Axis, Region, halves};
 use crate::color::{BLACK, WHITE, GRAY03, GRAY10};
-use crate::app::{Context, suppress_flash};
+use crate::app::Context;
 
 const HISTORY_SIZE: usize = 32;
 const RECT_DIST_JITTER: f32 = 24.0;
@@ -1027,15 +1027,14 @@ impl Reader {
             } else {
                 context.settings.reader.refresh_rate.regular
             };
-            if refresh_rate == 0 || self.page_turns % (refresh_rate as usize) != 0 {
+            if refresh_rate == 0 || self.page_turns < refresh_rate as usize {
                 UpdateMode::Partial
             } else {
                 UpdateMode::Full
             }
         });
-
         if update_mode == UpdateMode::Full {
-            suppress_flash(hub, context);
+            self.page_turns = 0;
         }
 
         self.chunks.clear();
@@ -2277,7 +2276,7 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
     }
@@ -2381,7 +2380,7 @@ impl Reader {
         }
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
     }
@@ -2461,7 +2460,7 @@ impl Reader {
                 }
                 self.cache.clear();
                 self.text.clear();
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 self.update_bottom_bar(rq);
             }
         }
@@ -2640,7 +2639,7 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
     }
@@ -2679,7 +2678,7 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
     }
@@ -2712,7 +2711,7 @@ impl Reader {
 
         self.cache.clear();
         self.text.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
         self.update_bottom_bar(rq);
     }
@@ -2764,7 +2763,7 @@ impl Reader {
         if redraw {
             self.text.clear();
             self.cache.clear();
-            self.update(None, hub, rq, context);
+            self.update(Some(UpdateMode::Partial), hub, rq, context);
             self.update_tool_bar(rq, context);
             self.update_bottom_bar(rq);
         }
@@ -2787,7 +2786,7 @@ impl Reader {
             r.contrast_exponent = Some(exponent);
         }
         self.contrast.exponent = exponent;
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
     }
 
@@ -2796,7 +2795,7 @@ impl Reader {
             r.contrast_gray = Some(gray);
         }
         self.contrast.gray = gray;
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
         self.update_tool_bar(rq, context);
     }
 
@@ -2809,7 +2808,19 @@ impl Reader {
             self.view_port.page_offset = pt!(0, 0);
         }
         self.cache.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
+    }
+
+    fn toggle_inverted(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let inverted = !context.fb.inverted();
+        self.update_noninverted_regions(inverted);
+        context.fb.toggle_inverted();
+        context.settings.inverted = inverted;
+        rq.add(RenderData::new(self.id(), context.fb.rect(), UpdateMode::Full));
+        hub.send(Event::ApplyTheme(
+                    if inverted { ON_INVERTED.to_string() }
+                    else { ON_UNINVERTED.to_string() })
+                ).ok();
     }
 
     fn crop_margins(&mut self, index: usize, margin: &Margin, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
@@ -2843,7 +2854,7 @@ impl Reader {
             }
         }
         self.cache.clear();
-        self.update(None, hub, rq, context);
+        self.update(Some(UpdateMode::Partial), hub, rq, context);
     }
 
     fn toc(&self) -> Option<Vec<TocEntry>> {
@@ -3175,12 +3186,7 @@ impl View for Reader {
                             hub.send(Event::Select(EntryId::ToggleDithered)).ok();
                         },
                         BottomRightGestureAction::ToggleInverted => {
-                            let inverted = !context.fb.inverted();
-                            hub.send(Event::Select(EntryId::ToggleInverted)).ok();
-                            hub.send(Event::ApplyTheme(
-                                        if inverted { ON_INVERTED.to_string() }
-                                        else { ON_UNINVERTED.to_string() })
-                                    ).ok();
+                            self.toggle_inverted(hub, rq, context);
                         },
                     },
                     DiagDir::SouthWest => {
@@ -4319,7 +4325,7 @@ impl View for Reader {
                     r.cropping_margins = None;
                 }
                 self.cache.clear();
-                self.update(None, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
             Event::Select(EntryId::SearchDirection(dir)) => {
@@ -4373,13 +4379,8 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::ToggleInverted) => {
-                let inverted = !context.fb.inverted();
-                self.update_noninverted_regions(inverted);
-                hub.send(Event::ApplyTheme(
-                            if inverted { ON_INVERTED.to_string() }
-                            else { ON_UNINVERTED.to_string() })
-                        ).ok();
-                false
+                self.toggle_inverted(hub, rq, context);
+                true
             },
             Event::Select(EntryId::SetTheme(ref r)) => {
                 hub.send(Event::ApplyTheme(r.to_string())).ok();
