@@ -103,6 +103,7 @@ pub struct Settings {
     pub inverted: bool,
     pub sleep_cover: bool,
     pub auto_share: bool,
+    pub suppress_screen_flash: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation_lock: Option<RotationLock>,
     pub button_scheme: ButtonScheme,
@@ -518,6 +519,7 @@ impl Default for Settings {
             inverted: false,
             sleep_cover: true,
             auto_share: false,
+            suppress_screen_flash: true,
             rotation_lock: None,
             button_scheme: ButtonScheme::Natural,
             auto_suspend: 30,

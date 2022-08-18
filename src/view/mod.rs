@@ -43,6 +43,7 @@ pub mod sketch;
 pub mod touch_events;
 pub mod rotation_values;
 
+use std::thread;
 use std::ops::{Deref, DerefMut};
 use std::time::{Instant, Duration};
 use std::path::PathBuf;
@@ -267,9 +268,23 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
                context.fb.as_mut(), &mut context.fonts, updating);
 
         for rect in rects {
-            match context.fb.update(&rect, mode) {
-                Ok(token) => { updating.push(UpdateData { token, rect, time: Instant::now()}); },
-                Err(err) => { eprintln!("Can't update {}: {:#}.", rect, err); },
+            if mode == UpdateMode::Full
+               && context.settings.frontlight
+               && context.fb.inverted()
+               && context.settings.suppress_screen_flash {
+                context.set_frontlight(false);
+                if let Ok(token) = context.fb.update(&rect, mode) {
+                    context.fb.wait(token)
+                              .map_err(|e| eprintln!("process_render_queue can't wait for {}, {}: {:#}",
+                                                     token, rect, e))
+                              .ok();
+                }
+                context.set_frontlight(true);
+            } else {
+                match context.fb.update(&rect, mode) {
+                    Ok(token) => { updating.push(UpdateData { token, rect, time: Instant::now()}); },
+                    Err(err) => { eprintln!("Can't update {}: {:#}.", rect, err); },
+                }
             }
         }
     }

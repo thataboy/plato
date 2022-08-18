@@ -9,6 +9,10 @@ inverted = false
 sleep-cover = true
 # Automatically enters shared mode when connected to a computer.
 auto-share = false
+# Whether to suppress the white flash that results
+# when the screen does a full refresh in inverted mode
+# by temporarily turning off the front light (if on)
+suppress-screen-flash = true
 # Defines how the back and forward buttons are mapped to the
 # *page forward* and *page backward* actions.
 # Possible values: "natural", "inverted".
