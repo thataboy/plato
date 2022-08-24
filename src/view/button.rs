@@ -18,6 +18,7 @@ pub struct Button {
     text: String,
     active: bool,
     pub disabled: bool,
+    toggled: Option<bool>,
 }
 
 impl Button {
@@ -30,12 +31,22 @@ impl Button {
             text,
             active: false,
             disabled: false,
+            toggled: None,
         }
     }
 
     pub fn disabled(mut self, value: bool) -> Button {
         self.disabled = value;
         self
+    }
+
+    pub fn toggle(mut self, value: bool) -> Button {
+        self.toggled = Some(value);
+        self
+    }
+
+    pub fn toggled(&self) -> bool {
+        self.toggled.map_or(false, |x| x)
     }
 }
 
@@ -51,6 +62,9 @@ impl View for Button {
                     },
                     FingerStatus::Up if self.active => {
                         self.active = false;
+                        if let Some(toggled) = self.toggled {
+                            self.toggled = Some(!toggled);
+                        }
                         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
                         true
                     },
@@ -70,7 +84,7 @@ impl View for Button {
     fn render(&self, fb: &mut dyn Framebuffer, _rect: Rectangle, fonts: &mut Fonts) {
         let dpi = CURRENT_DEVICE.dpi;
 
-        let scheme = if self.active {
+        let scheme = if self.active ^ self.toggled() {
             TEXT_INVERTED_HARD
         } else {
             TEXT_NORMAL

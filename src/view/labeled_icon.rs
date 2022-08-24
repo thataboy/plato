@@ -46,6 +46,13 @@ impl LabeledIcon {
             label.update(text, rq);
         }
     }
+
+    pub fn hold(mut self, event: Event) -> LabeledIcon {
+        if let Some(icon) = self.children[0].downcast_mut::<Icon>() {
+            icon.hold = Some(event);
+        }
+        self
+    }
 }
 
 impl View for LabeledIcon {

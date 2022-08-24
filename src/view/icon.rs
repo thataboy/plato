@@ -27,7 +27,7 @@ lazy_static! {
                      "close",  "check_mark-small", "check_mark", "check_mark-large", "bullet",
                      "arrow-left", "arrow-right", "angle-down", "angle-up", "crop", "toc", "font_family",
                      "font_size", "line_height", "align-justify", "align-left", "align-right",
-                     "double_angle-left", "double_angle-right", "download", "read", "themes", "stop", "close2", "exit",
+                     "double_angle-left", "double_angle-right", "download", "read", "themes", "stop", "close2", "exit", "vertical-dots",
                      "align-center", "margin", "plug", "cover", "enclosed_menu", "contrast", "gray"].iter().cloned() {
             let path = dir.join(&format!("{}.svg", name));
             let doc = PdfOpener::new().and_then(|o| o.open(path)).unwrap();
@@ -46,8 +46,9 @@ pub struct Icon {
     background: u8,
     align: Align,
     corners: Option<CornerSpec>,
-    event: Event,
+    pub event: Event,
     pub active: bool,
+    pub hold: Option<Event>,
 }
 
 impl Icon {
@@ -62,6 +63,7 @@ impl Icon {
             corners: None,
             event,
             active: false,
+            hold: None,
         }
     }
 
@@ -77,6 +79,11 @@ impl Icon {
 
     pub fn corners(mut self, corners: Option<CornerSpec>) -> Icon {
         self.corners = corners;
+        self
+    }
+
+    pub fn hold(mut self, event: Event) -> Icon {
+        self.hold = Some(event);
         self
     }
 }
@@ -104,29 +111,22 @@ impl View for Icon {
                 true
             },
             Event::Gesture(GestureEvent::HoldFingerShort(center, ..)) if self.rect.includes(center) => {
-                match self.event {
-                    Event::Page(dir) => bus.push_back(Event::Chapter(dir)),
-                    Event::Show(ViewId::Frontlight) => {
-                        hub.send(Event::ToggleFrontlight).ok();
-                    },
-                    Event::Show(ViewId::MarginCropper) => {
-                        bus.push_back(Event::ToggleNear(ViewId::MarginCropperMenu, self.rect));
-                    },
-                    Event::History(dir, false) => {
-                        bus.push_back(Event::History(dir, true));
-                    },
-                    Event::ToggleNear(ViewId::FontSizeMenu, _) => {
-                        bus.push_back(Event::SetDefault("font size".to_string()));
-                    },
-                    Event::ToggleNear(ViewId::TextAlignMenu, _) => {
-                        bus.push_back(Event::SetDefault("text align".to_string()));
-                    },
-                    // must belong to a LabeledIcon
-                    // a kludge but I can't seem to handle GestureEvent::HoldFingerShort inside labeled_icon.rs
-                    Event::Validate => if matches!(&self.name[..], "margin" | "font_family" | "line_height") {
-                        bus.push_back(Event::SetDefault(self.name.replacen("_", " ", 1)));
-                    },
-                    _ => (),
+                if let Some(event) = &self.hold {
+                    bus.push_back(event.clone());
+                } else {
+                    match self.event {
+                        Event::Page(dir) => bus.push_back(Event::Chapter(dir)),
+                        Event::Show(ViewId::Frontlight) => {
+                            hub.send(Event::ToggleFrontlight).ok();
+                        },
+                        Event::Show(ViewId::MarginCropper) => {
+                            bus.push_back(Event::ToggleNear(ViewId::MarginCropperMenu, self.rect));
+                        },
+                        Event::History(dir, false) => {
+                            bus.push_back(Event::History(dir, true));
+                        },
+                        _ => (),
+                    }
                 }
                 true
             },

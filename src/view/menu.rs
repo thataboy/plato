@@ -268,9 +268,9 @@ impl View for Menu {
                 self.root
             },
             Event::Gesture(GestureEvent::HoldFingerShort(center, ..)) if !self.rect.includes(center) => self.root,
-            Event::SubMenu(rect, ref entries) => {
+            Event::SubMenu(rect, ref entries, kind) => {
                 let menu = Menu::new(rect, ViewId::SubMenu(self.sub_id),
-                                     MenuKind::SubMenu, entries.clone(), context).root(false);
+                                     kind, entries.clone(), context).root(false);
                 rq.add(RenderData::new(menu.id(), *menu.rect(), UpdateMode::Gui));
                 self.children.push(Box::new(menu) as Box<dyn View>);
                 self.sub_id = self.sub_id.wrapping_add(1);

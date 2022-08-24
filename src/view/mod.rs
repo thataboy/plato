@@ -348,7 +348,7 @@ pub enum Event {
     TogglePresetMenu(Rectangle, usize),
     ApplyTheme(String),
     SetDefault(String),
-    SubMenu(Rectangle, Vec<EntryKind>),
+    SubMenu(Rectangle, Vec<EntryKind>, MenuKind),
     ProcessLine(LineOrigin, String),
     History(CycleDir, bool),
     Toggle(ViewId),
@@ -541,6 +541,7 @@ pub enum TextKind {
 pub enum EntryKind {
     Message(String, Option<String>),
     Command(String, EntryId),
+    CommandEx(String, EntryId, Vec<EntryKind>), // command with extra 3 dot menu
     CheckBox(String, EntryId, bool),
     RadioButton(String, EntryId, bool),
     SubMenu(String, Vec<EntryKind>),
@@ -644,6 +645,7 @@ impl EntryKind {
         match *self {
             EntryKind::Message(ref s, ..) |
             EntryKind::Command(ref s, ..) |
+            EntryKind::CommandEx(ref s, ..) |
             EntryKind::CheckBox(ref s, ..) |
             EntryKind::RadioButton(ref s, ..) |
             EntryKind::SubMenu(ref s, ..) => s,

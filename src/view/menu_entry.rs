@@ -1,7 +1,9 @@
 use std::mem;
+use std::sync::Mutex;
 use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
 use crate::geom::{Rectangle, CornerSpec};
+use super::menu::MenuKind;
 use super::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, EntryKind};
 use super::icon::ICONS_PIXMAPS;
 use crate::input::{DeviceEvent, FingerStatus};
@@ -9,6 +11,8 @@ use crate::gesture::GestureEvent;
 use crate::font::{Fonts, font_from_style, NORMAL_STYLE, SPECIAL_STYLE};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::app::Context;
+
+static DOT_MENU_WIDTH: Mutex<i32> = Mutex::new(0);
 
 pub struct MenuEntry {
     id: Id,
@@ -18,6 +22,7 @@ pub struct MenuEntry {
     corner_spec: Option<CornerSpec>,
     anchor: Rectangle,
     active: bool,
+    dot_menu_active: Option<bool>,
 }
 
 impl MenuEntry {
@@ -30,6 +35,7 @@ impl MenuEntry {
             corner_spec,
             anchor,
             active: false,
+            dot_menu_active: None,
         }
     }
 
@@ -41,6 +47,7 @@ impl MenuEntry {
             }
         }
     }
+
 }
 
 impl View for MenuEntry {
@@ -50,6 +57,12 @@ impl View for MenuEntry {
                 match status {
                     FingerStatus::Down if self.rect.includes(position) => {
                         self.active = true;
+                        self.dot_menu_active = if let EntryKind::CommandEx(..) = self.kind {
+                            let dot_menu_x = self.rect.max.x - *DOT_MENU_WIDTH.lock().unwrap();
+                            Some(position.x >= dot_menu_x)
+                        } else {
+                            None
+                        };
                         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Fast));
                         true
                     },
@@ -61,8 +74,7 @@ impl View for MenuEntry {
                     _ => false,
                 }
             },
-            Event::Gesture(GestureEvent::Tap(center)) |
-            Event::Gesture(GestureEvent::HoldFingerShort(center, ..)) if self.rect.includes(center) => {
+            Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
                 match self.kind {
                     EntryKind::CheckBox(_, _, ref mut value) => {
                         *value = !*value;
@@ -79,12 +91,21 @@ impl View for MenuEntry {
                     EntryKind::CheckBox(_, ref id, _) |
                     EntryKind::RadioButton(_, ref id, _) => {
                         bus.push_back(Event::Select(id.clone()));
-                        if let Event::Gesture(GestureEvent::Tap { .. }) = *evt {
-                            bus.push_back(Event::Validate);
-                        }
+                        bus.push_back(Event::Validate);
                     },
                     EntryKind::SubMenu(_, ref entries) | EntryKind::More(ref entries) => {
-                        bus.push_back(Event::SubMenu(self.anchor, entries.clone()));
+                        bus.push_back(Event::SubMenu(self.anchor, entries.clone(), MenuKind::SubMenu));
+                    },
+                    EntryKind::CommandEx(_, ref id, ref entries) => {
+                        let dot_menu_x = self.rect.max.x - *DOT_MENU_WIDTH.lock().unwrap();
+                        if center.x < dot_menu_x {
+                            bus.push_back(Event::Select(id.clone()));
+                            bus.push_back(Event::Validate);
+                        } else {
+                            let rect = rect![dot_menu_x, self.rect.min.y,
+                                             self.rect.max.x, self.rect.max.y];
+                            bus.push_back(Event::SubMenu(rect, entries.clone(), MenuKind::Contextual));
+                        }
                     },
                     EntryKind::Message(..) => {
                         bus.push_back(Event::Validate);
@@ -128,10 +149,24 @@ impl View for MenuEntry {
             TEXT_NORMAL
         };
 
+        let arect = match self.dot_menu_active {
+            None => self.rect.clone(),
+            Some(active) => {
+                let dot_menu_x = self.rect.max.x - *DOT_MENU_WIDTH.lock().unwrap();
+                if active {
+                    rect![dot_menu_x, self.rect.min.y,
+                          self.rect.max.x, self.rect.max.y]
+                } else {
+                    rect![self.rect.min.x, self.rect.min.y,
+                          dot_menu_x, self.rect.max.y]
+                }
+            },
+        };
+
         if let Some(ref cs) = self.corner_spec {
-            fb.draw_rounded_rectangle(&self.rect, cs, scheme[0]);
+            fb.draw_rounded_rectangle(&arect, cs, scheme[0]);
         } else {
-            fb.draw_rectangle(&self.rect, scheme[0]);
+            fb.draw_rectangle(&arect, scheme[0]);
         }
 
         let max_width = self.rect.width() as i32 - padding;
@@ -140,7 +175,9 @@ impl View for MenuEntry {
         let pt = pt!(self.rect.min.x + padding / 2,
                      self.rect.max.y - dy);
 
-        font.render(fb, scheme[1], &plan, pt); 
+        font.render(fb,
+                    if !self.dot_menu_active.unwrap_or(false) { scheme[1] } else { TEXT_NORMAL[1] }
+                    , &plan, pt);
 
         let (icon_name, x_offset) = match self.kind {
             EntryKind::CheckBox(_, _, value) if value => ("check_mark", 0),
@@ -149,10 +186,15 @@ impl View for MenuEntry {
             EntryKind::SubMenu(..) |
             EntryKind::More(..) => ("angle-right-small",
                                     self.rect.width() as i32 - padding / 2),
+            EntryKind::CommandEx(..) => ("vertical-dots",
+                                         self.rect.width() as i32 - padding / 2),
             _ => ("", 0),
         };
 
         if let Some(pixmap) = ICONS_PIXMAPS.get(icon_name) {
+            if let EntryKind::CommandEx(..) = self.kind {
+                *DOT_MENU_WIDTH.lock().unwrap() = padding / 2;
+            }
             let dx = x_offset + (padding / 2 - pixmap.width as i32) / 2;
             let dy = (self.rect.height() as i32 - pixmap.height as i32) / 2;
             let pt = self.rect.min + pt!(dx, dy);
