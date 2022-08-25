@@ -45,9 +45,11 @@ use crate::view::search_bar::SearchBar;
 use crate::view::keyboard::Keyboard;
 use crate::view::menu::{Menu, MenuKind};
 use crate::view::notification::Notification;
+use crate::view::theme::{ThemeDialog, ThemeProp};
 use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction, ProgressBarSettings};
 use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH, MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
+use crate::settings::Theme;
 use crate::frontlight::LightLevels;
 use crate::gesture::GestureEvent;
 use crate::document::{Document, open, Location, TextLocation, BoundedText, Neighbors, BYTES_PER_PAGE};
@@ -69,6 +71,11 @@ const MEM_SCHEME: &str = "mem:";
 const ON_INVERTED: &str = "__inverted";
 const ON_UNINVERTED: &str = "__uninverted";
 const MAX_SEARCH_RESULTS: usize = 200;
+
+enum ThemeStash {
+    New(Theme),
+    Existing(usize),
+}
 
 pub struct Reader {
     id: Id,
@@ -99,6 +106,7 @@ pub struct Reader {
     ephemeral: bool,
     finished: bool,
     progress_bar: ProgressBarSettings,
+    theme: Option<ThemeStash>, // temporarily store selection in theme dialog
 }
 
 #[derive(Debug)]
@@ -393,6 +401,7 @@ impl Reader {
                 reflowable,
                 finished: false,
                 progress_bar,
+                theme: None,
             })
         })
     }
@@ -463,6 +472,7 @@ impl Reader {
             reflowable: true,
             finished: false,
             progress_bar,
+            theme: None,
         }
     }
 
@@ -1862,8 +1872,6 @@ impl Reader {
                                              context.fb.dithered()));
             entries.push(EntryKind::Separator);
 
-            let l = entries.len();
-
             if self.synthetic {
                 if self.info.reader.as_ref().map_or(false,
                                                     |r| r.font_family.is_some()
@@ -1872,34 +1880,36 @@ impl Reader {
                                                     || r.text_align.is_some()
                                                     || r.line_height.is_some()) {
                     entries.push(EntryKind::Command("Use default settings".to_string(), EntryId::ResetToDefaults));
-                    entries.push(EntryKind::Separator);
                 }
-
-                let themes = context.settings.themes.iter()
-                                 .filter(|x| !x.name.starts_with("__"))
-                                 .map(|x| { EntryKind::Command(x.name.clone(),
-                                                               EntryId::SetTheme(x.name.clone()))
+                let mut themes = context.settings.themes.iter().enumerate()
+                                    .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
+                                    .map(|(i, x)| { EntryKind::CommandEx(x.name.clone(),
+                                                                       EntryId::ApplyTheme(i),
+                                                                       vec![EntryKind::Command("Rename".to_string(), EntryId::RenameTheme(i)),
+                                                                            EntryKind::Command("Delete".to_string(), EntryId::DeleteTheme(i)),
+                                                                       ])
                 }).collect::<Vec<EntryKind>>();
                 if !themes.is_empty() {
+                    themes.push(EntryKind::Separator);
+                    themes.push(EntryKind::Command("New theme...".to_string(), EntryId::SaveTheme));
                     entries.push(EntryKind::SubMenu("Themes".to_string(), themes));
+                } else {
+                    entries.push(EntryKind::Command("Save settings as theme".to_string(), EntryId::SaveTheme));
                 }
-            }
 
-            if self.info.file.kind == "epub" {
-                if self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some()) {
-                    let tweaks = vec![
-                        EntryKind::Command("Show status".to_string(), EntryId::ShowCssTweaks),
-                        EntryKind::Separator,
-                        EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak),
-                        EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks),
-                    ];
-                    entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
-                } else if !context.settings.css_styles.is_empty() {
-                    entries.push(EntryKind::Command("CSS tweaks".to_string(), EntryId::ShowCssTweaks));
+                if self.info.file.kind == "epub" {
+                    if self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some()) {
+                        let tweaks = vec![
+                            EntryKind::Command("Show status".to_string(), EntryId::ShowCssTweaks),
+                            EntryKind::Separator,
+                            EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak),
+                            EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks),
+                        ];
+                        entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
+                    } else if !context.settings.css_styles.is_empty() {
+                        entries.push(EntryKind::Command("CSS tweaks".to_string(), EntryId::ShowCssTweaks));
+                    }
                 }
-            }
-
-            if entries.len() > l {
                 entries.push(EntryKind::Separator);
             }
 
@@ -1916,7 +1926,7 @@ impl Reader {
             } else {
                 MenuKind::Contextual
             };
-            let title_menu = Menu::new(rect, ViewId::TitleMenu, kind, entries, context);
+            let title_menu = Menu::new(rect, ViewId::TitleMenu, kind, entries, context).root(true);
             rq.add(RenderData::new(title_menu.id(), *title_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(title_menu) as Box<dyn View>);
         }
@@ -2101,17 +2111,135 @@ impl Reader {
             if let Some(false) = enable {
                 return;
             }
+            let mut entries = context.settings.themes.iter().enumerate()
+                                .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
+                                .map(|(i, x)| { EntryKind::CommandEx(x.name.clone(),
+                                                                     EntryId::ApplyTheme(i),
+                                                                     vec![EntryKind::Command("Rename".to_string(), EntryId::RenameTheme(i)),
+                                                                          EntryKind::Command("Delete".to_string(), EntryId::DeleteTheme(i)),
+                                                                     ])
 
-            let entries = context.settings.themes.iter()
-                             .filter(|x| !x.name.starts_with("__"))
-                             .map(|x| { EntryKind::Command(x.name.clone(),
-                                                           EntryId::SetTheme(x.name.clone()))
-            }).collect();
+            }).collect::<Vec<EntryKind>>();
+            if !entries.is_empty() {
+                entries.push(EntryKind::Separator);
+            }
+            entries.push(EntryKind::Command("New theme...".to_string(), EntryId::SaveTheme));
             let theme_menu = Menu::new(rect, ViewId::ThemeMenu, MenuKind::Contextual, entries, context);
             rq.add(RenderData::new(theme_menu.id(), *theme_menu.rect(), UpdateMode::Gui));
-
             self.children.push(Box::new(theme_menu) as Box<dyn View>);
         }
+    }
+
+    fn toggle_theme_dialog(&mut self, enable: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate::<ThemeDialog>(self) {
+            if enable { return; }
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            if !enable { return; }
+            self.toggle_bars(Some(false), hub, rq, context);
+            let font_size = self.info.reader.as_ref().and_then(|r| r.font_size)
+                                .unwrap_or(context.settings.reader.font_size);
+            let has_relative_fs = (font_size - context.settings.reader.font_size).abs() > f32::EPSILON;
+            let thd = ThemeDialog::new(has_relative_fs, context);
+            rq.add(RenderData::new(thd.id(), *thd.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(thd) as Box<dyn View>);
+        }
+    }
+
+    fn toggle_name_theme(&mut self, enable: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::NameTheme) {
+            if enable { return; }
+
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+
+            self.toggle_keyboard(false, None, hub, rq, context);
+        } else {
+            if !enable { return; }
+
+            let mut name_theme = NamedInput::new("Name theme".to_string(),
+                                             ViewId::NameTheme, ViewId::NameThemeInput, 21, context);
+            if let Some(ThemeStash::Existing(idx)) = self.theme {
+                let name = context.settings.themes[idx].name.clone();
+                name_theme.set_text(&name, rq, context);
+            }
+            rq.add(RenderData::new(name_theme.id(), *name_theme.rect(), UpdateMode::Gui));
+            hub.send(Event::Focus(Some(ViewId::NameThemeInput))).ok();
+
+            self.children.push(Box::new(name_theme) as Box<dyn View>);
+        }
+    }
+
+    /// stash newly created theme away while getting theme name
+    fn stash_theme(&mut self, context: &mut Context) {
+        if let Some(index) = locate::<ThemeDialog>(self) {
+            if let Some(thd) = self.child(index).downcast_ref::<ThemeDialog>() {
+                let mut theme = Theme::default();
+                if thd.is_on(ThemeProp::FontFamily) {
+                    theme.font_family = Some(self.info.reader.as_ref()
+                        .and_then(|r| r.font_family.clone())
+                        .unwrap_or(context.settings.reader.font_family.clone()));
+                }
+                if thd.is_on(ThemeProp::RelativeFontSize) {
+                    theme.font_size = Some(self.info.reader.as_ref()
+                            .and_then(|r| r.font_size)
+                            .unwrap_or(context.settings.reader.font_size)
+                        - context.settings.reader.font_size);
+                    theme.font_size_relative = Some(true);
+                } else if thd.is_on(ThemeProp::FontSize) {
+                    theme.font_size = Some(self.info.reader.as_ref()
+                        .and_then(|r| r.font_size)
+                        .unwrap_or(context.settings.reader.font_size));
+                }
+                if thd.is_on(ThemeProp::MarginWidth) {
+                    theme.margin_width = Some(self.info.reader.as_ref()
+                        .and_then(|r| r.margin_width)
+                        .unwrap_or(context.settings.reader.margin_width));
+                }
+                if thd.is_on(ThemeProp::LineSpacing) {
+                    theme.line_height = Some(self.info.reader.as_ref()
+                        .and_then(|r| r.line_height)
+                        .unwrap_or(context.settings.reader.line_height));
+                }
+                if thd.is_on(ThemeProp::TextAlign) {
+                    theme.text_align = Some(self.info.reader.as_ref()
+                        .and_then(|r| r.text_align)
+                        .unwrap_or(context.settings.reader.text_align));
+                }
+                if thd.is_on(ThemeProp::FrontLight) {
+                    theme.frontlight = Some(context.settings.frontlight);
+                    theme.frontlight_levels = Some(context.settings.frontlight_levels.clone());
+                }
+                if thd.is_on(ThemeProp::InvertedMode) {
+                    theme.inverted = Some(context.fb.inverted());
+                }
+                // if thd.is_on(ThemeProp::IgnoreDocumentCss) {
+                //     theme.ignore_document_css = Some(true);
+                // }
+                if thd.is_on(ThemeProp::KeepMenuOnScreen) {
+                    theme.dismiss = Some(false);
+                }
+                self.theme = Some(ThemeStash::New(theme));
+            }
+        }
+    }
+
+    fn save_theme(&mut self, name: &str, hub: &Hub, context: &mut Context) {
+        if let Some(ThemeStash::New(ref mut theme)) = self.theme {
+            theme.name = name.trim().to_string();
+            let mode = if let Some(index) = context.settings.themes
+                                .iter()
+                                .position(|x| x.name.to_lowercase() == theme.name.to_lowercase()) {
+                context.settings.themes[index] = theme.clone();
+                "Replaced"
+            } else {
+                context.settings.themes.push(theme.clone());
+                "Created"
+            };
+            hub.send(Event::Notify(format!("{} theme {}", mode, theme.name))).ok();
+        }
+        self.theme = None;
     }
 
     fn toggle_margin_width_menu(&mut self, rect: Rectangle, enable: Option<bool>, rq: &mut RenderQueue, context: &mut Context) {
@@ -2281,41 +2409,37 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
-    fn set_default(&mut self, name: &str, hub: &Hub, context: &mut Context) {
+    fn set_default(&mut self, prop: &ThemeProp, hub: &Hub, context: &mut Context) {
         let mut changed = false;
         if let Some(ref r) = self.info.reader {
             let defaults = &mut context.settings.reader;
-            match name {
-                "font family" => if let Some(ref font) = r.font_family {
+            match *prop {
+                ThemeProp::FontFamily => if let Some(ref font) = r.font_family {
                     let font_family = font.to_string();
                     if defaults.font_family != font_family {
                         defaults.font_family = font_family;
                         changed = true;
                     }
                 },
-                "font size" => if let Some(font_size) = r.font_size {
+                ThemeProp::FontSize => if let Some(font_size) = r.font_size {
                     if defaults.font_size != font_size {
                         defaults.font_size = font_size;
                         changed = true;
                     }
                 },
-                "margin" => if self.reflowable {
-                    if let Some(margin_width) = r.margin_width {
-                        if defaults.margin_width != margin_width {
-                            defaults.margin_width = margin_width;
-                            changed = true;
-                        }
+                ThemeProp::MarginWidth => if let Some(margin_width) = r.margin_width {
+                    if defaults.margin_width != margin_width {
+                        defaults.margin_width = margin_width;
+                        changed = true;
                     }
-                } else {
-                    return;
                 },
-                "text align" => if let Some(text_align) = r.text_align {
+                ThemeProp::TextAlign => if let Some(text_align) = r.text_align {
                     if defaults.text_align != text_align {
                         defaults.text_align = text_align;
                         changed = true;
                     }
                 },
-                "line height" => if let Some(line_height) = r.line_height {
+                ThemeProp::LineSpacing => if let Some(line_height) = r.line_height {
                     if defaults.line_height != line_height {
                         defaults.line_height = line_height;
                         changed = true;
@@ -2325,7 +2449,7 @@ impl Reader {
             };
         }
         let msg = if changed {
-            format!("Default {} set", name)
+            format!("Default {} set", *prop)
         } else {
             "Already the default".to_string()
         };
@@ -2385,12 +2509,12 @@ impl Reader {
         self.update_bottom_bar(rq);
     }
 
-    fn apply_theme(&mut self, theme_name: &str, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn apply_theme(&mut self, idx: usize, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
 
-        if let Some(theme) = context.settings.themes.iter().find(|x| x.name == theme_name) {
+        if let Some(theme) = context.settings.themes.get(idx) {
             let theme = theme.clone(); // make borrow checker happy
             if theme.dismiss.unwrap_or(true) {
                 self.toggle_bars(Some(false), hub, rq, context);
@@ -2439,7 +2563,7 @@ impl Reader {
             }
             if let Some(v) = theme.inverted {
                 if v != context.fb.inverted()
-                   && theme.name != ON_INVERTED && theme.name != ON_UNINVERTED {
+                   && theme.name.trim() != ON_INVERTED && theme.name.trim() != ON_UNINVERTED {
                     hub.send(Event::Select(EntryId::ToggleInverted)).ok();
                 }
             }
@@ -2817,10 +2941,11 @@ impl Reader {
         context.fb.toggle_inverted();
         context.settings.inverted = inverted;
         rq.add(RenderData::new(self.id(), context.fb.rect(), UpdateMode::Full));
-        hub.send(Event::ApplyTheme(
-                    if inverted { ON_INVERTED.to_string() }
-                    else { ON_UNINVERTED.to_string() })
-                ).ok();
+        if let Some(idx) = context.settings.themes.iter()
+                            .position(|x| x.name.trim()
+                                          == if inverted { ON_INVERTED } else { ON_UNINVERTED }) {
+            self.apply_theme(idx, hub, rq, context);
+        }
     }
 
     fn crop_margins(&mut self, index: usize, margin: &Margin, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
@@ -3911,10 +4036,6 @@ impl View for Reader {
                 self.update_scrubber(page, rq);
                 true
             },
-            Event::ApplyTheme(ref theme) => {
-                self.apply_theme(theme, hub, rq, context);
-                true
-            },
             Event::ToggleNear(ViewId::TitleMenu, rect) => {
                 self.toggle_title_menu(rect, None, rq, context);
                 true
@@ -3967,8 +4088,8 @@ impl View for Reader {
                 self.toggle_contrast_gray_menu(rect, None, rq, context);
                 true
             },
-            Event::SetDefault(ref name) => {
-                self.set_default(name, hub, context);
+            Event::SetDefault(ref prop) => {
+                self.set_default(prop, hub, context);
                 true
             },
             Event::Select(EntryId::ResetToDefaults) => {
@@ -3977,6 +4098,49 @@ impl View for Reader {
             },
             Event::ToggleNear(ViewId::ThemeMenu, rect) => {
                 self.toggle_theme_menu(rect, None, rq, context);
+                true
+            },
+            Event::Show(ViewId::ThemeDialog) | Event::Select(EntryId::SaveTheme) => {
+                self.toggle_theme_dialog(true, hub, rq, context);
+                true
+            },
+            Event::Close(ViewId::ThemeDialog) => {
+                self.toggle_theme_dialog(false, hub, rq, context);
+                true
+            },
+            Event::SaveTheme => {
+                self.stash_theme(context);
+                self.toggle_theme_dialog(false, hub, rq, context);
+                self.toggle_name_theme(true, hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::RenameTheme(idx)) => {
+                self.toggle_bars(Some(false), hub, rq, context);
+                self.theme = Some(ThemeStash::Existing(idx));
+                self.toggle_name_theme(true, hub, rq, context);
+                true
+            }
+            Event::Select(EntryId::DeleteTheme(idx)) => {
+                self.toggle_bars(Some(false), hub, rq, context);
+                if let Some(ref theme) = context.settings.themes.get(idx) {
+                    hub.send(Event::Notify(format!("Deleted theme {}", theme.name))).ok();
+                    context.settings.themes.remove(idx);
+                }
+                true
+            }
+            Event::Submit(ViewId::NameThemeInput, ref text) => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    match self.theme {
+                        Some(ThemeStash::New(_)) => self.save_theme(text, hub, context),
+                        Some(ThemeStash::Existing(idx)) => if idx < context.settings.themes.len() {
+                            context.settings.themes[idx].name = text.to_string();
+                            hub.send(Event::Notify(format!("Theme renamed to {}", text))).ok();
+                        },
+                        _ => (),
+                    }
+                }
+                self.toggle_name_theme(false, hub, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::PageMenu, rect) => {
@@ -4382,8 +4546,8 @@ impl View for Reader {
                 self.toggle_inverted(hub, rq, context);
                 true
             },
-            Event::Select(EntryId::SetTheme(ref r)) => {
-                hub.send(Event::ApplyTheme(r.to_string())).ok();
+            Event::Select(EntryId::ApplyTheme(idx)) => {
+                self.apply_theme(idx, hub, rq, context);
                 true
             },
             Event::Reseed => {
@@ -4651,7 +4815,7 @@ impl View for Reader {
     }
 
     fn might_rotate(&self) -> bool {
-        self.search.is_none()
+        self.search.is_none() && locate::<ThemeDialog>(self).is_none()
     }
 
     fn is_background(&self) -> bool {

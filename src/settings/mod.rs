@@ -645,7 +645,35 @@ impl Default for Settings {
             save_to_library: None,
             wikipedia_languages: vec![String::from("en")],
             languages: vec![get_locale().unwrap_or_else(|| String::from("en"))],
-            themes: Vec::new(),
+            themes: vec![
+                Theme {
+                    name: "Comfy".to_string(),
+                    font_size: Some(15.0),
+                    line_height: Some(1.25),
+                    margin_width: Some(6),
+                    .. Default::default()
+                },
+                Theme {
+                    name: "Compact".to_string(),
+                    font_size: Some(13.0),
+                    line_height: Some(1.1),
+                    margin_width: Some(3),
+                    .. Default::default()
+                },
+                Theme {
+                    name: "Bed time".to_string(),
+                    font_size: Some(14.0),
+                    inverted: Some(false),
+                    frontlight: Some(true),
+                    frontlight_levels: Some(
+                        LightLevels {
+                            intensity: 10.0,
+                            warmth: 50.0,
+                        }
+                    ),
+                    .. Default::default()
+                },
+            ],
             css_styles: vec![
                 CssStyle {
                     name: "Main paragraph".to_string(),

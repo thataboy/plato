@@ -1,83 +1,39 @@
 # Themes
 
-Themes provide a quick way to set several reader settings at once.  Currently, you must create themes by adding manually to ```Settings.toml```. A theme should contain a name and one or more of these settings
+Themes provide a quick way to save and re-apply several reader settings at once. Currently, themes are supported for epub and html files. Themes work pretty much the same way as they do on the Kindle, but better! You can select what settings to save, and in addition to the usual font and layout settings, you can also save your front light levels and inverted mode status. The following settings can be saved in a theme:
 
-- ```font-family```
-- ```font-size```
-- ```text-align```
-- ```margin-width```
-- ```line-height```
-- ```ignore-document-css```
-- ```inverted```
-- ```frontlight``` (```true``` for on, ```false``` for off)
-- ```frontlight-levels``` (see example below)
+- `Font family`
+- `Font size`
+- `Relative font size`
+- `Margin width`
+- `Line spacing`
+- `Text align`
+- `Front light`
+- `Inverted mode`
+- `Keep menu on screen`
 
-These settings have the same functions as formats as their counterparts with the same names.
+To create a theme:
 
-## Examples
+- tap middle of the screen to bring up the menu
+- click the theme icon (next to the search icon in the tool bar)
+- select `New theme...`
+- select setting(s) you want to include in your theme
+- click Save
 
-A theme with comfortable font size and line spacing. Note that settings you omit will remain unchanged.
+## Notes
 
-```
-[[themes]]
-name = "Comfy"
-font-family = "Georgia"
-font-size = 14.5
-margin-width = 5
-line-height = 1.4
-```
-
-More examples. Note the format for setting the front light levels
-
-```
-[[themes]]
-name = "Night"
-font-family = "Georgia"
-inverted = true
-
-[themes.frontlight-levels]
-intensity = 30.0
-warmth = 8.0
-
-[[themes]]
-name = "Day"
-font-family = "Arial"
-inverted = false
-
-[themes.frontlight-levels]
-intensity = 60.0
-warmth = 0.0
-```
-
-## Setting relative font size
-
-- ```font-size-relative``` (true or false, default is false)
-
-Add ```font-size-relative =  true``` to increase / decrease the current font size by the value of ```font-size```. For example, this theme turns off the front light and increase the font size by 1.5.
-
-```
-[[themes]]
-name = "Outside"
-frontlight = false
-font-size = 1.5
-font-size-relative = true
-```
-
-If ```font-size``` is a negative number, that implies ```font-size-relative = true``` (you can't have a negative font size!) so there is no need to specify it in that case.
-
-## Misc
-
-To see the list of themes, tap the menu icon next to the search button in the toolbar. By default, after you select a theme, the toolbar and menu will be dismissed. If you want the toolbar and menu to stay on the screen, add this line to the theme
-
-```
-dismiss = false
-```
+- You can rename or delete an existing theme by tapping the 3 dot menu next to the theme's name.
+- Creating a new theme with the same name as an existing theme will replace it. Out of the box, there are some example themes which you are free to use, overwrite, or delete.
+- `Relative font size` saves the difference between the current font size and the default font size (the option is disabled if both are the same). This is useful for having a theme which increases or decreases the font size by some amount (e.g., +/- 3pt) rather than setting a fixed size (e.g., 15pt).
+- Select `Keep menu on screen` if you do **not** want the app to dismiss on screen menus after applying the theme. This is useful in cases where you know you'll want to make other selections.
 
 ## Special theme names
 
-Finally, there are two special theme names
+There are two special theme names:
 
-- ```__inverted```
-- ```__uninverted```
+- `__inverted`
+- `__uninverted`
 
-A theme named ```__inverted``` will be applied automatically whenever you toggle *on* inverted mode. Likewise, a theme named ```__uninverted``` will be applied automatically whenever you toggle *off* inverted mode.  Note that any theme whose name begins with two underscores will be hidden and not shown on the themes menu.
+If you want to have a theme automatically applied whenever you turn *on* (*off*) inverted mode, name it
+`__inverted` (`__uninverted`). Other special theme names beginning with two undescores `__` may be added later. *These special themes are hidden and do not appear on the themes menu.*
+

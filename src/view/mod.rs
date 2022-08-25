@@ -29,6 +29,7 @@ pub mod intermission;
 pub mod frontlight;
 pub mod presets_list;
 pub mod preset;
+pub mod theme;
 pub mod menu;
 pub mod menu_entry;
 pub mod clock;
@@ -64,6 +65,8 @@ use crate::input::{DeviceEvent, FingerStatus};
 use crate::gesture::GestureEvent;
 use self::calculator::LineOrigin;
 use self::key::KeyKind;
+use self::menu::MenuKind;
+use self::theme::ThemeProp;
 use crate::app::Context;
 
 // Border thicknesses in pixels, at 300 DPI.
@@ -196,7 +199,7 @@ pub fn render(view: &dyn View, wait: bool, ids: &FxHashMap<Id, Vec<Rectangle>>, 
                     let overlaps = render_rect.overlaps(&update.rect);
                     if overlaps && !update.has_completed() {
                         fb.wait(update.token)
-                          .map_err(|e| eprintln!("Can't wait for {}, {}: {:#}",
+                          .map_err(|e| eprintln!("render {}, {}: {:#}",
                                                  update.token, update.rect, e))
                           .ok();
                     }
@@ -285,7 +288,7 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
                         updating.push(UpdateData { token, rect, time: Instant::now()});
                     } else {
                         context.fb.wait(token)
-                                  .map_err(|e| eprintln!("process_render_queue can't wait for {}, {}: {:#}",
+                                  .map_err(|e| eprintln!("process_render_queue {}, {}: {:#}",
                                                          token, rect, e))
                                   .ok();
                         context.set_frontlight(true);
@@ -303,7 +306,7 @@ pub fn wait_for_all(updating: &mut Vec<UpdateData>, context: &mut Context) {
             continue;
         }
         context.fb.wait(update.token)
-               .map_err(|e| eprintln!("Can't wait for {}, {}: {:#}",
+               .map_err(|e| eprintln!("wait_for_all {}, {}: {:#}",
                                       update.token, update.rect, e))
                .ok();
     }
@@ -346,8 +349,8 @@ pub enum Event {
     ToggleInputHistoryMenu(ViewId, Rectangle),
     ToggleBookMenu(Rectangle, usize),
     TogglePresetMenu(Rectangle, usize),
-    ApplyTheme(String),
-    SetDefault(String),
+    SaveTheme,
+    SetDefault(ThemeProp),
     SubMenu(Rectangle, Vec<EntryKind>, MenuKind),
     ProcessLine(LineOrigin, String),
     History(CycleDir, bool),
@@ -477,7 +480,12 @@ pub enum ViewId {
     SubMenu(u8),
     Scrubber,
     ThemeMenu,
+    EditThemeMenu,
+    ThemeDialog,
     CssSelectorMenu,
+    NameTheme,
+    NameThemeInput,
+    EditTheme(usize)
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -604,7 +612,10 @@ pub enum EntryId {
     SetContrastExponent(i32),
     SetContrastGray(i32),
     ResetToDefaults,
-    SetTheme(String),
+    ApplyTheme(usize),
+    RenameTheme(usize),
+    DeleteTheme(usize),
+    SaveTheme,
     SetCssTweak(usize),
     SetCssTweakEx(String, usize),
     UndoLastCssTweak,

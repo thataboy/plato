@@ -162,7 +162,7 @@ To select text, tap and hold the first or last word of the selection. Wait for t
 
 ## Changing settings and defaults
 
-When you change the margin width / font family / font size / line height / text align setting via the user interface, the change only applies to the book you are reading; the default setting is unchanged. This is by design and it's usually the behavior you want. To save a setting as the default, long press on the corresponding icon. The new default will apply to subsequent books you open.
+When you change the margin width / font family / font size / line height / text align setting via the user interface, the change only applies to the book you are reading; the default setting is unchanged. This is by design and it's usually the behavior you want. To save a setting as the default, tap and hold on the corresponding icon. The new default will apply to subsequent books you open.
 
 Conversely, you can set all the above settings to use default values via the book menu.
 

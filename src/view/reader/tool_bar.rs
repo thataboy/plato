@@ -7,6 +7,7 @@ use crate::view::filler::Filler;
 use crate::view::slider::Slider;
 use crate::view::icon::Icon;
 use crate::view::labeled_icon::LabeledIcon;
+use crate::view::theme::ThemeProp;
 use crate::gesture::GestureEvent;
 use crate::input::DeviceEvent;
 use crate::unit::scale_by_dpi;
@@ -48,7 +49,8 @@ impl ToolBar {
                                                rect![x_offset, rect.min.y,
                                                      x_offset + side + margin_label_width, rect.min.y + side],
                                                Event::Show(ViewId::MarginWidthMenu),
-                                               format!("{} mm", margin_width));
+                                               format!("{} mm", margin_width))
+                                    .hold(Event::SetDefault(ThemeProp::MarginWidth));
             children.push(Box::new(margin_icon) as Box<dyn View>);
             x_offset += side + margin_label_width;
 
@@ -58,7 +60,8 @@ impl ToolBar {
                                                     rect![x_offset, rect.min.y,
                                                           x_offset + side + font_family_label_width, rect.min.y + side],
                                                     Event::Show(ViewId::FontFamilyMenu),
-                                                    font_family);
+                                                    font_family)
+                                        .hold(Event::SetDefault(ThemeProp::FontFamily));
             children.push(Box::new(font_family_icon) as Box<dyn View>);
             x_offset += side + font_family_label_width;
 
@@ -68,7 +71,8 @@ impl ToolBar {
                                                     rect![x_offset, rect.min.y,
                                                           x_offset + side + line_height_label_width, rect.min.y + side],
                                                     Event::Show(ViewId::LineHeightMenu),
-                                                    format!("{:.3} em", line_height));
+                                                    format!("{:.3} em", line_height))
+                                        .hold(Event::SetDefault(ThemeProp::LineSpacing));
             children.push(Box::new(line_height_icon) as Box<dyn View>);
 
             // Separator.
@@ -84,7 +88,8 @@ impl ToolBar {
                                        rect.min.x + side, rect.max.y];
             let text_align_icon = Icon::new(text_align.icon_name(),
                                            text_align_rect,
-                                           Event::ToggleNear(ViewId::TextAlignMenu, text_align_rect));
+                                           Event::ToggleNear(ViewId::TextAlignMenu, text_align_rect))
+                                    .hold(Event::SetDefault(ThemeProp::TextAlign));
             children.push(Box::new(text_align_icon) as Box<dyn View>);
 
             let font_size = reader_info.and_then(|r| r.font_size)
@@ -93,7 +98,8 @@ impl ToolBar {
                                        rect.min.x + 2 * side, rect.max.y];
             let font_size_icon = Icon::new("font_size",
                                            font_size_rect,
-                                           Event::ToggleNear(ViewId::FontSizeMenu, font_size_rect));
+                                           Event::ToggleNear(ViewId::FontSizeMenu, font_size_rect))
+                                    .hold(Event::SetDefault(ThemeProp::FontSize));
             children.push(Box::new(font_size_icon) as Box<dyn View>);
 
             let slider = Slider::new(rect![rect.min.x + 2 * side, rect.max.y - side,
@@ -205,11 +211,15 @@ impl ToolBar {
 
         let last_rect = rect![rect.max.x - side, rect.max.y - side,
                               rect.max.x, rect.max.y];
-        if synthetic && context.settings.themes
-                           .iter().filter(|t| !t.name.starts_with("__")).count() > 0 {
-            let theme_icon = Icon::new("themes",
-                                       last_rect,
-                                       Event::ToggleNear(ViewId::ThemeMenu, last_rect));
+        if synthetic {
+            let evt = if context.settings.themes
+                                .iter().filter(|x| !x.name.trim_start().starts_with("__"))
+                                .count() > 0 {
+                Event::ToggleNear(ViewId::ThemeMenu, last_rect)
+            } else {
+                Event::Show(ViewId::ThemeDialog)
+            };
+            let theme_icon = Icon::new("themes", last_rect, evt);
             children.push(Box::new(theme_icon) as Box<dyn View>);
         } else {
             let toc_icon = Icon::new("toc",
