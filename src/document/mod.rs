@@ -95,7 +95,7 @@ pub trait Document: Send+Sync {
     fn pages_count(&self) -> usize;
 
     fn toc(&mut self) -> Option<Vec<TocEntry>>;
-    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32)>;
+    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32, f32)>;
     fn chapter_relative<'a>(&mut self, offset: usize, dir: CycleDir, toc: &'a [TocEntry]) -> Option<&'a TocEntry>;
     fn words(&mut self, loc: Location) -> Option<(Vec<BoundedText>, usize)>;
     fn lines(&mut self, loc: Location) -> Option<(Vec<BoundedText>, usize)>;
@@ -362,12 +362,12 @@ pub fn bookmarks_as_html(bookmarks: &BTreeSet<usize>, index: usize, synthetic: b
 }
 
 #[inline]
-fn chapter(index: usize, pages_count: usize, toc: &[TocEntry]) -> Option<(&TocEntry, f32)> {
+fn chapter(index: usize, pages_count: usize, toc: &[TocEntry]) -> Option<(&TocEntry, f32, f32)> {
     let mut chap = None;
     let mut chap_index = 0;
     let mut end_index = pages_count;
     chapter_aux(toc, index, &mut chap, &mut chap_index, &mut end_index);
-    chap.zip(Some((index - chap_index) as f32 / (end_index - chap_index) as f32))
+    chap.and_then(|c| Some((c, (index - chap_index) as f32 / (end_index - chap_index) as f32, (end_index - index) as f32)))
 }
 
 fn chapter_aux<'a>(toc: &'a [TocEntry], index: usize, chap: &mut Option<&'a TocEntry>,
@@ -388,7 +388,7 @@ fn chapter_aux<'a>(toc: &'a [TocEntry], index: usize, chap: &mut Option<&'a TocE
 
 #[inline]
 fn chapter_relative(index: usize, dir: CycleDir, toc: &[TocEntry]) -> Option<&TocEntry> {
-    let chap = chapter(index, usize::MAX, toc).map(|(c, _)| c);
+    let chap = chapter(index, usize::MAX, toc).map(|(c, _, _)| c);
 
     match dir {
         CycleDir::Previous => previous_chapter(chap, index, toc),

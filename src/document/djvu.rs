@@ -134,7 +134,7 @@ impl Document for DjvuDocument {
         }
     }
 
-    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32)> {
+    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32, f32)> {
         chapter(offset, self.pages_count(), toc)
     }
 

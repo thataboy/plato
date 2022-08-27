@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::io::prelude::*;
 use std::fs::OpenOptions;
 use std::collections::{VecDeque, BTreeMap};
+use std::cell::{RefCell, Ref};
+use std::mem::drop;
 use fxhash::{FxHashMap, FxHashSet};
 use chrono::Local;
 use regex::Regex;
@@ -77,6 +79,24 @@ enum ThemeStash {
     Existing(usize),
 }
 
+struct Chapter {
+    pub title: String,
+    pub page: usize,
+    pub progress: f32,
+    pub remain: f32,
+}
+
+impl Default for Chapter {
+    fn default() -> Self {
+        Chapter {
+            title: String::default(),
+            page: usize::MAX,
+            progress: 0.0,
+            remain: 0.0,
+        }
+    }
+}
+
 pub struct Reader {
     id: Id,
     rect: Rectangle,
@@ -107,6 +127,7 @@ pub struct Reader {
     finished: bool,
     progress_bar: ProgressBarSettings,
     theme: Option<ThemeStash>, // temporarily store selection in theme dialog
+    chapter: RefCell<Chapter>, // cache chapter info
 }
 
 #[derive(Debug)]
@@ -402,6 +423,7 @@ impl Reader {
                 finished: false,
                 progress_bar,
                 theme: None,
+                chapter: RefCell::new(Chapter::default()),
             })
         })
     }
@@ -473,6 +495,7 @@ impl Reader {
             finished: false,
             progress_bar,
             theme: None,
+            chapter: RefCell::new(Chapter::default()),
         }
     }
 
@@ -517,6 +540,22 @@ impl Reader {
         self.text.insert(location, words);
     }
 
+    fn chapter(&self) -> Ref<Chapter> {
+        {
+            let mut ch = self.chapter.borrow_mut();
+            if self.current_page != ch.page {
+                ch.page = self.current_page;
+                let mut doc = self.doc.lock().unwrap();
+                let rtoc = self.toc().or_else(|| doc.toc());
+                let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(self.current_page, toc));
+                ch.title = chapter.map(|(c, _, _)| c.title.clone()).unwrap_or_default();
+                ch.progress = chapter.map(|(_, p, _)| p).unwrap_or_default();
+                ch.remain = chapter.map(|(_, _, r)| r).unwrap_or_default();
+            }
+        }
+        self.chapter.borrow()
+    }
+
     fn go_to_page(&mut self, location: usize, record: bool, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
         let loc = {
             let mut doc = self.doc.lock().unwrap();
@@ -537,7 +576,8 @@ impl Reader {
 
             self.view_port.page_offset = pt!(0);
             self.current_page = location;
-            self.update(None, hub, rq, context);
+            let mode = self.get_update_mode(true, context);
+            self.update(Some(mode), hub, rq, context);
             self.update_bottom_bar(rq);
 
             if self.search.is_some() {
@@ -554,7 +594,7 @@ impl Reader {
                                    .or_else(|| doc.toc()) {
                 let chap_offset = if dir == CycleDir::Previous {
                    doc.chapter(current_page, &toc)
-                      .and_then(|(chap, _)| doc.resolve_location(chap.location.clone()))
+                      .and_then(|(chap, _, _)| doc.resolve_location(chap.location.clone()))
                       .and_then(|chap_offset| if chap_offset < current_page { Some(chap_offset) } else { None })
                 } else {
                     None
@@ -820,7 +860,8 @@ impl Reader {
                 }
 
                 self.current_page = location;
-                self.update(None, hub, rq, context);
+                let mode = self.get_update_mode(true, context);
+                self.update(Some(mode), hub, rq, context);
                 self.update_bottom_bar(rq);
 
                 if self.search.is_some() {
@@ -911,13 +952,11 @@ impl Reader {
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
         let current_page = self.current_page;
         if let Some(index) = locate::<BottomBar>(self) {
+            let (title, progress) = {
+                let chapter = self.chapter();
+                (chapter.title.clone(), chapter.remain)
+            };
             let mut doc = self.doc.lock().unwrap();
-            let rtoc = self.toc().or_else(|| doc.toc());
-            let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(current_page, toc));
-            let title = chapter.map(|(c, _)| c.title.clone())
-                               .unwrap_or_default();
-            let progress = chapter.map(|(_, p)| p)
-                                  .unwrap_or_default();
             let bottom_bar = self.children[index].as_mut().downcast_mut::<BottomBar>().unwrap();
             let neighbors = Neighbors {
                 previous_page: doc.resolve_location(Location::Previous(current_page)),
@@ -1029,22 +1068,31 @@ impl Reader {
         }
     }
 
+    fn get_update_mode(&self, check_chapter_start: bool, context: &Context) -> UpdateMode {
+        let refresh_rate = if context.fb.inverted() {
+            context.settings.reader.refresh_rate.inverted
+        } else {
+            context.settings.reader.refresh_rate.regular
+        };
+        // if due for full refresh
+        if refresh_rate > 0 && self.page_turns + 1 >= refresh_rate as usize
+           ||
+           // or start of chapter
+           check_chapter_start && context.settings.reader.refresh_rate.chapter_start
+           && self.page_turns > 1 // ignore recent refresh and very short chapters
+           && self.chapter().progress == 0.0 {
+            UpdateMode::Full
+        } else {
+            UpdateMode::Partial
+        }
+    }
+
     fn update(&mut self, update_mode: Option<UpdateMode>, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
-        self.page_turns += 1;
-        let update_mode = update_mode.unwrap_or_else(|| {
-            let refresh_rate = if context.fb.inverted() {
-                context.settings.reader.refresh_rate.inverted
-            } else {
-                context.settings.reader.refresh_rate.regular
-            };
-            if refresh_rate == 0 || self.page_turns < refresh_rate as usize {
-                UpdateMode::Partial
-            } else {
-                UpdateMode::Full
-            }
-        });
+        let update_mode = update_mode.unwrap_or_else(|| self.get_update_mode(false, context));
         if update_mode == UpdateMode::Full {
             self.page_turns = 0;
+        } else {
+            self.page_turns += 1;
         }
 
         self.chunks.clear();
@@ -1592,16 +1640,21 @@ impl Reader {
                 next_page: doc.resolve_location(Location::Next(self.current_page)),
             };
 
-            let bottom_bar = BottomBar::new(rect![self.rect.min.x,
-                                                  self.rect.max.y - small_height + big_thickness,
-                                                  self.rect.max.x,
-                                                  self.rect.max.y],
-                                            doc.as_mut(),
-                                            self.toc(),
-                                            self.current_page,
-                                            self.pages_count,
-                                            &neighbors,
-                                            self.synthetic);
+            drop(doc);
+
+            let bottom_bar = {
+                let chapter = self.chapter();
+                BottomBar::new(rect![self.rect.min.x,
+                                     self.rect.max.y - small_height + big_thickness,
+                                     self.rect.max.x,
+                                     self.rect.max.y],
+                               self.current_page,
+                               self.pages_count,
+                               chapter.title.clone(),
+                               chapter.remain,
+                               &neighbors,
+                               self.synthetic)
+            };
             self.children.insert(index, Box::new(bottom_bar) as Box<dyn View>);
 
             for i in 0..=index {
@@ -4199,7 +4252,7 @@ impl View for Reader {
                                        .or_else(|| doc.toc())
                                        .filter(|toc| !toc.is_empty()) {
                     let chap = doc.chapter(self.current_page, &toc)
-                                  .map(|(c, _)| c);
+                                  .map(|(c, _, _)| c);
                     let chap_index = chap.map_or(usize::MAX, |chap| chap.index);
                     let html = toc_as_html(&toc, chap_index);
                     let link_uri = chap.and_then(|chap| {
@@ -4759,11 +4812,7 @@ impl View for Reader {
                     &CornerSpec::Uniform(bar_height / 2),
                     &BorderSpec { thickness: 0, color: GRAY10 },
                     &|x, _| if x < page_size { GRAY03 } else { GRAY10 });
-            let mut doc = self.doc.lock().unwrap();
-            let rtoc = self.toc().or_else(|| doc.toc());
-            let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(self.current_page, toc));
-            let progress = chapter.map(|(_, p)| p).unwrap_or_default();
-            let plan = font.plan(&format!("{:.1}p", progress),
+            let plan = font.plan(&format!("{:.1} ➤", self.chapter().remain),
                                           Some(label_width + margin), // allow text to exceed margin
                                           None);
             x += bar_width + gap;

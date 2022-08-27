@@ -387,6 +387,7 @@ pub struct HomeSettings {
 pub struct RefreshRateSettings {
     pub regular: u8,
     pub inverted: u8,
+    pub chapter_start: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -490,6 +491,7 @@ impl Default for RefreshRateSettings {
         RefreshRateSettings {
             regular: 10,
             inverted: 5,
+            chapter_start: true,
         }
     }
 }

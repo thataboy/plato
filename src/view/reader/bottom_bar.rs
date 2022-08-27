@@ -7,7 +7,7 @@ use super::chapter_label::ChapterLabel;
 use crate::gesture::GestureEvent;
 use crate::input::DeviceEvent;
 use crate::geom::{Rectangle, CycleDir/*, halves*/};
-use crate::document::{Document, Neighbors, TocEntry};
+use crate::document::Neighbors;
 use crate::color::WHITE;
 use crate::font::Fonts;
 use crate::app::Context;
@@ -22,7 +22,7 @@ pub struct BottomBar {
 }
 
 impl BottomBar {
-    pub fn new(rect: Rectangle, doc: &mut dyn Document, toc: Option<Vec<TocEntry>>, current_page: usize, pages_count: usize, neighbors: &Neighbors, synthetic: bool) -> BottomBar {
+    pub fn new(rect: Rectangle, current_page: usize, pages_count: usize, title: String, progress: f32, neighbors: &Neighbors, synthetic: bool) -> BottomBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let side = rect.height() as i32;
@@ -41,7 +41,6 @@ impl BottomBar {
             children.push(Box::new(prev_icon) as Box<dyn View>);
         }
 
-        // luu
         let page_width = 2 * (rect.width() as i32 - 2 * side) / 5;
         let chapter_width = (rect.width() as i32 - 2 * side) - page_width;
 
@@ -49,16 +48,10 @@ impl BottomBar {
         let chapter_rect = rect![pt!(rect.min.x + side, rect.min.y),
                                  pt!(rect.min.x + side + chapter_width, rect.max.y)];
 
-        let rtoc = toc.or_else(|| doc.toc());
-        let chapter = rtoc.as_ref()
-                          .and_then(|toc| doc.chapter(current_page, toc));
-        let title = chapter.map(|(c, _)| c.title.clone())
-                           .unwrap_or_default();
-        let progress = chapter.map(|(_, p)| p)
-                              .unwrap_or_default();
         let chapter_label = ChapterLabel::new(chapter_rect,
                                               title,
-                                              progress);
+                                              progress,
+                                              synthetic);
         children.push(Box::new(chapter_label) as Box<dyn View>);
 
         let page_label = PageLabel::new(rect![pt!(rect.max.x - side - page_width, rect.min.y),

@@ -687,9 +687,7 @@ impl Document for EpubDocument {
         }
     }
 
-    // luu for epub, return negative f32 to indicate number of 'pages' left in chapter,
-    // rather than progress %
-    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32)> {
+    fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32, f32)> {
         let next_offset = self.resolve_location(Location::Next(offset))
                               .unwrap_or(usize::MAX);
         let (index, start_offset) = self.vertebra_coordinates(offset)?;
@@ -713,14 +711,24 @@ impl Document for EpubDocument {
                     } else {
                         self.size()
                     };
-                    return chap.zip(Some((end_offset - offset) as f32 / -BYTES_PER_PAGE as f32));
+                    let chap_offset = self.offset(i);
+                    let progress = (offset - chap_offset) as f32 / (end_offset - chap_offset) as f32;
+                    let remain = (end_offset - offset) as f32 / BYTES_PER_PAGE as f32;
+                    return chap.and_then(|c| Some((c, progress, remain)))
                 }
             }
             None
         } else {
             match (chap_after, chap_before) {
-                (Some(..), _) => chap_after.zip(Some((end_offset - offset_after) as f32 / -BYTES_PER_PAGE as f32)),
-                (None, Some(..)) => chap_before.zip(Some((end_offset - offset) as f32 / -BYTES_PER_PAGE as f32)),
+                (Some(..), _) => {
+                    let remain = (end_offset - offset_after) as f32 / BYTES_PER_PAGE as f32;
+                    chap_after.and_then(|c| Some((c, 0.0, remain)))
+                },
+                (None, Some(..)) => {
+                    let progress = (offset - offset_before) as f32 / (end_offset - offset_before) as f32;
+                    let remain = (end_offset - offset) as f32 / BYTES_PER_PAGE as f32;
+                    chap_before.and_then(|c| Some((c, progress, remain)))
+                },
                 _ => None,
             }
         }
@@ -729,7 +737,7 @@ impl Document for EpubDocument {
     fn chapter_relative<'a>(&mut self, offset: usize, dir: CycleDir, toc: &'a [TocEntry]) -> Option<&'a TocEntry> {
         let next_offset = self.resolve_location(Location::Next(offset))
                               .unwrap_or(usize::MAX);
-        let chap = self.chapter(offset, toc).map(|(c, _)| c);
+        let chap = self.chapter(offset, toc).map(|(c, _, _)| c);
 
         match dir {
             CycleDir::Previous => self.previous_chapter(chap, offset, next_offset, toc),

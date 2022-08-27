@@ -156,8 +156,10 @@ stretch-tolerance = 1.26
 # Refresh the screen every `regular` page turns when the colors aren't inverted,
 # and every `inverted` page turns when they are. *Zero* means *never*.
 [reader.refresh-rate]
-regular = 8
-inverted = 2
+regular = 10
+inverted = 5
+# whether to do full refresh at chapter start
+chapter_start = true
 
 [reader.progress-bar]
 # whether to show the progress bar
