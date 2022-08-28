@@ -26,7 +26,7 @@ use crate::device::CURRENT_DEVICE;
 
 // Font sizes in 1/64th of a point
 // pub const FONT_SIZES: [u32; 3] = [349, 524, 629];
-pub const FONT_SIZES: [u32; 3] = [440, 590, 730];
+pub const FONT_SIZES: [u32; 3] = [460, 590, 730];
 
 pub const KEYBOARD_FONT_SIZES: [u32; 2] = [337, 843];
 
@@ -78,8 +78,6 @@ lazy_static! {
                                                                  FONT_SIZES[2]);
         Style {
             family: Family::Serif,
-            // luu title not italic
-            // variant: Variant::ITALIC,
             variant: Variant::REGULAR,
             size,
         }
@@ -88,8 +86,6 @@ lazy_static! {
 
 pub const MD_AUTHOR: Style = Style {
     family: Family::Serif,
-    // luu italic author
-    // variant: Variant::REGULAR,
     variant: Variant::ITALIC,
     size: FONT_SIZES[1],
 };

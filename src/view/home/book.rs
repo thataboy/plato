@@ -17,7 +17,7 @@ use crate::app::Context;
 use crate::document::BYTES_PER_PAGE;
 
 const PROGRESS_HEIGHT: f32 = 7.0; // size of reading progress bars
-const LARGEST_BOOK: i32 = 2000;   // page count of largest book, arbitrarily
+const LARGEST_BOOK: i32 = 1500;   // page count of largest book, arbitrarily
 const LARGEST_ARTICLE: i32 = 75;
 
 pub struct Book {
@@ -106,6 +106,7 @@ impl View for Book {
         };
 
         let file_info = &self.info.file;
+        let kind = file_info.kind.to_uppercase();
 
         let (x_height, padding, baseline) = {
             let font = font_from_style(fonts, &MD_TITLE, dpi);
@@ -151,14 +152,12 @@ impl View for Book {
             start_x += tw + padding;
         }
 
-        // Author
         let author_width = {
             let font = font_from_style(fonts, &MD_AUTHOR, dpi);
             let plan = font.plan(author, Some(width), None);
-            let pt = pt!(start_x, self.rect.max.y - baseline - x_height / 2);
-            font.render(fb, scheme[1], &plan, pt);
             plan.width
         };
+        let mut author_x = start_x;
 
         // Title
         {
@@ -176,8 +175,9 @@ impl View for Book {
                         let max_width = available - if author_width > 0 { padding } else { 0 };
                         font.trim_left(&mut plan2);
                         font.crop_right(&mut plan2, max_width);
-                        let pt = pt!(self.rect.min.x + first_width - small_half_padding - plan2.width,
-                                     self.rect.max.y - baseline);
+                        author_x += plan2.width + padding;
+                        let pt = pt!(start_x,
+                                     self.rect.max.y - baseline - x_height / 2);
                         font.render(fb, scheme[1], &plan2, pt);
                         title_lines += 1;
                     } else {
@@ -195,6 +195,14 @@ impl View for Book {
             };
 
             let pt = pt!(start_x, self.rect.min.y + dy - x_height / 2);
+            font.render(fb, scheme[1], &plan, pt);
+        }
+
+        // Author
+        {
+            let font = font_from_style(fonts, &MD_AUTHOR, dpi);
+            let plan = font.plan(author, Some(width), None);
+            let pt = pt!(author_x, self.rect.max.y - baseline - x_height / 2);
             font.render(fb, scheme[1], &plan, pt);
         }
 
@@ -227,8 +235,9 @@ impl View for Book {
                     } else {
                         LARGEST_ARTICLE
                     };
-                    let pages_size = (reader.pages_count as i32 / BYTES_PER_PAGE as i32
-                        * width / largest_size).clamp(width / 20, width);
+                    let pages_size = (reader.pages_count as i32 /
+                          if matches!(&kind[..], "EPUB" | "HTML" | "HTM") {BYTES_PER_PAGE as i32} else {1}
+                          * width / largest_size).clamp(width / 20, width);
                     let curr_size = start_x + ((progress * pages_size as f32) as i32).max(2);
                     let start_y = self.rect.max.y - x_height;
                     fb.draw_rounded_rectangle_with_border(
@@ -249,7 +258,7 @@ impl View for Book {
 
         // year
 
-        // luu some books set year as 0101 when undefined
+        // some books set year as 0101 when undefined
         let year_is_blank = self.info.year.is_empty() || self.info.year == "0101";
         if !year_is_blank {
             let font = font_from_style(fonts, &MD_YEAR, dpi);
@@ -260,7 +269,6 @@ impl View for Book {
         }
         // File kind
         {
-            let kind = file_info.kind.to_uppercase();
             let font = font_from_style(fonts, &MD_KIND, dpi);
             let mut plan = font.plan(&kind, None, None);
             let letter_spacing = scale_by_dpi(3.0, dpi) as i32;
