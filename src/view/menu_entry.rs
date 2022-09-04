@@ -22,6 +22,7 @@ pub struct MenuEntry {
     corner_spec: Option<CornerSpec>,
     anchor: Rectangle,
     active: bool,
+    disabled: bool,
     dot_menu_active: Option<bool>,
 }
 
@@ -35,6 +36,7 @@ impl MenuEntry {
             corner_spec,
             anchor,
             active: false,
+            disabled: false,
             dot_menu_active: None,
         }
     }
@@ -48,6 +50,13 @@ impl MenuEntry {
         }
     }
 
+    pub fn set_disabled(&mut self, value: bool, rq: &mut RenderQueue) {
+        if self.disabled == value {
+            return;
+        }
+        self.disabled = value;
+        rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
+    }
 }
 
 impl View for MenuEntry {
@@ -74,7 +83,8 @@ impl View for MenuEntry {
                     _ => false,
                 }
             },
-            Event::Gesture(GestureEvent::Tap(center)) if self.rect.includes(center) => {
+            Event::Gesture(GestureEvent::Tap(center)) |
+            Event::Gesture(GestureEvent::HoldFingerShort(center, ..)) if self.rect.includes(center) && !self.disabled => {
                 match self.kind {
                     EntryKind::CheckBox(_, _, ref mut value) => {
                         *value = !*value;
@@ -148,6 +158,7 @@ impl View for MenuEntry {
         } else {
             TEXT_NORMAL
         };
+        let foreground = if self.disabled { scheme[2] } else { scheme[1] };
 
         let arect = match self.dot_menu_active {
             None => self.rect.clone(),
@@ -175,9 +186,7 @@ impl View for MenuEntry {
         let pt = pt!(self.rect.min.x + padding / 2,
                      self.rect.max.y - dy);
 
-        font.render(fb,
-                    if !self.dot_menu_active.unwrap_or(false) { scheme[1] } else { TEXT_NORMAL[1] }
-                    , &plan, pt);
+        font.render(fb, foreground, &plan, pt); 
 
         let (icon_name, x_offset) = match self.kind {
             EntryKind::CheckBox(_, _, value) if value => ("check_mark", 0),
@@ -199,7 +208,7 @@ impl View for MenuEntry {
             let dy = (self.rect.height() as i32 - pixmap.height as i32) / 2;
             let pt = self.rect.min + pt!(dx, dy);
 
-            fb.draw_blended_pixmap(pixmap, pt, scheme[1]);
+            fb.draw_blended_pixmap(pixmap, pt, foreground);
         }
     }
 

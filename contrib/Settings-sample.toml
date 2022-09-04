@@ -139,6 +139,9 @@ min-margin-width = 0
 max-margin-width = 10
 # The default line height, in ems.
 line-height = 1.2
+# Determine the scroll mode used for the fit-to-width zoom mode
+# when opening a new document.
+continuous-fit-to-width = true
 # Line height adjustment steps; smaller value => finer control
 line-height-gradient = 0.1
 # Whether to ignore the document's style sheets.
