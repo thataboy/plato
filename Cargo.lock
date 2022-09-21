@@ -243,9 +243,9 @@ dependencies = [
 
 [[package]]
 name = "cstr_core"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "644828c273c063ab0d39486ba42a5d1f3a499d35529c759e763a9c6cb8a0fb08"
+checksum = "dd98742e4fdca832d40cab219dc2e3048de17d873248f83f17df47c1bea70956"
 dependencies = [
  "cty",
  "memchr",
@@ -284,6 +284,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 
 [[package]]
+name = "emulator"
+version = "0.9.31"
+dependencies = [
+ "plato-core",
+ "sdl2",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -297,6 +305,15 @@ name = "entities"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5320ae4c3782150d900b79807611a59a99fc9a1d61d686faafc24b93fc8d7ca"
+
+[[package]]
+name = "fetcher"
+version = "0.9.31"
+dependencies = [
+ "plato-core",
+ "reqwest",
+ "signal-hook",
+]
 
 [[package]]
 name = "filetime"
@@ -565,6 +582,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "importer"
+version = "0.9.31"
+dependencies = [
+ "getopts",
+ "plato-core",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +854,13 @@ checksum = "1df8c4ec4b0627e53bdf214615ad287367e482558cf84b109250b37464dc03ae"
 name = "plato"
 version = "0.9.31"
 dependencies = [
+ "plato-core",
+]
+
+[[package]]
+name = "plato-core"
+version = "0.9.31"
+dependencies = [
  "anyhow",
  "bitflags",
  "byteorder",
@@ -838,7 +870,6 @@ dependencies = [
  "filetime",
  "flate2",
  "fxhash",
- "getopts",
  "globset",
  "indexmap",
  "kl-hyphenate",
@@ -853,11 +884,9 @@ dependencies = [
  "rand_xoshiro",
  "regex",
  "reqwest",
- "sdl2",
  "septem",
  "serde",
  "serde_json",
- "signal-hook",
  "sys-locale",
  "thiserror",
  "titlecase",
@@ -1196,13 +1225,15 @@ dependencies = [
 
 [[package]]
 name = "sys-locale"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3913c5a3d30054d7f77cf07cdd800c8103ace15c6e44437c5db66a43dd3a92cf"
+checksum = "658ee915b6c7b73ec4c1ffcd838506b5c5a4087eadc1ec8f862f1066cf2c8132"
 dependencies = [
  "cc",
  "cstr_core",
+ "js-sys",
  "libc",
+ "wasm-bindgen",
  "web-sys",
  "winapi",
 ]
