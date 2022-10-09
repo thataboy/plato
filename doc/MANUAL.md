@@ -152,6 +152,13 @@ The following swipe sequences are recognized:
 - Bottom left corner: guess the frontlight if there's more than two frontlight presets defined, toggle the frontlight otherwise.
 - Bottom right corner: toggle the dithering mode.
 
+When **not** in *custom* zoom mode, the following diagonal swipe sequences are recognized:
+
+- to northeast ↗ : toggle inverted mode
+- to southwest ↙ : go back to home screen
+- to northwest ↖ : rotate screen 90 degrees counterclockwise
+- to southeast ↘ : rotate screen 90 degrees clockwise
+
 Simultaneous swipe sequences:
 
 - Cross (east arrow with the left hand, west arrow with the right hand): go back to the home screen.

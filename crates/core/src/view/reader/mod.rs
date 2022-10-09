@@ -1280,6 +1280,9 @@ impl Reader {
             .. Default::default()
         };
 
+        // trigger draw stop button
+        hub.send(Event::Update(UpdateMode::Gui)).ok();
+
         let hub2 = hub.clone();
         let doc2 = Arc::clone(&self.doc);
         let running = Arc::clone(&s.running);
@@ -3415,9 +3418,20 @@ impl View for Reader {
                 }
                 true
             },
-            Event::Gesture(GestureEvent::SlantedSwipe { start, end, .. }) if self.rect.includes(start) => {
+            Event::Gesture(GestureEvent::SlantedSwipe { start, end, dir }) if self.rect.includes(start) => {
                 if let ZoomMode::Custom(_) = self.view_port.zoom_mode {
                     self.directional_scroll(start - end, hub, rq, context);
+                } else {
+                    match dir {
+                        DiagDir::NorthEast => self.toggle_inverted(hub, rq, context),
+                        DiagDir::SouthWest => { self.quit(context); hub.send(Event::Back).ok(); },
+                        DiagDir::NorthWest | DiagDir::SouthEast => {
+                            let delta = if dir == DiagDir::NorthWest {-1} else {1};
+                            let n = (4 + (context.display.rotation + delta)) % 4;
+                            hub.send(Event::Select(EntryId::Rotate(n))).ok();
+                        },
+                        _ => (),
+                    }
                 }
                 true
             },
@@ -3426,7 +3440,6 @@ impl View for Reader {
                     self.set_zoom_mode(ZoomMode::FitToWidth, true, hub, rq, context);
                 }
                 true
-
             },
             Event::Gesture(GestureEvent::Pinch { axis: Axis::Horizontal, center, .. }) if self.rect.includes(center) => {
                 self.set_zoom_mode(ZoomMode::FitToPage, true, hub, rq, context);
@@ -4896,7 +4909,7 @@ impl View for Reader {
                 if s.running.load(AtomicOrdering::Relaxed) {
                     "stop"
                 } else {
-                    "exit"
+                    "close2"
                 }
             } else {
                 "close2"
