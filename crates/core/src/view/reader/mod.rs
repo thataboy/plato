@@ -3430,7 +3430,6 @@ impl View for Reader {
                             let n = (4 + (context.display.rotation + delta)) % 4;
                             hub.send(Event::Select(EntryId::Rotate(n))).ok();
                         },
-                        _ => (),
                     }
                 }
                 true

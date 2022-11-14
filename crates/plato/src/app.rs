@@ -24,7 +24,7 @@ use plato_core::document::sys_info_as_html;
 use plato_core::input::{DeviceEvent, PowerSource, ButtonCode, ButtonStatus, VAL_RELEASE, VAL_PRESS};
 use plato_core::input::{raw_events, device_events, usb_events, display_rotate_event, button_scheme_event};
 use plato_core::gesture::{GestureEvent, gesture_events};
-use plato_core::helpers::{load_toml, save_toml, CANNOT_PARSE_TOML};
+use plato_core::helpers::{load_toml, save_toml};
 use plato_core::settings::{ButtonScheme, Settings, SETTINGS_PATH, RotationLock, IntermKind};
 use plato_core::frontlight::{Frontlight, StandardFrontlight, NaturalFrontlight, PremixedFrontlight};
 use plato_core::lightsensor::{LightSensor, KoboLightSensor};
@@ -46,7 +46,8 @@ use plato_core::view::wikipedia::Wiki;
 pub const APP_NAME: &str = "Plato";
 const FB_DEVICE: &str = "/dev/fb0";
 const RTC_DEVICE: &str = "/dev/rtc0";
-const TOUCH_INPUTS: [&str; 3] = ["/dev/input/by-path/platform-1-0010-event",
+const TOUCH_INPUTS: [&str; 4] = ["/dev/input/by-path/platform-1-0038-event",
+                                 "/dev/input/by-path/platform-1-0010-event",
                                  "/dev/input/by-path/platform-0-0010-event",
                                  "/dev/input/event1"];
 const BUTTON_INPUTS: [&str; 4] = ["/dev/input/by-path/platform-gpio-keys-event",
@@ -93,17 +94,11 @@ fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
                   .map_err(|e| eprintln!("Can't open RTC device: {:#}.", e))
                   .ok();
     let path = Path::new(SETTINGS_PATH);
-    let mut settings = load_toml::<Settings, _>(path)
-                                .map_err(|e| {
-                                    let err = format!("Can't load settings: {:#}.", e);
-                                    eprintln!("\n{}", err);
-                                    if err.contains(CANNOT_PARSE_TOML) {
-                                        panic!("{}", CANNOT_PARSE_TOML);
-                                    } else {
-                                        eprintln!("Creating default {}", SETTINGS_PATH);
-                                    }
-                                })
-                                .unwrap_or_default();
+    let mut settings = if path.exists() {
+        load_toml::<Settings, _>(path).context("can't load settings")?
+    } else {
+        Default::default()
+    };
 
     if settings.libraries.is_empty() {
         return Err(format_err!("no libraries found"));
@@ -505,7 +500,6 @@ pub fn run() -> Result<(), Error> {
                             if context.settings.import.unshare_trigger {
                                 context.batch_import();
                             }
-                            context.load_dictionaries();
                             view.handle_event(&Event::Reseed, &tx, &mut bus, &mut rq, &mut context);
                         } else {
                             context.plugged = false;
@@ -677,7 +671,6 @@ pub fn run() -> Result<(), Error> {
                 }
 
                 context.shared = true;
-                context.unload_dictionaries();
                 Command::new("scripts/usb-enable.sh").status().ok();
             },
             Event::Gesture(ge) => {

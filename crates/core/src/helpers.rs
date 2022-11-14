@@ -16,8 +16,6 @@ use entities::ENTITIES;
 use walkdir::DirEntry;
 use anyhow::{Error, Context};
 
-pub const CANNOT_PARSE_TOML: &str = "can't parse TOML";
-
 lazy_static! {
     pub static ref CHARACTER_ENTITIES: FxHashMap<&'static str, &'static str> = {
         let mut m = FxHashMap::default();
@@ -88,7 +86,7 @@ pub fn load_toml<T, P: AsRef<Path>>(path: P) -> Result<T, Error> where for<'a> T
     let s = fs::read_to_string(path.as_ref())
                .with_context(|| format!("can't read file {}", path.as_ref().display()))?;
     toml::from_str(&s)
-         .with_context(|| format!("{} content from {}", CANNOT_PARSE_TOML, path.as_ref().display()))
+         .with_context(|| format!("cen't parse TOML from {}", path.as_ref().display()))
          .map_err(Into::into)
 }
 
