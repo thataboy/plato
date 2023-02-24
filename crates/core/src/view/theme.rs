@@ -66,7 +66,7 @@ pub struct ThemeDialog {
 }
 
 impl ThemeDialog {
-    pub fn new(has_relative_fs: bool, context: &mut Context) -> ThemeDialog {
+    pub fn new(has_relative_fs: bool, theme_idx: Option<usize>, context: &mut Context) -> ThemeDialog {
         let id = ID_FEEDER.next();
         let fonts = &mut context.fonts;
         let mut children = Vec::new();
@@ -148,11 +148,16 @@ impl ThemeDialog {
         y += 3 * padding / 2;
         let button_width = 10 * x_height;
         let x = rect.max.x - padding - button_width;
+        let evt = if let Some(idx) = theme_idx {
+            Event::OverwriteTheme(idx)
+        } else {
+            Event::SaveTheme
+        };
         let button_save = Button::new(rect![x,
                                             y,
                                             x + button_width,
                                             y + small_height],
-                                      Event::SaveTheme,
+                                      evt,
                                       LABEL_SAVE.to_string())
                             .disabled(true);
         children.push(Box::new(button_save) as Box<dyn View>);

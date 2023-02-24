@@ -2030,11 +2030,12 @@ impl Reader {
                     entries.push(EntryKind::Command("Use default settings".to_string(), EntryId::ResetToDefaults));
                 }
                 let mut themes = context.settings.themes.iter().enumerate()
-                                    .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
+                                    // .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
                                     .map(|(i, x)| { EntryKind::CommandEx(x.name.clone(),
                                                                        EntryId::ApplyTheme(i),
                                                                        vec![EntryKind::Command("Rename".to_string(), EntryId::RenameTheme(i)),
                                                                             EntryKind::Command("Delete".to_string(), EntryId::DeleteTheme(i)),
+                                                                            EntryKind::Command("Overwrite".to_string(), EntryId::OverwriteTheme(i)),
                                                                        ])
                 }).collect::<Vec<EntryKind>>();
                 if !themes.is_empty() {
@@ -2256,11 +2257,12 @@ impl Reader {
                 return;
             }
             let mut entries = context.settings.themes.iter().enumerate()
-                                .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
+                                // .filter(|(_, x)| !x.name.trim_start().starts_with("__"))
                                 .map(|(i, x)| { EntryKind::CommandEx(x.name.clone(),
                                                                      EntryId::ApplyTheme(i),
                                                                      vec![EntryKind::Command("Rename".to_string(), EntryId::RenameTheme(i)),
                                                                           EntryKind::Command("Delete".to_string(), EntryId::DeleteTheme(i)),
+                                                                          EntryKind::Command("Overwrite".to_string(), EntryId::OverwriteTheme(i)),
                                                                      ])
 
             }).collect::<Vec<EntryKind>>();
@@ -2274,7 +2276,7 @@ impl Reader {
         }
     }
 
-    fn toggle_theme_dialog(&mut self, enable: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+    fn toggle_theme_dialog(&mut self, enable: bool, idx: Option<usize>, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if let Some(index) = locate::<ThemeDialog>(self) {
             if enable { return; }
             rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
@@ -2285,7 +2287,7 @@ impl Reader {
             let font_size = self.info.reader.as_ref().and_then(|r| r.font_size)
                                 .unwrap_or(context.settings.reader.font_size);
             let has_relative_fs = (font_size - context.settings.reader.font_size).abs() > f32::EPSILON;
-            let thd = ThemeDialog::new(has_relative_fs, context);
+            let thd = ThemeDialog::new(has_relative_fs, idx, context);
             rq.add(RenderData::new(thd.id(), *thd.rect(), UpdateMode::Gui));
             self.children.push(Box::new(thd) as Box<dyn View>);
         }
@@ -4290,19 +4292,26 @@ impl View for Reader {
                 true
             },
             Event::Show(ViewId::ThemeDialog) | Event::Select(EntryId::SaveTheme) => {
-                self.toggle_theme_dialog(true, hub, rq, context);
+                self.toggle_theme_dialog(true, None, hub, rq, context);
                 true
             },
             Event::Close(ViewId::ThemeDialog) => {
-                self.toggle_theme_dialog(false, hub, rq, context);
+                self.toggle_theme_dialog(false, None, hub, rq, context);
                 true
             },
             Event::SaveTheme => {
                 self.stash_theme(context);
-                self.toggle_theme_dialog(false, hub, rq, context);
+                self.toggle_theme_dialog(false, None, hub, rq, context);
                 self.toggle_name_theme(true, hub, rq, context);
                 true
             },
+            Event::OverwriteTheme(idx) => {
+                let name = context.settings.themes.get(idx).unwrap().name.clone();
+                self.stash_theme(context);
+                self.toggle_theme_dialog(false, None, hub, rq, context);
+                self.save_theme(&name, hub, context);
+                true
+            }
             Event::Select(EntryId::RenameTheme(idx)) => {
                 self.toggle_bars(Some(false), hub, rq, context);
                 self.theme = Some(ThemeStash::Existing(idx));
@@ -4317,6 +4326,10 @@ impl View for Reader {
                 }
                 true
             }
+            Event::Select(EntryId::OverwriteTheme(idx)) => {
+                self.toggle_theme_dialog(true, Some(idx), hub, rq, context);
+                true
+            },
             Event::Submit(ViewId::NameThemeInput, ref text) => {
                 let text = text.trim();
                 if !text.is_empty() {
@@ -4761,7 +4774,6 @@ impl View for Reader {
             },
             Event::Select(EntryId::Quit) |
             Event::Select(EntryId::Reboot) |
-            Event::Select(EntryId::RebootInNickel) |
             Event::Back |
             Event::Suspend => {
                 self.quit(context);

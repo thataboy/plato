@@ -213,7 +213,8 @@ impl ToolBar {
                               rect.max.x, rect.max.y];
         if synthetic {
             let evt = if context.settings.themes
-                                .iter().filter(|x| !x.name.trim_start().starts_with("__"))
+                                .iter()
+                                // .filter(|x| !x.name.trim_start().starts_with("__"))
                                 .count() > 0 {
                 Event::ToggleNear(ViewId::ThemeMenu, last_rect)
             } else {

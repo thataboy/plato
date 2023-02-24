@@ -35,5 +35,5 @@ There are two special theme names:
 - `__uninverted`
 
 If you want to have a theme automatically applied whenever you turn *on* (*off*) inverted mode, name it
-`__inverted` (`__uninverted`). Other special theme names beginning with two undescores `__` may be added later. *These special themes are hidden and do not appear on the themes menu.*
+`__inverted` (`__uninverted`). Other special theme names beginning with two undescores `__` may be added later.
 
