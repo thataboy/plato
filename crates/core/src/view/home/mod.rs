@@ -1036,8 +1036,8 @@ impl Home {
                                              library_settings.thumbnail_previews));
 
             let trash_path = context.library.home.join(TRASH_DIRNAME);
-            if trash_path.is_dir() {
-                let trash = Library::new(trash_path, LibraryMode::Database);
+            if let Ok(trash) = Library::new(trash_path, LibraryMode::Database)
+                                       .map_err(|e| eprintln!("Can't inspect trash: {:#?}.", e)) {
                 if trash.is_empty() == Some(false) {
                     entries.push(EntryKind::Separator);
                     entries.push(EntryKind::Command("Empty Trash".to_string(),
@@ -1070,14 +1070,20 @@ impl Home {
 
     fn empty_trash(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let trash_path = context.library.home.join(TRASH_DIRNAME);
-        if !trash_path.is_dir() {
+
+        let trash = Library::new(trash_path, LibraryMode::Database)
+                            .map_err(|e| eprintln!("Can't load trash: {:#}.", e));
+        if trash.is_err() {
             return;
         }
-        let mut trash = Library::new(trash_path, LibraryMode::Database);
+
+        let mut trash = trash.unwrap();
+
         let (files, _) = trash.list(&trash.home, None, false);
         if files.is_empty() {
             return;
         }
+
         let mut count = 0;
         for info in files {
             match trash.remove(&info.file.path) {
@@ -1102,9 +1108,9 @@ impl Home {
         if full_path.exists() {
             let trash_path = context.library.home.join(TRASH_DIRNAME);
             if !trash_path.is_dir() {
-                fs::create_dir_all(&trash_path)?;
+                fs::create_dir(&trash_path)?;
             }
-            let mut trash = Library::new(trash_path, LibraryMode::Database);
+            let mut trash = Library::new(trash_path, LibraryMode::Database)?;
             context.library.move_to(path, &mut trash)?;
             let (mut files, _) = trash.list(&trash.home, None, false);
             let mut size = files.iter().map(|info| info.file.size).sum::<u64>();
@@ -1129,7 +1135,7 @@ impl Home {
 
     fn copy_to(&mut self, path: &Path, index: usize, context: &mut Context) -> Result<(), Error> {
         let library_settings = &context.settings.libraries[index];
-        let mut library = Library::new(&library_settings.path, library_settings.mode);
+        let mut library = Library::new(&library_settings.path, library_settings.mode)?;
         context.library.copy_to(path, &mut library)?;
         library.flush();
         Ok(())
@@ -1137,7 +1143,7 @@ impl Home {
 
     fn move_to(&mut self, path: &Path, index: usize, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> Result<(), Error> {
         let library_settings = &context.settings.libraries[index];
-        let mut library = Library::new(&library_settings.path, library_settings.mode);
+        let mut library = Library::new(&library_settings.path, library_settings.mode)?;
         context.library.move_to(path, &mut library)?;
         library.flush();
         self.refresh_visibles(true, false, hub, rq, context);
@@ -1182,6 +1188,17 @@ impl Home {
             return;
         }
 
+        let library_settings = context.settings.libraries[index].clone();
+        let library = Library::new(&library_settings.path,
+                                    library_settings.mode)
+                              .map_err(|e| eprintln!("Can't load library: {:#}.", e));
+
+        if library.is_err() {
+            return;
+        }
+
+        let library = library.unwrap();
+
         let old_path = mem::take(&mut self.current_directory);
         self.terminate_fetchers(&old_path, false, hub, context);
 
@@ -1193,10 +1210,6 @@ impl Home {
         }
 
         context.library.flush();
-
-        let library_settings = &context.settings.libraries[index];
-        let library = Library::new(&library_settings.path,
-                                   library_settings.mode);
 
         context.library = library;
         context.settings.selected_library = index;
