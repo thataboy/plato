@@ -19,3 +19,5 @@
 /plato-*.zip
 /thirdparty/*/*
 !/thirdparty/*/*kobo*
+
+.DS_Store
