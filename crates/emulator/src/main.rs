@@ -46,6 +46,8 @@ use plato_core::font::Fonts;
 use plato_core::context::Context;
 use plato_core::pt;
 use plato_core::png;
+use plato_core::view::translate::Translate;
+use plato_core::view::wikipedia::Wiki;
 
 pub const APP_NAME: &str = "Plato";
 const DEFAULT_ROTATION: i8 = 1;
@@ -396,6 +398,13 @@ fn main() -> Result<(), Error> {
                         AppCmd::Dictionary { ref query, ref language } => {
                             Box::new(Dictionary::new(context.fb.rect(), query, language, &tx, &mut rq, &mut context))
                         },
+                        AppCmd::Translate { ref query, ref source, ref target } => {
+                            Box::new(Translate::new(context.fb.rect(), query, source, target, &tx, &mut rq, &mut context))
+                        },
+                        AppCmd::Wiki { ref query } => {
+                            Box::new(Wiki::new(context.fb.rect(), query, &tx, &mut rq, &mut context))
+                        },
+
                         AppCmd::TouchEvents => {
                             Box::new(TouchEvents::new(context.fb.rect(), &mut rq, &mut context))
                         },
