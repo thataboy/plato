@@ -110,8 +110,8 @@ pub struct Settings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation_lock: Option<RotationLock>,
     pub button_scheme: ButtonScheme,
-    pub auto_suspend: u8,
-    pub auto_power_off: u8,
+    pub auto_suspend: f32,
+    pub auto_power_off: f32,
     pub time_format: String,
     pub date_format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -246,6 +246,7 @@ impl Default for CssStyle {
 pub struct ImportSettings {
     pub unshare_trigger: bool,
     pub startup_trigger: bool,
+    pub sync_metadata: bool,
     pub metadata_kinds: FxHashSet<String>,
     pub allowed_kinds: FxHashSet<String>,
 }
@@ -565,9 +566,10 @@ impl Default for ImportSettings {
         ImportSettings {
             unshare_trigger: true,
             startup_trigger: true,
+            sync_metadata: true,
             metadata_kinds: ["epub", "pdf", "djvu"].iter().map(|k| k.to_string()).collect(),
             allowed_kinds: ["pdf", "djvu", "epub", "fb2",
-                            "xps", "oxps", "cbz"].iter().map(|k| k.to_string()).collect(),
+                            "xps", "oxps", "mobi", "cbz"].iter().map(|k| k.to_string()).collect(),
         }
     }
 }
@@ -626,8 +628,8 @@ impl Default for Settings {
             suppress_screen_flash: true,
             rotation_lock: None,
             button_scheme: ButtonScheme::Natural,
-            auto_suspend: 30,
-            auto_power_off: 3,
+            auto_suspend: 30.0,
+            auto_power_off: 3.0,
             time_format: "%H:%M".to_string(),
             date_format: "%A, %B %-d, %Y".to_string(),
             intermissions: Intermissions {

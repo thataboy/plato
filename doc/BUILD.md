@@ -69,7 +69,7 @@ ln -s arm-unknown-linux-gnueabihf-strip arm-linux-gnueabihf-strip
 
 ## Developer Tools
 
-Install the required dependencies: *MuPDF 1.20.0*, *DjVuLibre*, *FreeType*, *HarfBuzz*.
+Install the required dependencies: *MuPDF 1.22.1*, *DjVuLibre*, *FreeType*, *HarfBuzz*.
 
 ### Emulator
 
