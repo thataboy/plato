@@ -10,7 +10,7 @@ use crate::metadata::{SortMethod, BookQuery, sort};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::context::Context;
 use globset::GlobBuilder;
-use walkdir::WalkDir;
+use walkdir::{WalkDir, DirEntry};
 use std::fs::metadata;
 use chrono::Local;
 use lazy_static::lazy_static;
@@ -41,6 +41,13 @@ pub enum Message {
     Cover(PathBuf),
 }
 
+fn is_hidden(entry: &DirEntry) -> bool {
+    entry.file_name()
+         .to_str()
+         .map(|s| s.starts_with("."))
+         .unwrap_or(false)
+}
+
 impl Intermission {
     pub fn new(rect: Rectangle, kind: IntermKind, context: &Context) -> Intermission {
         let path = &context.settings.intermissions[kind];
@@ -67,6 +74,7 @@ impl Intermission {
                                                    .build().unwrap().compile_matcher();
                         let mut images: Vec<PathBuf> = Vec::new();
                         for entry in WalkDir::new(&path).min_depth(1).into_iter().filter_map(|e| e.ok()) {
+                            if is_hidden(&entry) { continue; }
                             let path = entry.path();
                             if glob.is_match(path) {
                                 images.push(path.to_path_buf());
