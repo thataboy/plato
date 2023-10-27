@@ -129,6 +129,9 @@ pub struct Reader {
     progress_bar: ProgressBarSettings,
     theme: Option<ThemeStash>, // temporarily store selection in theme dialog
     chapter: RefCell<Chapter>, // cache chapter info
+    time_format: String,
+    dirty_clock: RefCell<bool>,
+
 }
 
 #[derive(Debug)]
@@ -437,6 +440,8 @@ impl Reader {
                 progress_bar,
                 theme: None,
                 chapter: RefCell::new(Chapter::default()),
+                time_format: context.settings.time_format.clone(),
+                dirty_clock: RefCell::new(false),
             })
         })
     }
@@ -509,6 +514,8 @@ impl Reader {
             progress_bar,
             theme: None,
             chapter: RefCell::new(Chapter::default()),
+            time_format: context.settings.time_format.clone(),
+            dirty_clock: RefCell::new(false),
         }
     }
 
@@ -1152,7 +1159,7 @@ impl Reader {
         let update_mode = update_mode.unwrap_or_else(|| self.get_update_mode(false, context));
         if update_mode == UpdateMode::Full {
             self.page_turns = 0;
-        } else {
+        } else if update_mode == UpdateMode::Partial {
             self.page_turns += 1;
         }
 
@@ -3391,6 +3398,35 @@ impl Reader {
             self.set_zoom_mode(ZoomMode::Custom(current_factor * factor), false, hub, rq, context);
         }
     }
+
+    fn has_progress_bar(&self) -> bool {
+        self.synthetic && self.progress_bar.enabled && locate::<BottomBar>(self).is_none()
+    }
+
+    fn update_clock(&self, fb: &mut dyn Framebuffer, fonts: &mut Fonts) -> i32 {
+        let pb = &self.progress_bar;
+        let dpi = CURRENT_DEVICE.dpi;
+        let font = font_from_style(fonts, &SMALL_STYLE, dpi);
+        let margin = scale_by_dpi(pb.horz_margin as f32, dpi) as i32;
+        let y_margin = scale_by_dpi(pb.vert_margin as f32, dpi) as i32;
+        let x = self.rect.min.x as i32 + margin;
+        let y = self.rect.max.y as i32 - y_margin;
+        let clock_width = font.x_heights.0 as i32 * self.time_format.chars().count() as i32;
+        let time = Local::now();
+        let plan = font.plan(
+            time.format(&self.time_format).to_string(),
+            Some(clock_width + margin),
+            None);
+        let rect = rect![
+            pt!(self.rect.min.x, y - font.x_heights.1 as i32 - 1),
+            pt!(x + clock_width, self.rect.max.y)
+        ];
+        fb.draw_rectangle(&rect, WHITE);
+        font.render(fb, BLACK, &plan, pt!(x + clock_width - plan.width, y));
+        *self.dirty_clock.borrow_mut() = false;
+        clock_width
+    }
+
 }
 
 impl View for Reader {
@@ -4806,11 +4842,23 @@ impl View for Reader {
                 }
                 true
             },
+            Event::ClockTick => {
+                if self.has_progress_bar() && self.progress_bar.show_clock {
+                    *self.dirty_clock.borrow_mut() = false;
+                    self.update(Some(UpdateMode::Gui), hub, rq, context);
+                }
+                true
+            },
             _ => false,
         }
     }
 
     fn render(&self, fb: &mut dyn Framebuffer, rect: Rectangle, fonts: &mut Fonts) {
+        if *self.dirty_clock.borrow() {
+            self.update_clock(fb, fonts);
+            return;
+        }
+
         fb.draw_rectangle(&rect, WHITE);
 
         for chunk in &self.chunks {
@@ -4954,23 +5002,28 @@ impl View for Reader {
             fb.draw_triangle(&[a, b, c], GRAY03);
         }
 
-        let pb = &self.progress_bar;
-
-        if self.synthetic && pb.enabled && locate::<BottomBar>(self).is_none() {
+        if self.has_progress_bar() {
+            let pb = &self.progress_bar;
             let dpi = CURRENT_DEVICE.dpi;
-            let font = font_from_style(fonts, &SMALL_STYLE, dpi);
             let margin = scale_by_dpi(pb.horz_margin as f32, dpi) as i32;
             let y_margin = scale_by_dpi(pb.vert_margin as f32, dpi) as i32;
             let gap = scale_by_dpi(15.0 as f32, dpi) as i32;
             let available_width = self.rect.width() as i32 - 2 * margin;
-            let label_width = (available_width / 11).max(font.x_heights.0 as i32 * 7);
-            let bar_width = available_width - gap - label_width;
             let bar_height = scale_by_dpi(pb.height as f32, dpi) as i32;
+            let mut bar_width = available_width;
             let mut x = self.rect.min.x as i32 + margin;
-            let mut y = self.rect.max.y as i32 - bar_height - y_margin;
+            let y = self.rect.max.y as i32 - y_margin;  // bottom of progress bar
+            if pb.show_clock {
+                let clock_space = self.update_clock(fb, fonts) + gap;
+                x += clock_space;
+                bar_width -= clock_space;
+            }
+            let font = font_from_style(fonts, &SMALL_STYLE, dpi);
+            let label_width = font.x_heights.0 as i32 * 7;
+            bar_width -= label_width + gap;
             let page_size = x + self.current_page as i32 * bar_width / self.pages_count as i32;
             fb.draw_rounded_rectangle_with_border(
-                    &rect![pt!(x, y), pt!(x + bar_width, y + bar_height)],
+                    &rect![pt!(x, y - bar_height), pt!(x + bar_width, y)],
                     &CornerSpec::Uniform(bar_height / 2),
                     &BorderSpec { thickness: 0, color: GRAY10 },
                     &|x, _| if x < page_size { GRAY03 } else { GRAY10 });
@@ -4978,8 +5031,8 @@ impl View for Reader {
                                           Some(label_width + margin), // allow text to exceed margin
                                           None);
             x += bar_width + gap;
-            y += bar_height;
             font.render(fb, BLACK, &plan, pt!(x, y));
+            *self.dirty_clock.borrow_mut() = false;
         }
     }
 

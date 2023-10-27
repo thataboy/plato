@@ -8,6 +8,7 @@ This fork by me contains changes and additional features you may find useful, in
 - Google translate and wikipedia search.
 - Page scrubber.
 - Updated library view.
+- Progress bar
 - lots more.
 
 ## Installation

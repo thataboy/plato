@@ -170,7 +170,7 @@ stretch-tolerance = 1.26
 regular = 10
 inverted = 5
 # whether to do full refresh at chapter start
-chapter_start = true
+chapter-start = true
 
 [reader.progress-bar]
 # whether to show the progress bar
@@ -178,9 +178,11 @@ enabled = true
 # bar height in pixels
 height = 12
 # left and right margin in pixels
-horz_margin = 20
+horz-margin = 20
 # bottom margin in pixels
-vert_margin = 12
+vert-margin = 12
+# whether to show clock
+show-clock = true
 
 [import]
 # Start the import process when the device is unplugged from a computer.

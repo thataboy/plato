@@ -398,6 +398,7 @@ pub struct ProgressBarSettings {
     pub height: i32,
     pub horz_margin: i32,
     pub vert_margin: i32,
+    pub show_clock: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -505,6 +506,7 @@ impl Default for ProgressBarSettings {
             height: 12,
             horz_margin: 20,
             vert_margin: 12,
+            show_clock: true,
         }
     }
 }
@@ -633,7 +635,7 @@ impl Default for Settings {
             time_format: "%H:%M".to_string(),
             date_format: "%A, %B %-d, %Y".to_string(),
             intermissions: Intermissions {
-                suspend: PathBuf::from(LOGO_SPECIAL_PATH),
+                suspend: PathBuf::from(COVER_SPECIAL_PATH),
                 power_off: PathBuf::from(LOGO_SPECIAL_PATH),
                 share: PathBuf::from(LOGO_SPECIAL_PATH),
             },
