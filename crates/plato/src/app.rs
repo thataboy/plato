@@ -46,7 +46,8 @@ use plato_core::view::wikipedia::Wiki;
 pub const APP_NAME: &str = "Plato";
 const FB_DEVICE: &str = "/dev/fb0";
 const RTC_DEVICE: &str = "/dev/rtc0";
-const TOUCH_INPUTS: [&str; 4] = ["/dev/input/by-path/platform-1-0038-event",
+const TOUCH_INPUTS: [&str; 5] = ["/dev/input/by-path/platform-2-0010-event",
+                                 "/dev/input/by-path/platform-1-0038-event",
                                  "/dev/input/by-path/platform-1-0010-event",
                                  "/dev/input/by-path/platform-0-0010-event",
                                  "/dev/input/event1"];
@@ -54,8 +55,9 @@ const BUTTON_INPUTS: [&str; 4] = ["/dev/input/by-path/platform-gpio-keys-event",
                                   "/dev/input/by-path/platform-ntx_event0-event",
                                   "/dev/input/by-path/platform-mxckpd-event",
                                   "/dev/input/event0"];
-const POWER_INPUTS: [&str; 2] = ["/dev/input/by-path/platform-bd71828-pwrkey-event",
-                                 "/dev/input/by-path/platform-bd71828-pwrkey.4.auto-event"];
+const POWER_INPUTS: [&str; 3] = ["/dev/input/by-path/platform-bd71828-pwrkey.6.auto-event",
+                                 "/dev/input/by-path/platform-bd71828-pwrkey.4.auto-event",
+                                 "/dev/input/by-path/platform-bd71828-pwrkey-event"];
 
 const KOBO_UPDATE_BUNDLE: &str = "/mnt/onboard/.kobo/KoboRoot.tgz";
 
@@ -361,6 +363,10 @@ pub fn run() -> Result<(), Error> {
                         tx.send(Event::ToggleFrontlight).ok();
                     },
                     DeviceEvent::CoverOn => {
+                        if context.covered {
+                           continue;
+                        }
+
                         context.covered = true;
 
                         if !context.settings.sleep_cover || context.shared ||
@@ -377,6 +383,10 @@ pub fn run() -> Result<(), Error> {
                         view.children_mut().push(Box::new(interm) as Box<dyn View>);
                     },
                     DeviceEvent::CoverOff => {
+                        if !context.covered {
+                           continue;
+                        }
+
                         context.covered = false;
 
                         if context.shared {
@@ -600,30 +610,36 @@ pub fn run() -> Result<(), Error> {
                            .ok();
                     });
                 }
-                println!("{}", Local::now().format("Went to sleep on %B %-d, %Y at %H:%M."));
+                let before = Local::now();
+                println!("{}", before.format("Went to sleep on %B %-d, %Y at %H:%M:%S."));
                 Command::new("scripts/suspend.sh")
                         .status()
                         .ok();
-                println!("{}", Local::now().format("Woke up on %B %-d, %Y at %H:%M."));
+                let after = Local::now();
+                println!("{}", after.format("Woke up on %B %-d, %Y at %H:%M:%S."));
                 Command::new("scripts/resume.sh")
                         .status()
                         .ok();
                 inactive_since = Instant::now();
                 if context.settings.auto_power_off > 0.0 {
-                    if let Some(enabled) = context.rtc.as_ref()
-                                                  .and_then(|rtc| rtc.is_alarm_enabled()
-                                                                     .map_err(|e| eprintln!("Can't get alarm: {:#}", e))
-                                                                     .ok()) {
-                        if enabled {
+                    let dur = plato_core::chrono::Duration::seconds((86_400.0 * context.settings.auto_power_off) as i64);
+                    if let Some(fired) = context.rtc.as_ref()
+                                                .and_then(|rtc| rtc.alarm()
+                                                                   .map_err(|e| eprintln!("Can't get alarm: {:#}", e))
+                                                                   .map(|rwa| !rwa.enabled() ||
+                                                                              (rwa.year() <= 1970 &&
+                                                                               ((after - before) - dur).num_seconds().abs() < 3))
+                                                                   .ok()) {
+                        if fired {
+                            power_off(view.as_mut(), &mut history, &mut updating, &mut context);
+                            exit_status = ExitStatus::PowerOff;
+                            break;
+                        } else {
                             context.rtc.iter().for_each(|rtc| {
                                 rtc.disable_alarm()
                                    .map_err(|e| eprintln!("Can't disable alarm: {:#}.", e))
                                    .ok();
                             });
-                        } else {
-                            power_off(view.as_mut(), &mut history, &mut updating, &mut context);
-                            exit_status = ExitStatus::PowerOff;
-                            break;
                         }
                     }
                 }
