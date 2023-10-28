@@ -11,6 +11,8 @@ This fork by me contains changes and additional features you may find useful, in
 - Progress bar
 - lots more.
 
+[![Tn05](artworks/thumbnail05.png)](artworks/screenshot05.png) [![Tn06](artworks/thumbnail06.png)](artworks/screenshot06.png) [![Tn07](artworks/thumbnail07.png)](artworks/screenshot07.png)
+
 ## Installation
 
 If you already have Plato installed, simply download latest release [here](https://github.com/thataboy/plato/releases) then extract the entire zip file's content into where Plato is installed, usually `./adds/plato`, overwriting everything (your settings will be preserved).
