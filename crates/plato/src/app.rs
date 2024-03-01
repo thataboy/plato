@@ -69,13 +69,7 @@ const PREPARE_SUSPEND_WAIT_DELAY: Duration = Duration::from_secs(3);
 
 struct Task {
     id: TaskId,
-    chan: Receiver<()>,
-}
-
-impl Task {
-    fn has_occurred(&self) -> bool {
-        self.chan.try_recv() == Ok(())
-    }
+    _chan: Receiver<()>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -141,7 +135,8 @@ fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
 fn schedule_task(id: TaskId, event: Event, delay: Duration, hub: &Sender<Event>, tasks: &mut Vec<Task>) {
     let (ty, ry) = mpsc::channel();
     let hub2 = hub.clone();
-    tasks.push(Task { id, chan: ry });
+    tasks.retain(|task| task.id != id);
+    tasks.push(Task { id, _chan: ry });
     thread::spawn(move || {
         thread::sleep(delay);
         if ty.send(()).is_ok() {
@@ -205,6 +200,7 @@ fn set_wifi(enable: bool, context: &mut Context) {
     }
 }
 
+#[derive(PartialEq)]
 enum ExitStatus {
     Quit,
     Reboot,
@@ -228,6 +224,9 @@ pub fn run() -> Result<(), Error> {
     }
 
     let mut context = build_context(fb).context("can't build context")?;
+
+    context.plugged = context.battery.status().is_ok_and(|v| v[0].is_wired());
+
     if context.settings.import.startup_trigger {
         context.batch_import();
     }
@@ -389,16 +388,7 @@ pub fn run() -> Result<(), Error> {
 
                         context.covered = false;
 
-                        if context.shared {
-                            continue;
-                        }
-
-                        if !context.settings.sleep_cover {
-                            if tasks.iter().any(|task| task.id == TaskId::Suspend && task.has_occurred()) {
-                                tasks.retain(|task| task.id != TaskId::Suspend);
-                                schedule_task(TaskId::Suspend, Event::Suspend,
-                                              SUSPEND_WAIT_DELAY, &tx, &mut tasks);
-                            }
+                        if context.shared || !context.settings.sleep_cover {
                             continue;
                         }
 
@@ -445,10 +435,7 @@ pub fn run() -> Result<(), Error> {
 
                         match power_source {
                             PowerSource::Wall => {
-                                if tasks.iter().any(|task| task.id == TaskId::Suspend && task.has_occurred()) {
-                                    tasks.retain(|task| task.id != TaskId::Suspend);
-                                    schedule_task(TaskId::Suspend, Event::Suspend,
-                                                  SUSPEND_WAIT_DELAY, &tx, &mut tasks);
+                                if tasks.iter().any(|task| task.id == TaskId::Suspend) {
                                     continue;
                                 }
                             },
@@ -519,12 +506,8 @@ pub fn run() -> Result<(), Error> {
                             context.plugged = false;
                             schedule_task(TaskId::CheckBattery, Event::CheckBattery,
                                           BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
-                            if tasks.iter().any(|task| task.id == TaskId::Suspend && task.has_occurred()) {
-                                if context.covered {
-                                    tasks.retain(|task| task.id != TaskId::Suspend);
-                                    schedule_task(TaskId::Suspend, Event::Suspend,
-                                                  SUSPEND_WAIT_DELAY, &tx, &mut tasks);
-                                } else {
+                            if tasks.iter().any(|task| task.id == TaskId::Suspend) {
+                                if !context.covered {
                                     resume(TaskId::Suspend, &mut tasks, view.as_mut(), &tx, &mut rq, &mut context);
                                 }
                             } else {
@@ -621,6 +604,9 @@ pub fn run() -> Result<(), Error> {
                         .status()
                         .ok();
                 inactive_since = Instant::now();
+                // If the wake is legitimate, the task will be cancelled by `resume`.
+                schedule_task(TaskId::Suspend, Event::Suspend,
+                              SUSPEND_WAIT_DELAY, &tx, &mut tasks);
                 if context.settings.auto_power_off > 0.0 {
                     let dur = plato_core::chrono::Duration::seconds((86_400.0 * context.settings.auto_power_off) as i64);
                     if let Some(fired) = context.rtc.as_ref()
@@ -1008,7 +994,7 @@ pub fn run() -> Result<(), Error> {
         }
     }
 
-    if !CURRENT_DEVICE.has_gyroscope() && context.display.rotation != initial_rotation {
+    if exit_status == ExitStatus::Quit && !CURRENT_DEVICE.has_gyroscope() && context.display.rotation != initial_rotation {
         context.fb.set_rotation(initial_rotation).ok();
     }
 
