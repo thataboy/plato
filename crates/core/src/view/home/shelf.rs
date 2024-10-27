@@ -115,13 +115,12 @@ impl Shelf {
             self.children.push(Box::new(book) as Box<dyn View>);
 
             // luu remove separator
-            if index < max_lines - 1 {
-                let separator = Filler::new(rect![self.rect.min.x, y_max,
-                                                  self.rect.max.x, y_max + thickness],
-                                            // SEPARATOR_NORMAL);
-                                            WHITE);
-                self.children.push(Box::new(separator) as Box<dyn View>);
-            }
+            // if index < max_lines - 1 {
+            //     let separator = Filler::new(rect![self.rect.min.x, y_max,
+            //                                       self.rect.max.x, y_max + thickness],
+            //                                 SEPARATOR_NORMAL);
+            //     self.children.push(Box::new(separator) as Box<dyn View>);
+            // }
 
             y_pos += book_heights[index];
         }

@@ -158,12 +158,12 @@ impl View for Book {
             plan.width
         };
         let mut author_x = start_x;
+        let mut title_lines = 1;
 
         // Title
         {
             let font = font_from_style(fonts, &MD_TITLE, dpi);
             let mut plan = font.plan(&title, None, None);
-            let mut title_lines = 1;
 
             if plan.width > width {
                 let available = width - author_width;
@@ -188,12 +188,15 @@ impl View for Book {
                 }
             }
 
-            let dy = if author_width == 0 && title_lines == 1 {
+            let mut dy = if author_width == 0 && title_lines == 1 {
                 (self.rect.height() as i32 - x_height) / 2 + x_height
             } else {
                 baseline + x_height
             };
 
+            if title_lines == 1 {
+                dy -= scale_by_dpi(2.5, dpi) as i32
+            }
             let pt = pt!(start_x, self.rect.min.y + dy - x_height / 2);
             font.render(fb, scheme[1], &plan, pt);
         }
@@ -202,11 +205,17 @@ impl View for Book {
         {
             let font = font_from_style(fonts, &MD_AUTHOR, dpi);
             let plan = font.plan(author, Some(width), None);
-            let pt = pt!(author_x, self.rect.max.y - baseline - x_height / 2);
+            let dy = if title_lines == 1 {
+                scale_by_dpi(3.5, dpi) as i32
+            } else {
+                - scale_by_dpi(1.0, dpi) as i32
+            };
+            let pt = pt!(author_x, self.rect.max.y - baseline - x_height / 2 + dy);
             font.render(fb, scheme[1], &plan, pt);
         }
 
         match self.info.status() {
+            // draw circle to indicate new or finished status
             Status::New | Status::Finished => {
                 let circle_height = scale_by_dpi(17.0, dpi) as i32;
                 let thickness = scale_by_dpi(THICKNESS_SMALL, dpi) as u16;
@@ -227,6 +236,7 @@ impl View for Book {
                                                       &BorderSpec { thickness, color },
                                                       &color);
             },
+            // draw progress bar and percentage
             Status::Reading(progress) => {
                 if let Some(ref reader) = &self.info.reader {
                     let progress_height = scale_by_dpi(PROGRESS_HEIGHT, dpi) as i32;
@@ -239,7 +249,7 @@ impl View for Book {
                           if matches!(&kind[..], "EPUB" | "HTML" | "HTM") {BYTES_PER_PAGE as i32} else {1}
                           * width / largest_size).clamp(width / 20, width);
                     let curr_size = start_x + ((progress * pages_size as f32) as i32).max(2);
-                    let start_y = self.rect.max.y - x_height;
+                    let start_y = self.rect.max.y - x_height + scale_by_dpi(4.0, dpi) as i32;
                     fb.draw_rounded_rectangle_with_border(
                             &rect![pt!(start_x, start_y),
                                    pt!(start_x + pages_size, start_y + progress_height)],

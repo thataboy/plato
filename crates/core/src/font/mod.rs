@@ -26,7 +26,7 @@ use crate::device::CURRENT_DEVICE;
 
 // Font sizes in 1/64th of a point
 // pub const FONT_SIZES: [u32; 3] = [349, 524, 629];
-pub const FONT_SIZES: [u32; 3] = [460, 590, 730];
+pub const FONT_SIZES: [u32; 3] = [460, 600, 768];
 
 pub const KEYBOARD_FONT_SIZES: [u32; 2] = [337, 843];
 
@@ -1358,7 +1358,7 @@ impl Font {
             ).unwrap_or_default();
 
             hb_shape(self.font, buf, features_vec.as_ptr(), features_vec.len() as libc::c_uint);
- 
+
             let len = hb_buffer_get_length(buf) as usize;
             let info = hb_buffer_get_glyph_infos(buf, ptr::null_mut());
             let pos = hb_buffer_get_glyph_positions(buf, ptr::null_mut());
@@ -1737,7 +1737,7 @@ impl Drop for FontLibrary {
 
 impl Drop for Font {
     fn drop(&mut self) {
-        unsafe { 
+        unsafe {
             FT_Done_Face(self.face);
             if !self.font.is_null() {
                 hb_font_destroy(self.font);
