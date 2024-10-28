@@ -24,7 +24,7 @@ use crate::metadata::{Info, Metadata, SortMethod, BookQuery, SimpleStatus, sort}
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{Id, ID_FEEDER, ViewId, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
-use crate::settings::{Hook, LibraryMode, FirstColumn, SecondColumn};
+use crate::settings::{Hook, LibraryMode, FirstColumn};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::view::common::{locate, rlocate, locate_by_id};
 use crate::view::filler::Filler;
@@ -75,7 +75,6 @@ struct Fetcher {
     process: Child,
     sort_method: Option<SortMethod>,
     first_column: Option<FirstColumn>,
-    second_column: Option<SecondColumn>,
 }
 
 impl Home {
@@ -159,14 +158,14 @@ impl Home {
         let mut shelf = Shelf::new(rect![rect.min.x, y_start,
                                          rect.max.x, rect.max.y - small_height - small_thickness],
                                    library_settings.first_column,
-                                   library_settings.second_column,
-                                   library_settings.thumbnail_previews);
+                                   library_settings.thumbnail_previews,
+                                   library_settings.cover_view);
 
 
-        let max_lines = shelf.max_lines;
-        let pages_count = (visible_books.len() as f32 / max_lines as f32).ceil() as usize;
-        let index_lower = current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(visible_books.len());
+        let max_items = shelf.max_items();
+        let pages_count = (visible_books.len() as f32 / max_items as f32).ceil() as usize;
+        let index_lower = current_page * max_items;
+        let index_upper = (index_lower + max_items).min(visible_books.len());
 
         shelf.update(&visible_books[index_lower..index_upper], hub, &mut RenderQueue::new(), context);
 
@@ -303,9 +302,9 @@ impl Home {
             return;
         }
 
-        let max_lines = self.children[self.shelf_index].as_ref().downcast_ref::<Shelf>().unwrap().max_lines;
-        let index_lower = self.current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(self.visible_books.len());
+        let max_items = self.children[self.shelf_index].as_ref().downcast_ref::<Shelf>().unwrap().max_items();
+        let index_lower = self.current_page * max_items;
+        let index_upper = (index_lower + max_items).min(self.visible_books.len());
         let book_index = match dir {
             CycleDir::Next => index_upper.saturating_sub(1),
             CycleDir::Previous => index_lower,
@@ -315,10 +314,10 @@ impl Home {
         let page = match dir {
             CycleDir::Next => self.visible_books[book_index+1..].iter()
                                   .position(|info| info.simple_status() != status)
-                                  .map(|delta| self.current_page + 1 + delta / max_lines),
+                                  .map(|delta| self.current_page + 1 + delta / max_items),
             CycleDir::Previous => self.visible_books[..book_index].iter().rev()
                                       .position(|info| info.simple_status() != status)
-                                      .map(|delta| self.current_page - 1 - delta / max_lines),
+                                      .map(|delta| self.current_page - 1 - delta / max_items),
         };
 
         if let Some(page) = page {
@@ -335,12 +334,12 @@ impl Home {
                                               false);
         self.visible_books = files;
 
-        let max_lines = {
+        let max_items = {
             let shelf = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap();
-            shelf.max_lines
+            shelf.max_items()
         };
 
-        self.pages_count = (self.visible_books.len() as f32 / max_lines as f32).ceil() as usize;
+        self.pages_count = (self.visible_books.len() as f32 / max_items as f32).ceil() as usize;
 
         if reset_page  {
             self.current_page = 0;
@@ -361,13 +360,6 @@ impl Home {
         self.update_shelf(false, hub, rq, context);
     }
 
-    fn update_second_column(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
-        let selected_library = context.settings.selected_library;
-        self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
-           .set_second_column(context.settings.libraries[selected_library].second_column);
-        self.update_shelf(false, hub, rq, context);
-    }
-
     fn update_thumbnail_previews(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let selected_library = context.settings.selected_library;
         self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
@@ -375,34 +367,39 @@ impl Home {
         self.update_shelf(false, hub, rq, context);
     }
 
+    fn update_cover_view(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let selected_library = context.settings.selected_library;
+        self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
+           .set_cover_view(context.settings.libraries[selected_library].cover_view);
+        self.update_shelf(true, hub, rq, context);
+        self.update_bottom_bar(rq, context);
+    }
+
     fn update_shelf(&mut self, was_resized: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
-        let dpi = CURRENT_DEVICE.dpi;
-        let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let shelf = self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap();
-        let max_lines = ((shelf.rect.height() as i32 + thickness) / big_height) as usize;
+        let max_items = shelf.max_items();
 
         if was_resized {
             let page_position = if self.visible_books.is_empty() {
                 0.0
             } else {
-                self.current_page as f32 * (shelf.max_lines as f32 /
+                self.current_page as f32 * (max_items as f32 /
                                             self.visible_books.len() as f32)
             };
 
-            let mut page_guess = page_position * self.visible_books.len() as f32 / max_lines as f32;
+            let mut page_guess = page_position * self.visible_books.len() as f32 / max_items as f32;
             let page_ceil = page_guess.ceil();
 
             if (page_ceil - page_guess).abs() < f32::EPSILON {
                 page_guess = page_ceil;
             }
 
-            self.pages_count = (self.visible_books.len() as f32 / max_lines as f32).ceil() as usize;
+            self.pages_count = (self.visible_books.len() as f32 / max_items as f32).ceil() as usize;
             self.current_page = (page_guess as usize).min(self.pages_count.saturating_sub(1));
         }
 
-        let index_lower = self.current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(self.visible_books.len());
+        let index_lower = self.current_page * max_items;
+        let index_upper = (index_lower + max_items).min(self.visible_books.len());
 
         shelf.update(&self.visible_books[index_lower..index_upper], hub, rq, context);
     }
@@ -886,8 +883,8 @@ impl Home {
     }
 
     fn book_index(&self, index: usize) -> usize {
-        let max_lines = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap().max_lines;
-        let index_lower = self.current_page * max_lines;
+        let max_items = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap().max_items();
+        let index_lower = self.current_page * max_items;
         (index_lower + index).min(self.visible_books.len())
     }
 
@@ -1021,20 +1018,25 @@ impl Home {
             }
 
             entries.push(EntryKind::Separator);
+            entries.push(EntryKind::CheckBox("Cover View".to_string(),
+                                             EntryId::CoverView,
+                                             library_settings.cover_view));
+            entries.push(EntryKind::Separator);
 
             let first_column = library_settings.first_column;
-            entries.push(EntryKind::SubMenu("First Column".to_string(),
+            entries.push(EntryKind::SubMenu("List View".to_string(),
                 vec![EntryKind::RadioButton("Title and Author".to_string(), EntryId::FirstColumn(FirstColumn::TitleAndAuthor), first_column == FirstColumn::TitleAndAuthor),
-                     EntryKind::RadioButton("File Name".to_string(), EntryId::FirstColumn(FirstColumn::FileName), first_column == FirstColumn::FileName)]));
+                     EntryKind::RadioButton("File Name".to_string(), EntryId::FirstColumn(FirstColumn::FileName), first_column == FirstColumn::FileName),
+                     EntryKind::Separator,
+                     EntryKind::CheckBox("Thumbnail Previews".to_string(),
+                                                      EntryId::ThumbnailPreviews,
+                                                      library_settings.thumbnail_previews)
+                ]));
 
             // let second_column = library_settings.second_column;
             // entries.push(EntryKind::SubMenu("Second Column".to_string(),
             //     vec![EntryKind::RadioButton("Progress".to_string(), EntryId::SecondColumn(SecondColumn::Progress), second_column == SecondColumn::Progress),
             //          EntryKind::RadioButton("Year".to_string(), EntryId::SecondColumn(SecondColumn::Year), second_column == SecondColumn::Year)]));
-
-            entries.push(EntryKind::CheckBox("Thumbnail Previews".to_string(),
-                                             EntryId::ThumbnailPreviews,
-                                             library_settings.thumbnail_previews));
 
             let trash_path = context.library.home.join(TRASH_DIRNAME);
             if let Ok(trash) = Library::new(trash_path, LibraryMode::Database)
@@ -1230,8 +1232,8 @@ impl Home {
 
         if let Some(shelf) = self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>() {
             shelf.set_first_column(library_settings.first_column);
-            shelf.set_second_column(library_settings.second_column);
             shelf.set_thumbnail_previews(library_settings.thumbnail_previews);
+            shelf.set_cover_view(library_settings.cover_view);
         }
 
         let home = context.library.home.clone();
@@ -1265,9 +1267,6 @@ impl Home {
                     if let Some(first_column) = fetcher.first_column {
                         hub.send(Event::Select(EntryId::FirstColumn(first_column))).ok();
                     }
-                    if let Some(second_column) = fetcher.second_column {
-                        hub.send(Event::Select(EntryId::SecondColumn(second_column))).ok();
-                    }
                 } else {
                     let selected_library = context.settings.selected_library;
                     if let Some(sort_method) = fetcher.sort_method {
@@ -1275,9 +1274,6 @@ impl Home {
                     }
                     if let Some(first_column) = fetcher.first_column {
                         context.settings.libraries[selected_library].first_column = first_column;
-                    }
-                    if let Some(second_column) = fetcher.second_column {
-                        context.settings.libraries[selected_library].second_column = second_column;
                     }
                 }
                 false
@@ -1294,7 +1290,6 @@ impl Home {
             Ok(process) => {
                 let mut sort_method = hook.sort_method;
                 let mut first_column = hook.first_column;
-                let mut second_column = hook.second_column;
                 if let Some(sort_method) = sort_method.replace(self.sort_method) {
                     hub.send(Event::Select(EntryId::Sort(sort_method))).ok();
                 }
@@ -1302,12 +1297,9 @@ impl Home {
                 if let Some(first_column) = first_column.replace(context.settings.libraries[selected_library].first_column) {
                     hub.send(Event::Select(EntryId::FirstColumn(first_column))).ok();
                 }
-                if let Some(second_column) = second_column.replace(context.settings.libraries[selected_library].second_column) {
-                    hub.send(Event::Select(EntryId::SecondColumn(second_column))).ok();
-                }
                 self.background_fetchers.insert(process.id(),
                                                 Fetcher { path: hook.path.clone(), full_path: save_path, process,
-                                                          sort_method, first_column, second_column });
+                                                          sort_method, first_column });
             },
             Err(e) => eprintln!("Can't spawn child: {:#}.", e),
         }
@@ -1567,16 +1559,16 @@ impl View for Home {
                 self.update_first_column(hub, rq, context);
                 true
             },
-            Event::Select(EntryId::SecondColumn(second_column)) => {
-                let selected_library = context.settings.selected_library;
-                context.settings.libraries[selected_library].second_column = second_column;
-                self.update_second_column(hub, rq, context);
-                true
-            },
             Event::Select(EntryId::ThumbnailPreviews) => {
                 let selected_library = context.settings.selected_library;
                 context.settings.libraries[selected_library].thumbnail_previews = !context.settings.libraries[selected_library].thumbnail_previews;
                 self.update_thumbnail_previews(hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::CoverView) => {
+                let selected_library = context.settings.selected_library;
+                context.settings.libraries[selected_library].cover_view = !context.settings.libraries[selected_library].cover_view;
+                self.update_cover_view(hub, rq, context);
                 true
             },
             Event::Submit(ViewId::AddressBarInput, ref addr) => {

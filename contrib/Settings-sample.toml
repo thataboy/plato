@@ -56,7 +56,6 @@ path = "/mnt/onboard"
 mode = "database"
 sort-method = "opened"
 first-column = "title-and-author"
-second-column = "progress"
 thumbnail-previews = true
 
 # This example fetcher retrieves articles through the *Wallabag* protocol.
@@ -66,7 +65,6 @@ path = "Articles"
 program = "bin/article_fetcher/article_fetcher"
 sort-method = "added"
 first-column = "title-and-author"
-second-column = "progress"
 
 # Remove this entry if you don't have an external card slot
 # on your device.
@@ -76,7 +74,6 @@ path = "/mnt/sd"
 mode = "database"
 sort-method = "opened"
 first-column = "title-and-author"
-second-column = "progress"
 thumbnail-previews = true
 
 [[libraries]]

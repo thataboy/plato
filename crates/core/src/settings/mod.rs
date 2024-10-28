@@ -156,8 +156,8 @@ pub struct LibrarySettings {
     pub mode: LibraryMode,
     pub sort_method: SortMethod,
     pub first_column: FirstColumn,
-    pub second_column: SecondColumn,
     pub thumbnail_previews: bool,
+    pub cover_view: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<Hook>,
 }
@@ -171,8 +171,8 @@ impl Default for LibrarySettings {
             mode: LibraryMode::Database,
             sort_method: SortMethod::Status,
             first_column: FirstColumn::TitleAndAuthor,
-            second_column: SecondColumn::Progress,
             thumbnail_previews: true,
+            cover_view: false,
             hooks: Vec::new(),
         }
     }
@@ -334,7 +334,6 @@ impl Default for CalculatorSettings {
 #[serde(rename_all = "kebab-case")]
 pub struct Columns {
     first: FirstColumn,
-    second: SecondColumn,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -344,13 +343,6 @@ pub enum FirstColumn {
     FileName,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SecondColumn {
-    Progress,
-    Year,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Hook {
@@ -358,7 +350,6 @@ pub struct Hook {
     pub program: PathBuf,
     pub sort_method: Option<SortMethod>,
     pub first_column: Option<FirstColumn>,
-    pub second_column: Option<SecondColumn>,
 }
 
 impl Default for Hook {
@@ -368,7 +359,6 @@ impl Default for Hook {
             program: PathBuf::default(),
             sort_method: None,
             first_column: None,
-            second_column: None,
         }
     }
 }
@@ -608,7 +598,6 @@ impl Default for Settings {
                             program: PathBuf::from("bin/article_fetcher/article_fetcher"),
                             sort_method: Some(SortMethod::Added),
                             first_column: Some(FirstColumn::TitleAndAuthor),
-                            second_column: Some(SecondColumn::Progress),
                         }
                     ],
                     .. Default::default()
