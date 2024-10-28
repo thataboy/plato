@@ -24,7 +24,7 @@ use crate::metadata::{Info, Metadata, SortMethod, BookQuery, SimpleStatus, sort}
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{Id, ID_FEEDER, ViewId, EntryId, EntryKind};
 use crate::view::{SMALL_BAR_HEIGHT, BIG_BAR_HEIGHT, THICKNESS_MEDIUM};
-use crate::settings::{Hook, LibraryMode, FirstColumn, SecondColumn};
+use crate::settings::{Hook, LibraryMode, FirstColumn};
 use crate::view::common::{toggle_main_menu, toggle_battery_menu, toggle_clock_menu};
 use crate::view::common::{locate, rlocate, locate_by_id};
 use crate::view::filler::Filler;
@@ -75,7 +75,6 @@ struct Fetcher {
     process: Child,
     sort_method: Option<SortMethod>,
     first_column: Option<FirstColumn>,
-    second_column: Option<SecondColumn>,
 }
 
 impl Home {
@@ -159,7 +158,6 @@ impl Home {
         let mut shelf = Shelf::new(rect![rect.min.x, y_start,
                                          rect.max.x, rect.max.y - small_height - small_thickness],
                                    library_settings.first_column,
-                                   library_settings.second_column,
                                    library_settings.thumbnail_previews,
                                    library_settings.cover_view);
 
@@ -362,13 +360,6 @@ impl Home {
         self.update_shelf(false, hub, rq, context);
     }
 
-    fn update_second_column(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
-        let selected_library = context.settings.selected_library;
-        self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
-           .set_second_column(context.settings.libraries[selected_library].second_column);
-        self.update_shelf(false, hub, rq, context);
-    }
-
     fn update_thumbnail_previews(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         let selected_library = context.settings.selected_library;
         self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
@@ -380,7 +371,7 @@ impl Home {
         let selected_library = context.settings.selected_library;
         self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
            .set_cover_view(context.settings.libraries[selected_library].cover_view);
-        self.update_shelf(false, hub, rq, context);
+        self.update_shelf(true, hub, rq, context);
     }
 
     fn update_shelf(&mut self, was_resized: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
@@ -1243,7 +1234,6 @@ impl Home {
 
         if let Some(shelf) = self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>() {
             shelf.set_first_column(library_settings.first_column);
-            shelf.set_second_column(library_settings.second_column);
             shelf.set_thumbnail_previews(library_settings.thumbnail_previews);
             shelf.set_cover_view(library_settings.cover_view);
         }
@@ -1279,9 +1269,6 @@ impl Home {
                     if let Some(first_column) = fetcher.first_column {
                         hub.send(Event::Select(EntryId::FirstColumn(first_column))).ok();
                     }
-                    if let Some(second_column) = fetcher.second_column {
-                        hub.send(Event::Select(EntryId::SecondColumn(second_column))).ok();
-                    }
                 } else {
                     let selected_library = context.settings.selected_library;
                     if let Some(sort_method) = fetcher.sort_method {
@@ -1289,9 +1276,6 @@ impl Home {
                     }
                     if let Some(first_column) = fetcher.first_column {
                         context.settings.libraries[selected_library].first_column = first_column;
-                    }
-                    if let Some(second_column) = fetcher.second_column {
-                        context.settings.libraries[selected_library].second_column = second_column;
                     }
                 }
                 false
@@ -1308,7 +1292,6 @@ impl Home {
             Ok(process) => {
                 let mut sort_method = hook.sort_method;
                 let mut first_column = hook.first_column;
-                let mut second_column = hook.second_column;
                 if let Some(sort_method) = sort_method.replace(self.sort_method) {
                     hub.send(Event::Select(EntryId::Sort(sort_method))).ok();
                 }
@@ -1316,12 +1299,9 @@ impl Home {
                 if let Some(first_column) = first_column.replace(context.settings.libraries[selected_library].first_column) {
                     hub.send(Event::Select(EntryId::FirstColumn(first_column))).ok();
                 }
-                if let Some(second_column) = second_column.replace(context.settings.libraries[selected_library].second_column) {
-                    hub.send(Event::Select(EntryId::SecondColumn(second_column))).ok();
-                }
                 self.background_fetchers.insert(process.id(),
                                                 Fetcher { path: hook.path.clone(), full_path: save_path, process,
-                                                          sort_method, first_column, second_column });
+                                                          sort_method, first_column });
             },
             Err(e) => eprintln!("Can't spawn child: {:#}.", e),
         }
@@ -1579,12 +1559,6 @@ impl View for Home {
                 let selected_library = context.settings.selected_library;
                 context.settings.libraries[selected_library].first_column = first_column;
                 self.update_first_column(hub, rq, context);
-                true
-            },
-            Event::Select(EntryId::SecondColumn(second_column)) => {
-                let selected_library = context.settings.selected_library;
-                context.settings.libraries[selected_library].second_column = second_column;
-                self.update_second_column(hub, rq, context);
                 true
             },
             Event::Select(EntryId::ThumbnailPreviews) => {

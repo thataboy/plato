@@ -7,7 +7,7 @@ use crate::color::{BLACK, GRAY02, GRAY08, GRAY10};
 use crate::color::{TEXT_NORMAL, TEXT_INVERTED_HARD};
 use crate::gesture::GestureEvent;
 use crate::metadata::{Info, Status};
-use crate::settings::{FirstColumn, SecondColumn};
+use crate::settings::FirstColumn;
 use crate::unit::scale_by_dpi;
 use crate::document::{HumanSize, Location, Document};
 use crate::document::pdf::PdfOpener;
@@ -27,14 +27,13 @@ pub struct Book {
     info: Info,
     index: usize,
     first_column: FirstColumn,
-    //second_column: SecondColumn,
     preview_path: Option<PathBuf>,
     active: bool,
 }
 
 impl Book {
     pub fn new(rect: Rectangle, info: Info, index: usize,
-               first_column: FirstColumn, _second_column: SecondColumn, preview_path: Option<PathBuf>) -> Book {
+               first_column: FirstColumn, preview_path: Option<PathBuf>) -> Book {
         Book {
             id: ID_FEEDER.next(),
             rect,
@@ -42,7 +41,6 @@ impl Book {
             info,
             index,
             first_column,
-            //second_column,
             preview_path,
             active: false,
         }

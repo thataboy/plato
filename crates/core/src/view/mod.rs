@@ -57,7 +57,7 @@ use fxhash::FxHashMap;
 use downcast_rs::{Downcast, impl_downcast};
 use crate::font::Fonts;
 use crate::document::{Location, TextLocation};
-use crate::settings::{ButtonScheme, FirstColumn, SecondColumn, RotationLock};
+use crate::settings::{ButtonScheme, FirstColumn, RotationLock};
 use crate::metadata::{Info, ZoomMode, ScrollMode, SortMethod, TextAlign, SimpleStatus, PageScheme, Margin};
 use crate::geom::{LinearDir, CycleDir, Rectangle, Boundary};
 use crate::framebuffer::{Framebuffer, UpdateMode};
@@ -582,7 +582,6 @@ pub enum EntryId {
     SearchAuthor(String),
     RemovePreset(usize),
     FirstColumn(FirstColumn),
-    SecondColumn(SecondColumn),
     ThumbnailPreviews,
     CoverView,
     ApplyCroppings(usize, PageScheme),

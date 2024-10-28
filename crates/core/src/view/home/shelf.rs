@@ -9,7 +9,7 @@ use crate::view::{BIG_BAR_HEIGHT/*, THICKNESS_MEDIUM*/};
 use crate::view::filler::Filler;
 use crate::document::open;
 use crate::framebuffer::{Framebuffer, UpdateMode};
-use crate::settings::{FirstColumn, SecondColumn};
+use crate::settings::FirstColumn;
 use crate::geom::{Rectangle, Dir, CycleDir, halves};
 use crate::color::{WHITE};
 use crate::gesture::GestureEvent;
@@ -29,13 +29,12 @@ pub struct Shelf {
     children: Vec<Box<dyn View>>,
     pub max_lines: usize,
     first_column: FirstColumn,
-    second_column: SecondColumn,
     thumbnail_previews: bool,
     cover_view: bool,
 }
 
 impl Shelf {
-    pub fn new(rect: Rectangle, first_column: FirstColumn, second_column: SecondColumn,
+    pub fn new(rect: Rectangle, first_column: FirstColumn,
                thumbnail_previews: bool, cover_view: bool) -> Shelf {
         let dpi = CURRENT_DEVICE.dpi;
         let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
@@ -47,7 +46,6 @@ impl Shelf {
             children: Vec::new(),
             max_lines,
             first_column,
-            second_column,
             thumbnail_previews,
             cover_view,
         }
@@ -55,10 +53,6 @@ impl Shelf {
 
     pub fn set_first_column(&mut self, first_column: FirstColumn) {
         self.first_column = first_column;
-    }
-
-    pub fn set_second_column(&mut self, second_column: SecondColumn) {
-        self.second_column = second_column;
     }
 
     pub fn set_thumbnail_previews(&mut self, thumbnail_previews: bool) {
@@ -73,17 +67,15 @@ impl Shelf {
         self.children.clear();
         let dpi = CURRENT_DEVICE.dpi;
         let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-        let thickness = 0;//scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
-        let (small_thickness, big_thickness) = halves(thickness);
-        let max_lines = ((self.rect.height() as i32 + thickness) / big_height) as usize;
+        let max_lines = (self.rect.height() as i32 / big_height) as usize;
         let book_heights = divide(self.rect.height() as i32, max_lines as i32);
         let mut y_pos = self.rect.min.y;
         let th = big_height;
         let tw = 3 * th / 4;
 
         for (index, info) in metadata.iter().enumerate() {
-            let y_min = y_pos + if index > 0 { big_thickness } else { 0 };
-            let y_max = y_pos + book_heights[index] - if index < max_lines - 1 { small_thickness } else { 0 };
+            let y_min = y_pos;
+            let y_max = y_pos + book_heights[index];
 
             let preview_path: Option<PathBuf> = if self.thumbnail_previews {
                 let thumb_path = context.library.thumbnail_preview(&info.file.path);
@@ -117,24 +109,14 @@ impl Shelf {
                                  info.clone(),
                                  index,
                                  self.first_column,
-                                 self.second_column,
                                  preview_path);
             self.children.push(Box::new(book) as Box<dyn View>);
-
-            // luu remove separator
-            // if index < max_lines - 1 {
-            //     let separator = Filler::new(rect![self.rect.min.x, y_max,
-            //                                       self.rect.max.x, y_max + thickness],
-            //                                 SEPARATOR_NORMAL);
-            //     self.children.push(Box::new(separator) as Box<dyn View>);
-            // }
 
             y_pos += book_heights[index];
         }
 
         if metadata.len() < max_lines {
-            let y_start = y_pos + if metadata.is_empty() { 0 } else { thickness };
-            let filler = Filler::new(rect![self.rect.min.x, y_start,
+            let filler = Filler::new(rect![self.rect.min.x, y_pos,
                                            self.rect.max.x, self.rect.max.y],
                                      WHITE);
             self.children.push(Box::new(filler) as Box<dyn View>);
