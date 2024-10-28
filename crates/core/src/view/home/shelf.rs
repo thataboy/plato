@@ -31,10 +31,12 @@ pub struct Shelf {
     first_column: FirstColumn,
     second_column: SecondColumn,
     thumbnail_previews: bool,
+    cover_view: bool,
 }
 
 impl Shelf {
-    pub fn new(rect: Rectangle, first_column: FirstColumn, second_column: SecondColumn, thumbnail_previews: bool) -> Shelf {
+    pub fn new(rect: Rectangle, first_column: FirstColumn, second_column: SecondColumn,
+               thumbnail_previews: bool, cover_view: bool) -> Shelf {
         let dpi = CURRENT_DEVICE.dpi;
         let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
         let thickness = 0;//scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
@@ -47,6 +49,7 @@ impl Shelf {
             first_column,
             second_column,
             thumbnail_previews,
+            cover_view,
         }
     }
 
@@ -60,6 +63,10 @@ impl Shelf {
 
     pub fn set_thumbnail_previews(&mut self, thumbnail_previews: bool) {
         self.thumbnail_previews = thumbnail_previews;
+    }
+
+    pub fn set_cover_view(&mut self, cover_view: bool) {
+        self.cover_view = cover_view;
     }
 
     pub fn update(&mut self, metadata: &[Info], hub: &Hub, rq: &mut RenderQueue, context: &Context) {

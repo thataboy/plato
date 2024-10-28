@@ -160,7 +160,8 @@ impl Home {
                                          rect.max.x, rect.max.y - small_height - small_thickness],
                                    library_settings.first_column,
                                    library_settings.second_column,
-                                   library_settings.thumbnail_previews);
+                                   library_settings.thumbnail_previews,
+                                   library_settings.cover_view);
 
 
         let max_lines = shelf.max_lines;
@@ -372,6 +373,13 @@ impl Home {
         let selected_library = context.settings.selected_library;
         self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
            .set_thumbnail_previews(context.settings.libraries[selected_library].thumbnail_previews);
+        self.update_shelf(false, hub, rq, context);
+    }
+
+    fn update_cover_view(&mut self, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let selected_library = context.settings.selected_library;
+        self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
+           .set_cover_view(context.settings.libraries[selected_library].cover_view);
         self.update_shelf(false, hub, rq, context);
     }
 
@@ -1021,20 +1029,25 @@ impl Home {
             }
 
             entries.push(EntryKind::Separator);
+            entries.push(EntryKind::CheckBox("Cover View".to_string(),
+                                             EntryId::CoverView,
+                                             library_settings.cover_view));
+            entries.push(EntryKind::Separator);
 
             let first_column = library_settings.first_column;
-            entries.push(EntryKind::SubMenu("First Column".to_string(),
+            entries.push(EntryKind::SubMenu("List View".to_string(),
                 vec![EntryKind::RadioButton("Title and Author".to_string(), EntryId::FirstColumn(FirstColumn::TitleAndAuthor), first_column == FirstColumn::TitleAndAuthor),
-                     EntryKind::RadioButton("File Name".to_string(), EntryId::FirstColumn(FirstColumn::FileName), first_column == FirstColumn::FileName)]));
+                     EntryKind::RadioButton("File Name".to_string(), EntryId::FirstColumn(FirstColumn::FileName), first_column == FirstColumn::FileName),
+                     EntryKind::Separator,
+                     EntryKind::CheckBox("Thumbnail Previews".to_string(),
+                                                      EntryId::ThumbnailPreviews,
+                                                      library_settings.thumbnail_previews)
+                ]));
 
             // let second_column = library_settings.second_column;
             // entries.push(EntryKind::SubMenu("Second Column".to_string(),
             //     vec![EntryKind::RadioButton("Progress".to_string(), EntryId::SecondColumn(SecondColumn::Progress), second_column == SecondColumn::Progress),
             //          EntryKind::RadioButton("Year".to_string(), EntryId::SecondColumn(SecondColumn::Year), second_column == SecondColumn::Year)]));
-
-            entries.push(EntryKind::CheckBox("Thumbnail Previews".to_string(),
-                                             EntryId::ThumbnailPreviews,
-                                             library_settings.thumbnail_previews));
 
             let trash_path = context.library.home.join(TRASH_DIRNAME);
             if let Ok(trash) = Library::new(trash_path, LibraryMode::Database)
@@ -1232,6 +1245,7 @@ impl Home {
             shelf.set_first_column(library_settings.first_column);
             shelf.set_second_column(library_settings.second_column);
             shelf.set_thumbnail_previews(library_settings.thumbnail_previews);
+            shelf.set_cover_view(library_settings.cover_view);
         }
 
         let home = context.library.home.clone();
@@ -1577,6 +1591,12 @@ impl View for Home {
                 let selected_library = context.settings.selected_library;
                 context.settings.libraries[selected_library].thumbnail_previews = !context.settings.libraries[selected_library].thumbnail_previews;
                 self.update_thumbnail_previews(hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::CoverView) => {
+                let selected_library = context.settings.selected_library;
+                context.settings.libraries[selected_library].cover_view = !context.settings.libraries[selected_library].cover_view;
+                self.update_cover_view(hub, rq, context);
                 true
             },
             Event::Submit(ViewId::AddressBarInput, ref addr) => {
