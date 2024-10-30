@@ -104,6 +104,18 @@ pub const MD_SIZE: Style = Style {
     size: FONT_SIZES[0],
 };
 
+pub const MD_TITLE_SMALL: Style = Style {
+    family: Family::SansSerif,
+    variant: Variant::REGULAR,
+    size: FONT_SIZES[0],
+};
+
+pub const MD_AUTHOR_SMALL: Style = Style {
+    family: Family::SansSerif,
+    variant: Variant::ITALIC,
+    size: FONT_SIZES[0],
+};
+
 #[cfg(any(not(target_os = "linux"), target_arch = "arm"))]
 #[link(name="mupdf")]
 extern {

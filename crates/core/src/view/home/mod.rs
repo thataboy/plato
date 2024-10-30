@@ -162,10 +162,10 @@ impl Home {
                                    library_settings.cover_view);
 
 
-        let max_lines = shelf.max_lines;
-        let pages_count = (visible_books.len() as f32 / max_lines as f32).ceil() as usize;
-        let index_lower = current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(visible_books.len());
+        let max_items = shelf.max_items();
+        let pages_count = (visible_books.len() as f32 / max_items as f32).ceil() as usize;
+        let index_lower = current_page * max_items;
+        let index_upper = (index_lower + max_items).min(visible_books.len());
 
         shelf.update(&visible_books[index_lower..index_upper], hub, &mut RenderQueue::new(), context);
 
@@ -302,9 +302,9 @@ impl Home {
             return;
         }
 
-        let max_lines = self.children[self.shelf_index].as_ref().downcast_ref::<Shelf>().unwrap().max_lines;
-        let index_lower = self.current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(self.visible_books.len());
+        let max_items = self.children[self.shelf_index].as_ref().downcast_ref::<Shelf>().unwrap().max_items();
+        let index_lower = self.current_page * max_items;
+        let index_upper = (index_lower + max_items).min(self.visible_books.len());
         let book_index = match dir {
             CycleDir::Next => index_upper.saturating_sub(1),
             CycleDir::Previous => index_lower,
@@ -314,10 +314,10 @@ impl Home {
         let page = match dir {
             CycleDir::Next => self.visible_books[book_index+1..].iter()
                                   .position(|info| info.simple_status() != status)
-                                  .map(|delta| self.current_page + 1 + delta / max_lines),
+                                  .map(|delta| self.current_page + 1 + delta / max_items),
             CycleDir::Previous => self.visible_books[..book_index].iter().rev()
                                       .position(|info| info.simple_status() != status)
-                                      .map(|delta| self.current_page - 1 - delta / max_lines),
+                                      .map(|delta| self.current_page - 1 - delta / max_items),
         };
 
         if let Some(page) = page {
@@ -334,12 +334,12 @@ impl Home {
                                               false);
         self.visible_books = files;
 
-        let max_lines = {
+        let max_items = {
             let shelf = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap();
-            shelf.max_lines
+            shelf.max_items()
         };
 
-        self.pages_count = (self.visible_books.len() as f32 / max_lines as f32).ceil() as usize;
+        self.pages_count = (self.visible_books.len() as f32 / max_items as f32).ceil() as usize;
 
         if reset_page  {
             self.current_page = 0;
@@ -372,36 +372,34 @@ impl Home {
         self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap()
            .set_cover_view(context.settings.libraries[selected_library].cover_view);
         self.update_shelf(true, hub, rq, context);
+        self.update_bottom_bar(rq, context);
     }
 
     fn update_shelf(&mut self, was_resized: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
-        let dpi = CURRENT_DEVICE.dpi;
-        let big_height = scale_by_dpi(BIG_BAR_HEIGHT, dpi) as i32;
-        let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let shelf = self.children[self.shelf_index].as_mut().downcast_mut::<Shelf>().unwrap();
-        let max_lines = ((shelf.rect.height() as i32 + thickness) / big_height) as usize;
+        let max_items = shelf.max_items();
 
         if was_resized {
             let page_position = if self.visible_books.is_empty() {
                 0.0
             } else {
-                self.current_page as f32 * (shelf.max_lines as f32 /
+                self.current_page as f32 * (max_items as f32 /
                                             self.visible_books.len() as f32)
             };
 
-            let mut page_guess = page_position * self.visible_books.len() as f32 / max_lines as f32;
+            let mut page_guess = page_position * self.visible_books.len() as f32 / max_items as f32;
             let page_ceil = page_guess.ceil();
 
             if (page_ceil - page_guess).abs() < f32::EPSILON {
                 page_guess = page_ceil;
             }
 
-            self.pages_count = (self.visible_books.len() as f32 / max_lines as f32).ceil() as usize;
+            self.pages_count = (self.visible_books.len() as f32 / max_items as f32).ceil() as usize;
             self.current_page = (page_guess as usize).min(self.pages_count.saturating_sub(1));
         }
 
-        let index_lower = self.current_page * max_lines;
-        let index_upper = (index_lower + max_lines).min(self.visible_books.len());
+        let index_lower = self.current_page * max_items;
+        let index_upper = (index_lower + max_items).min(self.visible_books.len());
 
         shelf.update(&self.visible_books[index_lower..index_upper], hub, rq, context);
     }
@@ -885,8 +883,8 @@ impl Home {
     }
 
     fn book_index(&self, index: usize) -> usize {
-        let max_lines = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap().max_lines;
-        let index_lower = self.current_page * max_lines;
+        let max_items = self.child(self.shelf_index).downcast_ref::<Shelf>().unwrap().max_items();
+        let index_lower = self.current_page * max_items;
         (index_lower + index).min(self.visible_books.len())
     }
 
