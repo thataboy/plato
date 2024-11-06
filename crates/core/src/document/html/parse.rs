@@ -1,6 +1,6 @@
 use fxhash::FxHashSet;
 use regex::Regex;
-use super::layout::{FontKind, FontStyle, FontWeight, WordSpacing};
+use super::layout::{FontKind, FontStyle, FontWeight, Visibility, WordSpacing};
 use super::layout::{TextAlign, Display, Float, ListStyleType};
 use super::layout::{InlineMaterial, GlueMaterial, PenaltyMaterial};
 use crate::geom::Edge;
@@ -176,6 +176,15 @@ pub fn parse_display(value: &str) -> Option<Display> {
         "inline" => Some(Display::Inline),
         "inline-table" => Some(Display::InlineTable),
         "none" => Some(Display::None),
+        _ => None,
+    }
+}
+
+pub fn parse_visibility(value: &str) -> Option<Visibility> {
+    match value {
+        "visible" => Some(Visibility::Visible),
+        "hidden" => Some(Visibility::Hidden),
+        "collapse" => Some(Visibility::Collapse),
         _ => None,
     }
 }

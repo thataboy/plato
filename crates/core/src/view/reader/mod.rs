@@ -812,7 +812,7 @@ impl Reader {
         let page_offset = self.view_port.page_offset;
 
         let loc = {
-            let neighloc = match dir { 
+            let neighloc = match dir {
                 CycleDir::Previous => {
                     match self.view_port.zoom_mode {
                         ZoomMode::FitToPage => Location::Previous(current_page),
@@ -1111,7 +1111,12 @@ impl Reader {
         if inverted {
             for chunk in &self.chunks {
                 if let Some((images, _)) = self.doc.lock().unwrap().images(Location::Exact(chunk.location)) {
-                    self.noninverted_regions.insert(chunk.location, images);
+                    let large_images: Vec<Boundary> = images
+                        .iter()
+                        .filter(|img| img.width() > 50.0 && img.height() > 50.0)
+                        .cloned()
+                        .collect();
+                    self.noninverted_regions.insert(chunk.location, large_images);
                 }
             }
         }

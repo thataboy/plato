@@ -46,6 +46,7 @@ impl Default for DrawState {
 #[derive(Debug, Clone)]
 pub struct StyleData {
     pub display: Display,
+    pub visibility: Visibility,
     pub float: Option<Float>,
     pub width: i32,
     pub height: i32,
@@ -90,6 +91,13 @@ pub enum Display {
     Inline,
     InlineTable,
     None,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Visibility {
+    Visible,
+    Hidden,
+    Collapse,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -170,6 +178,7 @@ impl Default for StyleData {
     fn default() -> Self {
         StyleData {
             display: Display::Block,
+            visibility: Visibility::Visible,
             float: None,
             width: 0,
             height: 0,
@@ -335,6 +344,8 @@ pub struct TextElement {
     pub letter_spacing: i32,
     pub vertical_align: i32,
     pub color: u8,
+    pub float: Option<Float>,  // handle float for text
+    pub margin: Edge,
     pub uri: Option<String>,
 }
 

@@ -16,13 +16,13 @@ use crate::unit::{mm_to_px, pt_to_px};
 use crate::geom::{Point, Vec2, Rectangle, Edge};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::settings::{DEFAULT_FONT_SIZE, DEFAULT_MARGIN_WIDTH, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT};
-use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent};
+use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent, parse_visibility};
 use super::parse::{parse_width, parse_height, parse_inline_material, parse_font_kind, parse_font_style};
 use super::parse::{parse_font_weight, parse_font_size, parse_font_features, parse_font_variant};
 use super::parse::{parse_letter_spacing, parse_word_spacing};
 use super::parse::{parse_line_height, parse_vertical_align, parse_color, parse_list_style_type};
 use super::dom::{NodeRef, NodeData, ElementData, TextData, WRAPPER_TAG_NAME};
-use super::layout::{StyleData, InlineMaterial, TextMaterial, ImageMaterial};
+use super::layout::{ImageMaterial, InlineMaterial, StyleData, TextMaterial, Visibility};
 use super::layout::{GlueMaterial, PenaltyMaterial, ChildArtifact, SiblingStyle, LoopContext};
 use super::layout::{RootData, DrawState, DrawCommand, TextCommand, ImageCommand, FontKind, Fonts};
 use super::layout::{TextAlign, ParagraphElement, TextElement, ImageElement, Display, Float};
@@ -149,7 +149,10 @@ impl Engine {
         style.display = props.get("display").and_then(|value| parse_display(value))
                              .unwrap_or(Display::Block);
 
-        if style.display == Display::None {
+        style.visibility = props.get("visibility").and_then(|value| parse_visibility(value))
+                                .unwrap_or(Visibility::Visible);
+
+        if style.display == Display::None || style.visibility != Visibility::Visible {
             return ChildArtifact {
                 sibling_style: SiblingStyle {
                     padding: Edge::default(),
@@ -603,10 +606,13 @@ impl Engine {
                 style.language = parent_style.language.clone();
                 style.uri = parent_style.uri.clone();
 
+                style.visibility = props.get("visibility").and_then(|value| parse_visibility(value))
+                                        .unwrap_or(Visibility::Visible);
+
                 style.display = props.get("display").and_then(|value| parse_display(value))
                                      .unwrap_or(Display::Inline);
 
-                if style.display == Display::None {
+                if style.display == Display::None || style.visibility != Visibility::Visible {
                     return;
                 }
 
@@ -675,7 +681,6 @@ impl Engine {
                                                                   .decode_utf8_lossy()
                                                                   .into_owned())
                         }).unwrap_or_default();
-
                         style.float = props.get("float").and_then(|value| parse_float(value));
 
                         let is_block = style.display == Display::Block;
@@ -850,6 +855,8 @@ impl Engine {
                                             letter_spacing: style.letter_spacing,
                                             font_size,
                                             color: style.color,
+                                            float: style.float,
+                                            margin: style.margin,
                                             uri: style.uri.clone(),
                                         }),
                                     });
@@ -1496,6 +1503,8 @@ impl Engine {
                 vertical_align: element.vertical_align,
                 letter_spacing: element.letter_spacing,
                 color: element.color,
+                float: element.float,
+                margin: element.margin,
                 uri: element.uri.clone(),
             }),
         }
