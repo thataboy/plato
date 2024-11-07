@@ -12,35 +12,26 @@ pub struct ChapterLabel {
     rect: Rectangle,
     children: Vec<Box<dyn View>>,
     title: String,
-    progress: f32,
+    remain: f32,
     synthetic: bool,
 }
 
 impl ChapterLabel {
-    pub fn new(rect: Rectangle, title: String, progress: f32, synthetic: bool)  -> ChapterLabel {
+    pub fn new(rect: Rectangle, title: String, remain: f32, synthetic: bool)  -> ChapterLabel {
         ChapterLabel {
             id: ID_FEEDER.next(),
             rect,
             children: Vec::new(),
             title,
-            progress,
+            remain,
             synthetic,
         }
     }
 
-    pub fn update(&mut self, title: String, progress: f32, rq: &mut RenderQueue) {
-        let mut render = false;
-        if self.title != title {
-            self.title = title;
-            render = true;
-        }
-        if self.progress != progress {
-            self.progress = progress;
-            render = true;
-        }
-        if render {
-            rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
-        }
+    pub fn update(&mut self, title: String, remain: f32, rq: &mut RenderQueue) {
+        self.title = title;
+        self.remain = remain;
+        rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
     }
 }
 
@@ -66,7 +57,7 @@ impl View for ChapterLabel {
             let max_progress_width = max_width;
             let progress_plan = font.plan(&format!(" ({1:.0$} ➤)",
                                                    if self.synthetic {1} else {0},
-                                                   self.progress),
+                                                   self.remain),
                                           Some(max_progress_width),
                                           None);
             let max_title_width = max_width - progress_plan.width;

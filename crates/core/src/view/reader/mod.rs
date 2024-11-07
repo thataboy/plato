@@ -131,7 +131,7 @@ pub struct Reader {
     chapter: RefCell<Chapter>, // cache chapter info
     time_format: String,
     dirty_clock: RefCell<bool>,
-
+    font_size: f32,
 }
 
 #[derive(Debug)]
@@ -282,11 +282,11 @@ impl Reader {
         let id = ID_FEEDER.next();
         let settings = &context.settings;
         let path = context.library.home.join(&info.file.path);
+        let font_size = info.reader.as_ref().and_then(|r| r.font_size)
+                            .unwrap_or(settings.reader.font_size);
 
         open(&path).and_then(|mut doc| {
             let (width, height) = context.display.dims;
-            let font_size = info.reader.as_ref().and_then(|r| r.font_size)
-                                .unwrap_or(settings.reader.font_size);
 
             doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
 
@@ -442,6 +442,7 @@ impl Reader {
                 chapter: RefCell::new(Chapter::default()),
                 time_format: context.settings.time_format.clone(),
                 dirty_clock: RefCell::new(false),
+                font_size,
             })
         })
     }
@@ -516,6 +517,7 @@ impl Reader {
             chapter: RefCell::new(Chapter::default()),
             time_format: context.settings.time_format.clone(),
             dirty_clock: RefCell::new(false),
+            font_size,
         }
     }
 
@@ -574,6 +576,19 @@ impl Reader {
             }
         }
         self.chapter.borrow()
+    }
+
+    fn chapter_info(&self) -> (String, f32) {
+        let (title, remain) = {
+            let chapter = self.chapter();
+            (chapter.title.clone(), chapter.remain)
+        };
+        if self.synthetic {
+            // scale remain by font size
+            (title, remain * self.font_size / 6.0)
+        } else {
+            (title, remain)
+        }
     }
 
     fn go_to_page(&mut self, location: usize, record: bool, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
@@ -1023,17 +1038,14 @@ impl Reader {
     fn update_bottom_bar(&mut self, rq: &mut RenderQueue) {
         let current_page = self.current_page;
         if let Some(index) = locate::<BottomBar>(self) {
-            let (title, progress) = {
-                let chapter = self.chapter();
-                (chapter.title.clone(), chapter.remain)
-            };
+            let (title, remain) = self.chapter_info();
             let mut doc = self.doc.lock().unwrap();
             let bottom_bar = self.children[index].as_mut().downcast_mut::<BottomBar>().unwrap();
             let neighbors = Neighbors {
                 previous_page: doc.resolve_location(Location::Previous(current_page)),
                 next_page: doc.resolve_location(Location::Next(current_page)),
             };
-            bottom_bar.update_chapter_label(title, progress, rq);
+            bottom_bar.update_chapter_label(title, remain, rq);
             bottom_bar.update_page_label(current_page, self.pages_count, rq);
             bottom_bar.update_icons(&neighbors, rq);
 
@@ -1734,15 +1746,15 @@ impl Reader {
             drop(doc);
 
             let bottom_bar = {
-                let chapter = self.chapter();
+                let (title, remain) = self.chapter_info();
                 BottomBar::new(rect![self.rect.min.x,
                                      self.rect.max.y - small_height + big_thickness,
                                      self.rect.max.x,
                                      self.rect.max.y],
                                self.current_page,
                                self.pages_count,
-                               chapter.title.clone(),
-                               chapter.remain,
+                               title,
+                               remain,
                                &neighbors,
                                self.synthetic)
             };
@@ -2562,7 +2574,7 @@ impl Reader {
                 self.current_page = (ratio * self.current_page).min(self.pages_count - 1);
             }
         }
-
+        self.font_size = font_size;
         self.cache.clear();
         self.text.clear();
         self.update(Some(UpdateMode::Partial), hub, rq, context);
@@ -5035,7 +5047,8 @@ impl View for Reader {
                     &CornerSpec::Uniform(bar_height / 2),
                     &BorderSpec { thickness: 0, color: GRAY10 },
                     &|x, _| if x < page_size { GRAY03 } else { GRAY10 });
-            let plan = font.plan(&format!("{:.1} ➤", self.chapter().remain),
+            let (_, remain) = self.chapter_info();
+            let plan = font.plan(&format!("{:.1} ➤", remain),
                                           Some(label_width + margin), // allow text to exceed margin
                                           None);
             x += bar_width + gap;
