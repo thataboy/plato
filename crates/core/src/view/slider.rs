@@ -31,8 +31,8 @@ impl Slider {
             children: Vec::new(),
             slider_id,
             value,
-            min_value,
-            max_value,
+            min_value: min_value.min(value),
+            max_value: max_value.max(value),
             active: false,
             last_x: -1,
         }
@@ -52,6 +52,12 @@ impl Slider {
 
     pub fn update(&mut self, value: f32, rq: &mut RenderQueue) {
         if (self.value - value).abs() >= f32::EPSILON {
+            if value < self.min_value {
+                self.min_value = value;
+            }
+            if value > self.max_value {
+                self.max_value = value;
+            }
             self.value = value;
             rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
         }
