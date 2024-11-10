@@ -2210,7 +2210,10 @@ impl Reader {
                                   .and_then(|r| r.line_height).unwrap_or(context.settings.reader.line_height);
             let lh_gradient = context.settings.reader.line_height_gradient.clamp(MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT);
             let epsilon = lh_gradient / 2.0;
-            let entries = (0..=10).map(|x| {
+            // line heights go from 1.0 - 2.5
+            // capped at 25 choices in case user chose a very fine line_height_gradient
+            let cnt = ((1.5 / lh_gradient) as i32).min(25);
+            let entries = (0..=cnt).map(|x| {
                 let lh = 1.0 + x as f32 * lh_gradient;
                 EntryKind::RadioButton(format!("{:.3}", lh),
                                        EntryId::SetLineHeight(x),
