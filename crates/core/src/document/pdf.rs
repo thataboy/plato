@@ -257,7 +257,7 @@ impl Document for PdfDocument {
     fn set_font_family(&mut self, _family_name: &str, _search_path: &str) {
     }
 
-    fn set_margin_width(&mut self, _width: i32) {
+    fn set_margin_width(&mut self, _width: i32, _with_progress_bar: bool) {
     }
 
     fn set_line_height(&mut self, _line_height: f32) {

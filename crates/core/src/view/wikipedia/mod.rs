@@ -82,7 +82,7 @@ impl Wiki {
 
         let mut doc = HtmlDocument::new_from_memory("");
         doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
-        doc.set_margin_width(context.settings.dictionary.margin_width);
+        doc.set_margin_width(context.settings.dictionary.margin_width, false);
         doc.set_viewer_stylesheet(VIEWER_STYLESHEET);
         doc.set_user_stylesheet(USER_STYLESHEET);
 

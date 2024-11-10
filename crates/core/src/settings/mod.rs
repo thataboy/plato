@@ -36,6 +36,8 @@ pub const HYPHEN_PENALTY: i32 = 50;
 pub const STRETCH_TOLERANCE: f32 = 1.26;
 pub const MIN_LINE_HEIGHT_GRADIENT: f32 = 0.0125;
 pub const MAX_LINE_HEIGHT_GRADIENT: f32 = 0.25;
+// Minimum bottom margin in mm when progress bar is present
+pub const PROGRESS_BAR_PADDING: f32 = 2.0;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

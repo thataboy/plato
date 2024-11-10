@@ -16,6 +16,7 @@ use crate::unit::{mm_to_px, pt_to_px};
 use crate::geom::{Point, Vec2, Rectangle, Edge};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::settings::{DEFAULT_FONT_SIZE, DEFAULT_MARGIN_WIDTH, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT};
+use crate::settings::PROGRESS_BAR_PADDING;
 use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent, parse_visibility};
 use super::parse::{parse_width, parse_height, parse_inline_material, parse_font_kind, parse_font_style};
 use super::parse::{parse_font_weight, parse_font_size, parse_font_features, parse_font_variant};
@@ -125,8 +126,11 @@ impl Engine {
         }
     }
 
-    pub fn set_margin_width(&mut self, width: i32) {
+    pub fn set_margin_width(&mut self, width: i32, with_progress_bar: bool) {
         self.margin = Edge::uniform(mm_to_px(width as f32, self.dpi).round() as i32);
+        if with_progress_bar {
+            self.margin.bottom = self.margin.bottom.max(mm_to_px(PROGRESS_BAR_PADDING, self.dpi).round() as i32);
+        }
     }
 
     pub fn set_line_height(&mut self, line_height: f32) {

@@ -18,6 +18,7 @@ use std::cell::{RefCell, Ref};
 use std::mem::drop;
 use fxhash::{FxHashMap, FxHashSet};
 use chrono::Local;
+use libc::sync;
 use regex::Regex;
 use septem::prelude::*;
 use septem::{Roman, Digit};
@@ -290,16 +291,19 @@ impl Reader {
 
             doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
 
-            let margin_width = info.reader.as_ref().and_then(|r| r.margin_width)
-                                   .unwrap_or(settings.reader.margin_width);
-
-            if margin_width != DEFAULT_MARGIN_WIDTH {
-                doc.set_margin_width(margin_width);
-            }
+            let synthetic = doc.has_synthetic_page_numbers();
+            let reflowable = doc.is_reflowable();
 
             let mut progress_bar = settings.reader.progress_bar.clone();
             progress_bar.enabled = info.reader.as_ref().and_then(|r| r.show_progress_bar)
                                        .unwrap_or(progress_bar.enabled);
+
+            let margin_width = info.reader.as_ref().and_then(|r| r.margin_width)
+                                   .unwrap_or(settings.reader.margin_width);
+
+            if margin_width != DEFAULT_MARGIN_WIDTH {
+                doc.set_margin_width(margin_width, synthetic && progress_bar.enabled);
+            }
 
             let font_family = info.reader.as_ref().and_then(|r| r.font_family.as_ref())
                                   .unwrap_or(&settings.reader.font_family);
@@ -402,9 +406,6 @@ impl Reader {
                 });
             }
 
-            let synthetic = doc.has_synthetic_page_numbers();
-            let reflowable = doc.is_reflowable();
-
             println!("{}", info.file.path.display());
 
             hub.send(Event::Update(UpdateMode::Full)).ok();
@@ -464,7 +465,7 @@ impl Reader {
         let font_size = context.settings.reader.font_size;
         doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
         let margin_width = context.settings.reader.margin_width.max(4);
-        doc.set_margin_width(margin_width);
+        doc.set_margin_width(margin_width, false);
         let pages_count = doc.pages_count();
         info.title = doc.title().unwrap_or_default();
         let mut progress_bar = context.settings.reader.progress_bar.clone();
@@ -3032,7 +3033,7 @@ impl Reader {
 
         if self.reflowable {
             let mut doc = self.doc.lock().unwrap();
-            doc.set_margin_width(width);
+            doc.set_margin_width(width, self.synthetic & self.progress_bar.enabled);
 
             if self.synthetic {
                 let current_page = self.current_page.min(doc.pages_count() - 1);
@@ -4028,10 +4029,14 @@ impl View for Reader {
                                              && center.y > self.rect.max.y
                                                            - scale_by_dpi(70.0, CURRENT_DEVICE.dpi) as i32 {
                                 self.progress_bar.enabled = !self.progress_bar.enabled;
+                                let mut margin_width = context.settings.reader.margin_width;
                                 if let Some(ref mut r) = self.info.reader {
                                     r.show_progress_bar = Some(self.progress_bar.enabled);
+                                    if let Some(mw) = r.margin_width {
+                                        margin_width = mw;
+                                    }
                                 }
-                                self.update(Some(UpdateMode::Partial), hub, rq, context);
+                                self.set_margin_width(margin_width, true, hub, rq, context);
                             } else {
                                 match context.settings.reader.south_strip {
                                     SouthStripAction::ToggleBars => {

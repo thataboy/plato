@@ -396,8 +396,8 @@ impl Document for HtmlDocument {
         self.pages.clear();
     }
 
-    fn set_margin_width(&mut self, width: i32) {
-        self.engine.set_margin_width(width);
+    fn set_margin_width(&mut self, width: i32, with_progress_bar: bool) {
+        self.engine.set_margin_width(width, with_progress_bar);
         self.pages.clear();
     }
 
