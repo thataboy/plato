@@ -5,7 +5,7 @@ use super::{View, ViewId, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderDat
 use crate::gesture::GestureEvent;
 use crate::font::{Fonts, font_from_style, NORMAL_STYLE};
 use crate::color::{BLACK, WHITE};
-use crate::geom::{Rectangle};
+use crate::geom::Rectangle;
 use crate::context::Context;
 
 pub struct Clock {

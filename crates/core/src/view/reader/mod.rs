@@ -18,7 +18,6 @@ use std::cell::{RefCell, Ref};
 use std::mem::drop;
 use fxhash::{FxHashMap, FxHashSet};
 use chrono::Local;
-use libc::sync;
 use regex::Regex;
 use septem::prelude::*;
 use septem::{Roman, Digit};

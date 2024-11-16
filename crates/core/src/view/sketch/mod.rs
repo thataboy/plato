@@ -11,7 +11,7 @@ use crate::input::{DeviceEvent, FingerStatus};
 use crate::view::icon::{Icon, ICONS_PIXMAPS};
 use crate::view::notification::Notification;
 use crate::view::menu::{Menu, MenuKind};
-use crate::view::common::{locate_by_id};
+use crate::view::common::locate_by_id;
 use crate::view::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use crate::view::{EntryKind, EntryId, ViewId, Id, ID_FEEDER};
 use crate::view::{SMALL_BAR_HEIGHT, BORDER_RADIUS_SMALL};

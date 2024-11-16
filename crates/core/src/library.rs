@@ -18,7 +18,7 @@ use crate::helpers::{Fingerprint, Fp, save_json, load_json, IsHidden};
 pub const METADATA_FILENAME: &str = ".metadata.json";
 pub const FAT32_EPOCH_FILENAME: &str = ".fat32-epoch";
 pub const READING_STATES_DIRNAME: &str = ".reading-states";
-pub const THUMBNAIL_PREVIEWS_DIRNAME: &str = ".thumbnail-previews";
+pub const THUMBNAIL_PREVIEWS_DIRNAME: &str = ".thumbnail-cache";
 
 pub struct Library {
     pub home: PathBuf,

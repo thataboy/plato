@@ -19,6 +19,8 @@ strip = true
 [profile.release-lto]
 inherits = "release"
 panic = "abort"
+opt-level = 3
 codegen-units = 1
-lto = true
-strip = true
+lto = "fat"
+strip = "symbols"
+overflow-checks = false

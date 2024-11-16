@@ -96,16 +96,19 @@ impl View for Book {
 
         fb.draw_rectangle(&self.rect, scheme[0]);
 
+        let file_info = &self.info.file;
+
         let (title, author) = if self.first_column == FirstColumn::TitleAndAuthor {
             (self.info.title(), self.info.author.as_str())
         } else {
-            let filename = self.info.file.path.file_stem()
-                               .map(|v| v.to_string_lossy().into_owned())
-                               .unwrap_or_default();
+            let filename = (if self.cover_view {
+                file_info.path.file_name()
+            } else {
+                file_info.path.file_stem()
+            }).map(|v| v.to_string_lossy().into_owned()).unwrap_or_default();
             (filename, "")
         };
 
-        let file_info = &self.info.file;
         let kind = file_info.kind.to_uppercase();
 
         if self.cover_view {
@@ -169,14 +172,40 @@ impl View for Book {
             let text_width = self.rect.width() as i32 - padding / 2;
             let text_x = self.rect.min.x;
             let text_y = self.rect.min.y + cover_height + padding + line_height;
+            let text_y2 = text_y + line_height + x_height / 2;
 
             // Title
             let font = font_from_style(fonts, &MD_TITLE_SMALL, dpi);
-            let mut plan = font.plan(&title, Some(text_width), None);
-            font.crop_right(&mut plan, text_width);
-            let dx = (self.rect.width() as i32 - plan.width) / 2;
-            let pt = pt!(text_x + dx, text_y);
-            font.render(fb, scheme[1], &plan, pt);
+            let mut plan = font.plan(&title, None, None);
+
+            // If author is empty and title doesn't fit on one line
+            if author.is_empty() && plan.width > text_width {
+                // Split title into two lines
+                let (index, usable_width) = font.cut_point(&plan, text_width);
+                let mut plan2 = plan.split_off(index, usable_width);
+                font.crop_right(&mut plan, text_width);
+
+                // Render first line
+                let dx = (self.rect.width() as i32 - plan.width) / 2;
+                let pt = pt!(text_x + dx, text_y);
+                font.render(fb, scheme[1], &plan, pt);
+
+                // Crop and render second line
+                font.trim_left(&mut plan2);
+                font.crop_right(&mut plan2, text_width);
+                let dx = (self.rect.width() as i32 - plan2.width) / 2;
+                let pt = pt!(text_x + dx, text_y2);
+                font.render(fb, scheme[1], &plan2, pt);
+            } else {
+                // single-line
+                font.crop_right(&mut plan, text_width);
+                let dx = (self.rect.width() as i32 - plan.width) / 2;
+                let pt = pt!(text_x + dx, text_y);
+                font.render(fb, scheme[1], &plan, pt);
+            }
+
+            let progress_height = scale_by_dpi(PROGRESS_HEIGHT, dpi) as i32;
+            let progress_y = self.rect.max.y - progress_height - x_height;
 
             // Author
             if !author.is_empty() {
@@ -184,18 +213,20 @@ impl View for Book {
                 let mut plan = font.plan(author, Some(text_width), None);
                 font.crop_right(&mut plan, text_width);
                 let dx = (self.rect.width() as i32 - plan.width) / 2;
-                let pt = pt!(text_x + dx, text_y + line_height + x_height / 2);
+                let pt = pt!(text_x + dx, text_y2);
                 font.render(fb, scheme[1], &plan, pt);
+            }
+
+            if text_y2 + x_height >= progress_y {
+                // no room for progress bar
+                return;
             }
 
             // Progress bar
             if let Status::Reading(progress) = self.info.status() {
                 if let Some(ref reader) = &self.info.reader {
-                    let progress_height = scale_by_dpi(PROGRESS_HEIGHT, dpi) as i32;
                     let progress_width = self.rect.width() as i32 - padding - 2 * line_height;
                     let progress_x = self.rect.min.x + padding;
-                    let progress_y = self.rect.max.y - progress_height - x_height;
-
                     let largest_size = if self.info.identifier.is_empty() {
                         LARGEST_BOOK
                     } else {
@@ -223,6 +254,8 @@ impl View for Book {
             }
             return;
         }
+
+        // list view
 
         let (x_height, padding, baseline) = {
             let font = font_from_style(fonts, &MD_TITLE, dpi);

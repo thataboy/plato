@@ -24,7 +24,8 @@ lazy_static! {
     // shuffled vec of indices for screensaver images
     static ref SHUFFLE: Mutex<Vec<usize>> = Mutex::new(Vec::new());
     // rng for shuffling
-    static ref RNG: Mutex<Xoroshiro128Plus> = Mutex::new(Xoroshiro128Plus::seed_from_u64(Local::now().timestamp_nanos() as u64));
+    static ref RNG: Mutex<Xoroshiro128Plus> = Mutex::new(
+        Xoroshiro128Plus::seed_from_u64(Local::now().timestamp_nanos_opt().unwrap_or(829363748) as u64));
 }
 
 pub struct Intermission {
