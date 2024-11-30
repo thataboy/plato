@@ -145,7 +145,7 @@ impl Dictionary {
         let image_rect = rect![rect.min.x, rect.min.y + 2 * small_height + big_thickness,
                                rect.max.x, rect.max.y - small_height - small_thickness];
 
-        let image = Image::new(image_rect, Pixmap::new(1, 1));
+        let image = Image::new(image_rect, Pixmap::new(1, 1, 1));
         children.push(Box::new(image) as Box<dyn View>);
 
         let mut doc = HtmlDocument::new_from_memory("");
@@ -365,7 +365,7 @@ impl Dictionary {
 
     fn go_to_location(&mut self, location: Location, rq: &mut RenderQueue) {
         if let Some(image) = self.children[4].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0) {
+            if let Some((pixmap, loc)) = self.doc.pixmap(location, 1.0, CURRENT_DEVICE.color_samples()) {
                 image.update(pixmap, rq);
                 self.location = loc;
             }
@@ -386,7 +386,7 @@ impl Dictionary {
         let content = query_to_content(&self.query, &self.language, self.fuzzy, self.target.as_ref(), context);
         self.doc.update(&content);
         if let Some(image) = self.children[4].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0) {
+            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(0), 1.0, CURRENT_DEVICE.color_samples()) {
                 image.update(pixmap, rq);
                 self.location = loc;
             }
@@ -617,7 +617,7 @@ impl View for Dictionary {
                                rect.max.x, rect.max.y - small_height - small_thickness];
         self.doc.layout(image_rect.width(), image_rect.height(), context.settings.dictionary.font_size, dpi);
         if let Some(image) = self.children[4].downcast_mut::<Image>() {
-            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(self.location), 1.0) {
+            if let Some((pixmap, loc)) = self.doc.pixmap(Location::Exact(self.location), 1.0, CURRENT_DEVICE.color_samples()) {
                 image.update(pixmap, &mut RenderQueue::new());
                 self.location = loc;
             }

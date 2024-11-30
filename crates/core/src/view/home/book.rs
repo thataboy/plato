@@ -129,7 +129,7 @@ impl View for Book {
                     }).and_then(|mut doc| {
                         doc.dims(0).and_then(|dims| {
                             let scale = (cover_width as f32 / dims.0).min(cover_height as f32 / dims.1);
-                            doc.pixmap(Location::Exact(0), scale)
+                            doc.pixmap(Location::Exact(0), scale, CURRENT_DEVICE.color_samples())
                         })
                     }) {
                         let dx = (self.rect.width() as i32 - pixmap.width as i32) / 2;
@@ -282,7 +282,7 @@ impl View for Book {
                 }).and_then(|mut doc| {
                     doc.dims(0).and_then(|dims| {
                         let scale = (tw as f32 / dims.0).min(th as f32 / dims.1);
-                        doc.pixmap(Location::Exact(0), scale)
+                        doc.pixmap(Location::Exact(0), scale, CURRENT_DEVICE.color_samples())
                     })
                 }) {
                     let dx = (tw - pixmap.width as i32) / 2;
