@@ -7,11 +7,11 @@ This fork by me contains changes and additional features you may find useful, in
 - Themes, CSS tweaking.
 - Google translate and wikipedia search.
 - Page scrubber.
-- Updated library view.
+- Updated library view, including cover view.
 - Progress bar
 - lots more.
 
-[![Tn05](artworks/thumbnail05.png)](artworks/screenshot05.png) [![Tn06](artworks/thumbnail06.png)](artworks/screenshot06.png) [![Tn07](artworks/thumbnail07.png)](artworks/screenshot07.png)
+[![Tn05](artworks/thumbnail05.png)](artworks/screenshot05.png) [![Tn06](artworks/thumbnail06.png)](artworks/screenshot06.png) [![Tn07](artworks/thumbnail07.png)](artworks/screenshot07.png) [![Tn08](artworks/thumbnail08.png)](artworks/screenshot08.png)
 
 ## Installation
 
