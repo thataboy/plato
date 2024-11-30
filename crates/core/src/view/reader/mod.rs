@@ -1125,7 +1125,8 @@ impl Reader {
                 if let Some((images, _)) = self.doc.lock().unwrap().images(Location::Exact(chunk.location)) {
                     let large_images: Vec<Boundary> = images
                         .iter()
-                        .filter(|img| img.width() > 50.0 && img.height() > 50.0)
+                        .filter(|img| img.width() > 0.25 * self.rect.width() as f32 &&
+                                      img.height() > 0.25 * self.rect.height() as f32)
                         .cloned()
                         .collect();
                     self.noninverted_regions.insert(chunk.location, large_images);
