@@ -9,23 +9,7 @@ method=${1:-"fast"}
 case "$method" in
 	fast)
 		./download.sh 'libs/*'
-		cd libs
-
-		ln -s libz.so.1 libz.so
-		ln -s libbz2.so.1.0 libbz2.so
-
-		ln -s libpng16.so.16 libpng16.so
-		ln -s libjpeg.so.9 libjpeg.so
-		ln -s libopenjp2.so.7 libopenjp2.so
-		ln -s libjbig2dec.so.0 libjbig2dec.so
-
-		ln -s libfreetype.so.6 libfreetype.so
-		ln -s libharfbuzz.so.0 libharfbuzz.so
-
-		ln -s libgumbo.so.1 libgumbo.so
-		ln -s libdjvulibre.so.21 libdjvulibre.so
-
-		cd ../thirdparty
+		cd thirdparty
 		./download.sh mupdf
 		cd ..
 		;;
@@ -48,7 +32,7 @@ case "$method" in
 		cp thirdparty/jbig2dec/.libs/libjbig2dec.so libs
 
 		cp thirdparty/freetype2/objs/.libs/libfreetype.so libs
-		cp thirdparty/harfbuzz/src/.libs/libharfbuzz.so libs
+		cp thirdparty/harfbuzz/build/src/libharfbuzz.so libs
 
 		cp thirdparty/gumbo/.libs/libgumbo.so libs
 		cp thirdparty/djvulibre/libdjvu/.libs/libdjvulibre.so libs
@@ -62,6 +46,18 @@ case "$method" in
 		exit 1
 		;;
 esac
+
+# Linker names may be absent when reusing previously downloaded libraries.
+for name in z bz2 png16 jpeg openjp2 jbig2dec freetype harfbuzz gumbo djvulibre; do
+	link="libs/lib${name}.so"
+	[ -e "$link" ] && continue
+	set -- "$link".*
+	if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+		printf 'Expected one versioned library for %s; rebuild with ./build.sh slow.\n' "$link" >&2
+		exit 1
+	fi
+	ln -sf "${1##*/}" "$link"
+done
 
 cd mupdf_wrapper
 ./build-kobo.sh

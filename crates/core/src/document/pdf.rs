@@ -106,7 +106,7 @@ unsafe impl Send for PdfDocument {}
 unsafe impl Sync for PdfDocument {}
 
 impl PdfDocument {
-    pub fn page(&self, index: usize) -> Option<PdfPage> {
+    pub fn page(&self, index: usize) -> Option<PdfPage<'_>> {
         unsafe {
             let page = mp_load_page(self.ctx.0, self.doc, index as libc::c_int);
             if page.is_null() {
@@ -320,7 +320,7 @@ impl<'a> PdfPage<'a> {
     pub fn images(&self) -> Option<Vec<Boundary>> {
         unsafe {
             let mut images: Vec<Boundary> = Vec::new();
-            let opts = FzTextOptions { flags: FZ_TEXT_PRESERVE_IMAGES, scale: 1.0 };
+            let opts = FzTextOptions { flags: FZ_TEXT_PRESERVE_IMAGES, scale: 1.0, clip: FzRect::default() };
             let tp = mp_new_stext_page_from_page(self.ctx.0, self.page, &opts);
             if tp.is_null() {
                 return None;

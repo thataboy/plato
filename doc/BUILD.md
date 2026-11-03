@@ -55,6 +55,15 @@ ln -s arm-unknown-linux-gnueabihf-strip arm-linux-gnueabihf-strip
 ./build.sh
 ```
 
+If you are returning to an existing checkout, note that `build.sh` reuses
+`libs/` when it already exists. It repairs missing linker symlinks, but does
+not update the libraries themselves. The MuPDF headers in
+`thirdparty/mupdf/include` and `libs/libmupdf.so` must match the `FZ_VERSION`
+in `crates/core/src/document/mupdf_sys.rs` (currently 1.27.0). Older libraries
+can cause undefined font-symbol errors at link time or fail at runtime.
+Rebuild matching native dependencies with `./build.sh slow` after upgrading
+them; keep a backup of any locally built libraries first.
+
 ### Distribution
 
 ```sh
@@ -63,7 +72,7 @@ ln -s arm-unknown-linux-gnueabihf-strip arm-linux-gnueabihf-strip
 
 ## Developer Tools
 
-Install the required dependencies: *MuPDF 1.23.11*, *DjVuLibre*, *FreeType*, *HarfBuzz*.
+Install the required dependencies: *MuPDF 1.27.0*, *DjVuLibre*, *FreeType*, *HarfBuzz*.
 
 ### Emulator
 
