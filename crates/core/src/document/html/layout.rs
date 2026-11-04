@@ -53,6 +53,8 @@ pub struct StyleData {
     pub height: i32,
     pub margin: Edge,
     pub padding: Edge,
+    pub background: Option<Color>,
+    pub relative_offset: Point,
     pub start_x: i32,
     pub end_x: i32,
     pub retain_whitespace: bool,
@@ -185,6 +187,8 @@ impl Default for StyleData {
             height: 0,
             margin: Edge::default(),
             padding: Edge::default(),
+            background: None,
+            relative_offset: Point::default(),
             start_x: 0,
             end_x: 0,
             retain_whitespace: false,
@@ -211,6 +215,7 @@ impl Default for StyleData {
 pub enum InlineMaterial {
     Text(TextMaterial),
     Image(ImageMaterial),
+    Float(FloatMaterial),
     Glue(GlueMaterial),
     Penalty(PenaltyMaterial),
     Box(i32),
@@ -221,7 +226,8 @@ impl InlineMaterial {
     pub fn offset(&self) -> Option<usize> {
         match self {
             InlineMaterial::Text(TextMaterial { offset, .. }) |
-            InlineMaterial::Image(ImageMaterial { offset, .. }) => Some(*offset),
+            InlineMaterial::Image(ImageMaterial { offset, .. }) |
+            InlineMaterial::Float(FloatMaterial { offset, .. }) => Some(*offset),
             _ => None,
         }
     }
@@ -246,6 +252,22 @@ pub struct ImageMaterial {
     pub offset: usize,
     pub path: String,
     pub style: StyleData,
+}
+
+#[derive(Debug, Clone)]
+pub struct FloatMaterial {
+    pub offset: usize,
+    pub inlines: Vec<InlineMaterial>,
+    pub style: StyleData,
+}
+
+#[derive(Debug, Clone)]
+pub struct FloatElement {
+    pub width: i32,
+    pub height: i32,
+    pub margin: Edge,
+    pub side: Float,
+    pub commands: Vec<DrawCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -357,6 +379,7 @@ pub struct ImageElement {
     pub height: i32,
     pub scale: f32,
     pub vertical_align: i32,
+    pub relative_offset: Point,
     pub display: Display,
     pub margin: Edge,
     pub float: Option<Float>,
@@ -369,7 +392,16 @@ pub enum DrawCommand {
     Text(TextCommand),
     ExtraText(TextCommand),
     Image(ImageCommand),
+    Background(BackgroundCommand),
     Marker(usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct BackgroundCommand {
+    pub offset: usize,
+    pub position: Point,
+    pub rect: Rectangle,
+    pub color: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -403,6 +435,7 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { offset, .. }) => offset,
             DrawCommand::ExtraText(TextCommand { offset, .. }) => offset,
             DrawCommand::Image(ImageCommand { offset, .. }) => offset,
+            DrawCommand::Background(BackgroundCommand { offset, .. }) => offset,
             DrawCommand::Marker(offset) => offset,
         }
     }
@@ -412,6 +445,7 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { rect, .. }) => Some(rect),
             DrawCommand::ExtraText(TextCommand { rect, .. }) => Some(rect),
             DrawCommand::Image(ImageCommand { rect, .. }) => Some(rect),
+            DrawCommand::Background(BackgroundCommand { rect, .. }) => Some(rect),
             _ => None,
         }
     }
@@ -421,8 +455,33 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { ref mut position, .. }) => Some(position),
             DrawCommand::ExtraText(TextCommand { ref mut position, .. }) => Some(position),
             DrawCommand::Image(ImageCommand { ref mut position, .. }) => Some(position),
+            DrawCommand::Background(BackgroundCommand { ref mut position, .. }) => Some(position),
             _ => None,
         }
+    }
+
+    pub fn translate(&mut self, delta: Point) {
+        if let Some(position) = self.position_mut() {
+            *position += delta;
+        }
+        let rect = match self {
+            DrawCommand::Text(command) | DrawCommand::ExtraText(command) => &mut command.rect,
+            DrawCommand::Image(command) => &mut command.rect,
+            DrawCommand::Background(command) => &mut command.rect,
+            DrawCommand::Marker(..) => return,
+        };
+        rect.min += delta;
+        rect.max += delta;
+    }
+
+    pub fn add_offset(&mut self, delta: usize) {
+        let offset = match self {
+            DrawCommand::Text(command) | DrawCommand::ExtraText(command) => &mut command.offset,
+            DrawCommand::Image(command) => &mut command.offset,
+            DrawCommand::Background(command) => &mut command.offset,
+            DrawCommand::Marker(offset) => offset,
+        };
+        *offset += delta;
     }
 }
 

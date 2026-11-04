@@ -30,11 +30,19 @@ impl StyleSheet {
 }
 
 pub fn specified_values(node: NodeRef, stylesheet: &StyleSheet) -> PropertyMap {
+    specified_values_for(node, stylesheet, false)
+}
+
+pub fn first_letter_values(node: NodeRef, stylesheet: &StyleSheet) -> PropertyMap {
+    specified_values_for(node, stylesheet, true)
+}
+
+fn specified_values_for(node: NodeRef, stylesheet: &StyleSheet, first_letter: bool) -> PropertyMap {
     let mut props = FxHashMap::default();
     let mut important = Vec::new();
 
     for rule in stylesheet.rules.iter()
-                          .filter(|rule| rule.selector.matches(node)) {
+                          .filter(|rule| rule.selector.first_letter == first_letter && rule.selector.matches(node)) {
         for declaration in &rule.declarations {
             if declaration.important {
                 important.push([&declaration.name, &declaration.value]);
@@ -44,7 +52,7 @@ pub fn specified_values(node: NodeRef, stylesheet: &StyleSheet) -> PropertyMap {
         }
     }
 
-    let local_declarations = node.attribute("style").map(|text| {
+    let local_declarations = node.attribute("style").filter(|_| !first_letter).map(|text| {
         CssParser::new(text).parse_declarations()
     }).unwrap_or_default();
 

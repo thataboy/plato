@@ -18,19 +18,20 @@ use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::settings::{DEFAULT_FONT_SIZE, DEFAULT_MARGIN_WIDTH, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT};
 use crate::settings::PROGRESS_BAR_PADDING;
 use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent, parse_visibility};
-use super::parse::{parse_width, parse_height, parse_inline_material, parse_font_kind, parse_font_style};
+use super::parse::{parse_width, parse_height, parse_length, parse_inline_material, parse_font_kind, parse_font_style};
 use super::parse::{parse_font_weight, parse_font_size, parse_font_features, parse_font_variant};
 use super::parse::{parse_letter_spacing, parse_word_spacing};
 use super::parse::{parse_line_height, parse_vertical_align, parse_color, parse_list_style_type};
 use super::dom::{NodeRef, NodeData, ElementData, TextData, WRAPPER_TAG_NAME};
 use super::layout::{ImageMaterial, InlineMaterial, StyleData, TextMaterial, Visibility};
+use super::layout::{FloatMaterial, FloatElement, BackgroundCommand};
 use super::layout::{GlueMaterial, PenaltyMaterial, ChildArtifact, SiblingStyle, LoopContext};
 use super::layout::{RootData, DrawState, DrawCommand, TextCommand, ImageCommand, FontKind, Fonts};
 use super::layout::{TextAlign, ParagraphElement, TextElement, ImageElement, Display, Float};
 use super::layout::{WordSpacing, ListStyleType, LineStats};
 use super::layout::{hyph_lang, collapse_margins, DEFAULT_HYPH_LANG, HYPHENATION_PATTERNS};
 use super::layout::{EM_SPACE_RATIOS, WORD_SPACE_RATIOS, FONT_SPACES};
-use super::style::{StyleSheet, specified_values};
+use super::style::{StyleSheet, specified_values, first_letter_values};
 use super::xml::XmlExt;
 
 const DEFAULT_DPI: u16 = 300;
@@ -86,7 +87,7 @@ impl Engine {
     #[inline]
     pub fn load_fonts(&mut self) {
         if self.fonts.is_none() {
-            self.fonts = default_fonts().ok();
+            self.fonts = default_fonts(Path::new("fonts")).ok();
         }
     }
 
@@ -164,6 +165,17 @@ impl Engine {
                 },
                 rects: Vec::new(),
             }
+        }
+
+        if props.get("float").and_then(|value| parse_float(value)).is_some() {
+            let mut inlines = Vec::new();
+            let mut markers = Vec::new();
+            self.gather_inline_material(node, stylesheet, parent_style, &root_data.spine_dir, &mut markers, &mut inlines);
+            let mut flow_style = parent_style.clone();
+            flow_style.margin = Edge::default();
+            flow_style.padding = Edge::default();
+            self.place_paragraphs(&inlines, &flow_style, root_data, &markers, resource_fetcher, draw_state, &mut rects, display_list);
+            return ChildArtifact { sibling_style: SiblingStyle::default(), rects };
         }
 
         style.font_style = parent_style.font_style;
@@ -495,6 +507,7 @@ impl Engine {
                 for child in node.children() {
                     self.gather_inline_material(child, stylesheet, &style, &root_data.spine_dir, &mut markers, &mut inlines);
                 }
+                self.apply_first_letter(node, stylesheet, &style, &root_data.spine_dir, &mut inlines);
                 if !inlines.is_empty() {
                     draw_state.prefix = match style.list_style_type {
                         None => {
@@ -593,7 +606,67 @@ impl Engine {
         }
     }
 
+    fn apply_first_letter(&self, node: NodeRef, stylesheet: &StyleSheet, paragraph_style: &StyleData, spine_dir: &PathBuf, inlines: &mut Vec<InlineMaterial>) {
+        let props = first_letter_values(node, stylesheet);
+        if props.is_empty() {
+            return;
+        }
+        for index in 0..inlines.len() {
+            let material = match &inlines[index] {
+                InlineMaterial::Text(text) if text.text.trim().is_empty() => continue,
+                InlineMaterial::Text(text) => text.clone(),
+                // A replaced element or an existing drop cap already occupies
+                // the start of the line; don't decorate the following letter.
+                _ => return,
+            };
+            let start = material.text.find(|c: char| !c.is_whitespace()).unwrap();
+            let mut end = start;
+            let mut found_letter = false;
+            for (offset, ch) in material.text[start..].char_indices() {
+                let punctuation = ch.is_ascii_punctuation() || matches!(ch, '“' | '”' | '‘' | '’' | '«' | '»' | '‹' | '›' | '„' | '…');
+                if found_letter && !punctuation && !unicode_normalization::char::is_combining_mark(ch) {
+                    break;
+                }
+                if ch.is_whitespace() {
+                    break;
+                }
+                found_letter |= !punctuation;
+                end = start + offset + ch.len_utf8();
+            }
+            if end == start {
+                return;
+            }
+            // Feed the pseudo-element through the same inline/float path as
+            // an explicit span, retaining the original document offsets.
+            let mut tree = super::dom::XmlTree::new();
+            let mut attrs = super::dom::Attributes::default();
+            attrs.insert("style".to_string(), props.iter().map(|(name, value)| format!("{}:{};", name, value)).collect());
+            let id = tree.root_mut().append(super::dom::element("span", material.offset + start, attrs));
+            tree.get_mut(id).append(super::dom::text(&material.text[start..end], material.offset + start));
+            let mut replacement = Vec::new();
+            if start > 0 {
+                replacement.push(InlineMaterial::Text(TextMaterial {
+                    offset: material.offset, text: material.text[..start].to_string(), style: material.style.clone(),
+                }));
+            }
+            let mut inherited = material.style.clone();
+            inherited.width = paragraph_style.width;
+            self.gather_inline_material(tree.get(id), &StyleSheet::new(), &inherited, spine_dir, &mut Vec::new(), &mut replacement);
+            if end < material.text.len() {
+                replacement.push(InlineMaterial::Text(TextMaterial {
+                    offset: material.offset + end, text: material.text[end..].to_string(), style: material.style,
+                }));
+            }
+            inlines.splice(index..=index, replacement);
+            return;
+        }
+    }
+
     fn gather_inline_material(&self, node: NodeRef, stylesheet: &StyleSheet, parent_style: &StyleData, spine_dir: &PathBuf, markers: &mut Vec<usize>, inlines: &mut Vec<InlineMaterial>) {
+        self.gather_inline_material_inner(node, stylesheet, parent_style, spine_dir, markers, inlines, false);
+    }
+
+    fn gather_inline_material_inner(&self, node: NodeRef, stylesheet: &StyleSheet, parent_style: &StyleData, spine_dir: &PathBuf, markers: &mut Vec<usize>, inlines: &mut Vec<InlineMaterial>, float_contents: bool) {
         match node.data() {
             NodeData::Element(ElementData { offset, name, attributes, .. }) => {
                 let mut style = StyleData::default();
@@ -671,6 +744,43 @@ impl Engine {
                     }
                 }
 
+                style.line_height = props.get("line-height")
+                                         .and_then(|value| parse_line_height(value, style.font_size, self.font_size, self.dpi))
+                                         .unwrap_or_else(|| (parent_style.line_height as f32 * style.font_size / parent_style.font_size).round() as i32);
+                style.text_align = props.get("text-align").and_then(|value| parse_text_align(value))
+                                        .unwrap_or(parent_style.text_align);
+                style.float = props.get("float").and_then(|value| parse_float(value));
+                if !float_contents && style.float.is_some() {
+                    style.margin = parse_edge(props.get("margin-top").map(String::as_str),
+                                              props.get("margin-right").map(String::as_str),
+                                              props.get("margin-bottom").map(String::as_str),
+                                              props.get("margin-left").map(String::as_str),
+                                              style.font_size, self.font_size, parent_style.width, self.dpi);
+                    style.padding = parse_edge(props.get("padding-top").map(String::as_str),
+                                               props.get("padding-right").map(String::as_str),
+                                               props.get("padding-bottom").map(String::as_str),
+                                               props.get("padding-left").map(String::as_str),
+                                               style.font_size, self.font_size, parent_style.width, self.dpi);
+                    style.background = props.get("background-color").or_else(|| props.get("background"))
+                                            .and_then(|value| parse_color(value));
+                    let mut contents = Vec::new();
+                    self.gather_inline_material_inner(node, stylesheet, parent_style, spine_dir, markers, &mut contents, true);
+                    inlines.push(InlineMaterial::Float(FloatMaterial {
+                        offset: *offset,
+                        inlines: contents,
+                        style,
+                    }));
+                    return;
+                }
+                // A float establishes its own box; its children are not floats
+                // unless they explicitly request one themselves.
+                style.float = None;
+                if props.get("position").map(String::as_str) == Some("relative") {
+                    style.relative_offset = pt!(
+                        props.get("left").and_then(|v| parse_length(v, style.font_size, self.font_size, self.dpi)).unwrap_or(0),
+                        props.get("top").and_then(|v| parse_length(v, style.font_size, self.font_size, self.dpi)).unwrap_or(0));
+                }
+
                 if node.id().is_some() {
                     markers.push(node.offset());
                 }
@@ -685,10 +795,11 @@ impl Engine {
                                                                   .decode_utf8_lossy()
                                                                   .into_owned())
                         }).unwrap_or_default();
-                        style.float = props.get("float").and_then(|value| parse_float(value));
-
+                        if float_contents {
+                            style.display = Display::Block;
+                        }
                         let is_block = style.display == Display::Block;
-                        if is_block || style.float.is_some() {
+                        if is_block && !float_contents {
                             style.margin = parse_edge(props.get("margin-top").map(String::as_str),
                                                       props.get("margin-right").map(String::as_str),
                                                       props.get("margin-bottom").map(String::as_str),
@@ -752,7 +863,7 @@ impl Engine {
         }
     }
 
-    fn make_paragraph_items(&mut self, inlines: &[InlineMaterial], parent_style: &StyleData, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> (Vec<ParagraphItem<ParagraphElement>>, Vec<ImageElement>) {
+    fn make_paragraph_items(&mut self, inlines: &[InlineMaterial], parent_style: &StyleData, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> (Vec<ParagraphItem<ParagraphElement>>, Vec<FloatElement>) {
         let mut items = Vec::new();
         let mut floats = Vec::new();
         let big_stretch = 3 * {
@@ -772,6 +883,9 @@ impl Engine {
 
         for (index, mater) in inlines.iter().enumerate() {
             match mater {
+                InlineMaterial::Float(material) => {
+                    floats.push(self.layout_float(material, line_width, resource_fetcher));
+                },
                 InlineMaterial::Image(ImageMaterial { offset, path, style }) => {
                     let (mut width, mut height) = (style.width, style.height);
                     let mut scale = 1.0;
@@ -799,20 +913,17 @@ impl Engine {
                                     height,
                                     scale,
                                     vertical_align: style.vertical_align,
+                                    relative_offset: style.relative_offset,
                                     display: style.display,
                                     margin: style.margin,
                                     float: style.float,
                                     path: path.clone(),
                                     uri: style.uri.clone(),
                             };
-                            if style.float.is_none() {
-                                items.push(ParagraphItem::Box {
-                                    width,
-                                    data: ParagraphElement::Image(element),
-                                });
-                            } else {
-                                floats.push(element);
-                            }
+                            items.push(ParagraphItem::Box {
+                                width,
+                                data: ParagraphElement::Image(element),
+                            });
                         }
                     }
                 },
@@ -1014,11 +1125,104 @@ impl Engine {
         (items, floats)
     }
 
+    // Lay out a float in its own formatting context before reserving space in
+    // the surrounding paragraph. Keeping its contents together is essential
+    // for spans that contain an image or several styled parts of a drop cap.
+    fn layout_float(&mut self, material: &FloatMaterial, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> FloatElement {
+        let mut style = material.style.clone();
+        let side = style.float.unwrap();
+        let margin = style.margin;
+        let padding = style.padding;
+        let max_width = (line_width - margin.left - margin.right - padding.left - padding.right).max(1);
+        let mut inlines = material.inlines.as_slice();
+        let is_blank = |inline: &InlineMaterial| match inline {
+            InlineMaterial::LineBreak => true,
+            InlineMaterial::Text(text) => text.text.trim().is_empty(),
+            _ => false,
+        };
+        while inlines.first().map_or(false, &is_blank) {
+            inlines = &inlines[1..];
+        }
+        while inlines.last().map_or(false, &is_blank) {
+            inlines = &inlines[..inlines.len()-1];
+        }
+        // Inline children can carry the font size (for example a bold letter
+        // inside a floated span). Their line box determines the natural size.
+        for inline in inlines {
+            if let InlineMaterial::Text(text) = inline {
+                if !text.text.trim().is_empty() {
+                    style.line_height = style.line_height.max(text.style.line_height);
+                    if text.style.font_size > style.font_size {
+                        style.font_size = text.style.font_size;
+                        style.font_kind = text.style.font_kind;
+                        style.font_style = text.style.font_style;
+                        style.font_weight = text.style.font_weight;
+                    }
+                }
+            }
+        }
+        let (items, _) = self.make_paragraph_items(inlines, &style, max_width, resource_fetcher);
+        let mut preferred_width = 0;
+        let mut current_width = 0;
+        for item in items {
+            match item {
+                ParagraphItem::Box { width, .. } | ParagraphItem::Glue { width, .. } => current_width += width,
+                ParagraphItem::Penalty { penalty, .. } if penalty == -INFINITE_PENALTY => {
+                    preferred_width = preferred_width.max(current_width);
+                    current_width = 0;
+                },
+                _ => (),
+            }
+        }
+        preferred_width = preferred_width.max(current_width);
+        let width = if style.width > 0 { style.width } else { preferred_width }.clamp(1, max_width);
+        let explicit_height = style.height;
+        style.width = width;
+        style.start_x = 0;
+        style.end_x = width;
+        style.float = None;
+        style.margin = Edge::default();
+        style.padding = Edge::default();
+        style.text_indent = 0;
+        // A zero line-height is useful for positioning drop caps, but line
+        // breaking must still have a positive step.
+        style.line_height = style.line_height.max(1);
+        let root = RootData {
+            start_offset: 0,
+            spine_dir: PathBuf::new(),
+            rect: rect![0, 0, width, (self.dims.1 as i32 * 16).max(explicit_height)],
+        };
+        let mut state = DrawState::default();
+        let mut pages = vec![Vec::new()];
+        let mut rects = vec![None];
+        self.place_paragraphs(inlines, &style, &root, &[], resource_fetcher, &mut state, &mut rects, &mut pages);
+        let height = if explicit_height > 0 { explicit_height } else { state.position.y.max(0) };
+        let width = width + padding.left + padding.right;
+        let height = height + padding.top + padding.bottom;
+        let mut commands = vec![DrawCommand::Marker(material.offset)];
+        if let Some(color) = style.background {
+            commands.push(DrawCommand::Background(BackgroundCommand {
+                offset: material.offset,
+                position: pt!(0, 0),
+                rect: rect![0, 0, width, height],
+                color,
+            }));
+        }
+        for mut command in pages.into_iter().flatten() {
+            command.translate(pt!(padding.left, padding.top));
+            commands.push(command);
+        }
+        FloatElement { width, height, margin, side, commands }
+    }
+
     fn place_paragraphs(&mut self, inlines: &[InlineMaterial], style: &StyleData, root_data: &RootData, markers: &[usize], resource_fetcher: &mut dyn ResourceFetcher, draw_state: &mut DrawState, rects: &mut Vec<Option<Rectangle>>, display_list: &mut Vec<Page>) {
         let line_width = style.end_x - style.start_x;
         let (mut items, floats) = self.make_paragraph_items(inlines, style, line_width, resource_fetcher);
+        if !floats.is_empty() && !items.iter().any(|item| matches!(item, ParagraphItem::Box { width, .. } if *width > 0)) {
+            items.clear();
+        }
 
-        if items.is_empty() {
+        if items.is_empty() && floats.is_empty() {
             return;
         }
 
@@ -1045,7 +1249,11 @@ impl Engine {
 
         let mut page = display_list.pop().unwrap();
         let mut page_rect = rects.pop().unwrap();
-        if position.y > root_data.rect.max.y - space_bottom {
+        let float_height = floats.iter().map(|element| element.height + element.margin.top + element.margin.bottom).max().unwrap_or(0);
+        let float_needs_page = float_height <= root_data.rect.max.y - root_data.rect.min.y &&
+                               position.y - space_top > root_data.rect.min.y &&
+                               position.y - space_top + float_height > root_data.rect.max.y;
+        if position.y > root_data.rect.max.y - space_bottom || float_needs_page {
             rects.push(page_rect.take());
             display_list.push(page);
             position.y = root_data.rect.min.y + space_top;
@@ -1054,65 +1262,54 @@ impl Engine {
 
         let page_index = display_list.len();
 
-        for mut element in floats.into_iter() {
+        for element in floats {
             let horiz_margin = element.margin.left + element.margin.right;
             let vert_margin = element.margin.top + element.margin.bottom;
-            let mut width = element.width;
-            let mut height = element.height;
-
-            let max_width = line_width / 3;
-            if width + horiz_margin > max_width {
-                let ratio = (max_width - horiz_margin) as f32 / width as f32;
-                element.scale *= ratio;
-                width = max_width - horiz_margin;
-                height = (ratio * height as f32).round() as i32;
-            }
-
             let mut y_min = position.y - space_top;
-            let side = if element.float == Some(Float::Left) { 0 } else { 1 };
-
-            if let Some(ref mut floating_rects) = draw_state.floats.get_mut(&page_index) {
-                if let Some(orect) = floating_rects.iter().rev()
-                                                   .find(|orect| orect.max.y > y_min &&
-                                                                 (orect.min.x - style.start_x).signum() == side) {
-                    y_min = orect.max.y;
+            if let Some(floating_rects) = draw_state.floats.get(&page_index) {
+                for rect in floating_rects {
+                    let same_side = (element.side == Float::Left && rect.min.x <= style.start_x) ||
+                                    (element.side == Float::Right && rect.max.x >= style.end_x);
+                    let too_wide = rect.width() as i32 + element.width + horiz_margin > line_width;
+                    if rect.max.y > y_min && (same_side || too_wide) {
+                        y_min = rect.max.y;
+                    }
                 }
             }
-
-            let max_height = 2 * (root_data.rect.max.y - space_bottom - y_min) / 3;
-            if height + vert_margin > max_height {
-                let ratio = (max_height - vert_margin) as f32 / height as f32;
-                element.scale *= ratio;
-                height = max_height - vert_margin;
-                width = (ratio * width as f32).round() as i32;
-            }
-
-            if width > 0 && height > 0 {
-                let mut rect = if element.float == Some(Float::Left) {
-                    rect![style.start_x, y_min,
-                          style.start_x + width + horiz_margin,
-                          y_min + height + vert_margin]
-                } else {
-                    rect![style.end_x - width - horiz_margin, y_min,
-                          style.end_x, y_min + height + vert_margin]
-                };
-
-                let floating_rects = draw_state.floats.entry(page_index).or_default();
-                floating_rects.push(rect);
-
-                rect.shrink(&element.margin);
-                page.push(DrawCommand::Image(ImageCommand {
-                    offset: element.offset + root_data.start_offset,
-                    position: rect.min,
-                    rect,
-                    scale: element.scale,
-                    path: element.path,
-                    uri: element.uri,
-                }));
+            let x_min = if element.side == Float::Left {
+                style.start_x
+            } else {
+                style.end_x - element.width - horiz_margin
+            };
+            let exclusion = rect![x_min, y_min,
+                                  x_min + (element.width + horiz_margin).max(0),
+                                  y_min + (element.height + vert_margin).max(0)];
+            draw_state.floats.entry(page_index).or_default().push(exclusion);
+            let origin = pt!(x_min + element.margin.left, y_min + element.margin.top);
+            for mut command in element.commands {
+                command.translate(origin);
+                command.add_offset(root_data.start_offset);
+                if let Some(rect) = command.rect() {
+                    if let Some(pr) = page_rect.as_mut() {
+                        pr.absorb(&rect);
+                    } else {
+                        page_rect = Some(rect);
+                    }
+                }
+                page.push(command);
             }
         }
 
-        let para_shape = if let Some(floating_rects) = draw_state.floats.get(&page_index) {
+        if items.is_empty() {
+            // Floats do not advance the normal flow. The next paragraph can
+            // occupy the space alongside a float-only paragraph.
+            position.y -= space_top;
+            rects.push(page_rect);
+            display_list.push(page);
+            return;
+        }
+
+        let mut para_shape = if let Some(floating_rects) = draw_state.floats.get(&page_index) {
             let max_lines = (root_data.rect.max.y - position.y + space_top) / style.line_height;
             let mut para_shape = Vec::new();
             for index in 0..max_lines {
@@ -1136,6 +1333,21 @@ impl Engine {
             vec![(style.start_x, style.end_x); 2]
         };
 
+        // A full-width float leaves no line beside it. Start the paragraph
+        // below it instead of cropping words to a zero-width line.
+        let skipped_lines = para_shape.iter().take_while(|(a, b)| b <= a).count();
+        if skipped_lines > 0 {
+            position.y += skipped_lines as i32 * style.line_height;
+            para_shape.drain(..skipped_lines);
+            if position.y > root_data.rect.max.y - space_bottom {
+                rects.push(page_rect.take());
+                display_list.push(page);
+                page = Vec::new();
+                position.y = root_data.rect.min.y + space_top;
+                para_shape = vec![(style.start_x, style.end_x); 2];
+            }
+        }
+
         let mut line_lengths: Vec<i32> = para_shape.iter().map(|(a, b)| b - a).collect();
         line_lengths[0] -= text_indent;
 
@@ -1154,6 +1366,26 @@ impl Engine {
 
         if bps.is_empty() {
             bps = standard_fit(&items, &line_lengths, self.stretch_tolerance);
+        }
+
+        if bps.is_empty() {
+            if let Some(last_narrow_line) = para_shape.iter().rposition(|(a, b)| b - a < line_width) {
+                // An unbreakable word may not fit beside a wide float. Move
+                // the text below the float before considering glyph cropping.
+                position.y += (last_narrow_line + 1) as i32 * style.line_height;
+                if position.y > root_data.rect.max.y - space_bottom {
+                    rects.push(page_rect.take());
+                    display_list.push(page);
+                    page = Vec::new();
+                    position.y = root_data.rect.min.y + space_top;
+                }
+                para_shape = vec![(style.start_x, style.end_x); 2];
+                line_lengths = vec![line_width - text_indent, line_width];
+                bps = total_fit(&items, &line_lengths, self.stretch_tolerance, 0);
+                if bps.is_empty() {
+                    bps = standard_fit(&items, &line_lengths, self.stretch_tolerance);
+                }
+            }
         }
 
         if bps.is_empty() {
@@ -1380,6 +1612,7 @@ impl Engine {
                                     (element.width, element.height, pt, element.scale)
                                 };
 
+                                let pt = pt + element.relative_offset;
                                 let rect = rect![pt, pt + pt!(w, h)];
 
                                 if let Some(pr) = page_rect.as_mut() {
@@ -1710,6 +1943,11 @@ impl Engine {
                     font.set_size(font_size, self.dpi);
                     font.render(&mut fb, *color, &plan, position);
                 },
+                DrawCommand::Background(BackgroundCommand { position, rect, color, .. }) => {
+                    let min = Point::from(scale_factor * Vec2::from(*position));
+                    let max = Point::from(scale_factor * Vec2::from(*position + pt!(rect.width() as i32, rect.height() as i32)));
+                    fb.draw_rectangle(&rect![min, max], *color);
+                },
                 DrawCommand::Image(ImageCommand { position, path, scale, .. }) => {
                     if let Ok(buf) = resource_fetcher.fetch(path) {
                         if let Some((pixmap, _)) = PdfOpener::new().and_then(|opener| {
@@ -1756,58 +1994,239 @@ fn format_list_prefix(kind: ListStyleType, index: usize) -> Option<String> {
     }
 }
 
-fn default_fonts() -> Result<Fonts, Error> {
+fn default_fonts(directory: &Path) -> Result<Fonts, Error> {
     let opener = FontOpener::new()?;
     let mut fonts = Fonts {
-        serif: if Path::new("fonts/book-serif-Regular.ttf").exists() {
+        serif: if directory.join("book-serif-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-serif-Regular.ttf")?,
-                italic: opener.open("fonts/book-serif-Italic.ttf")?,
-                bold: opener.open("fonts/book-serif-Bold.ttf")?,
-                bold_italic: opener.open("fonts/book-serif-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("book-serif-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-serif-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-serif-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("book-serif-BoldItalic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/LibertinusSerif-Regular.otf")?,
-                italic: opener.open("fonts/LibertinusSerif-Italic.otf")?,
-                bold: opener.open("fonts/LibertinusSerif-Bold.otf")?,
-                bold_italic: opener.open("fonts/LibertinusSerif-BoldItalic.otf")?,
+                regular: opener.open(directory.join("LibertinusSerif-Regular.otf"))?,
+                italic: opener.open(directory.join("LibertinusSerif-Italic.otf"))?,
+                bold: opener.open(directory.join("LibertinusSerif-Bold.otf"))?,
+                bold_italic: opener.open(directory.join("LibertinusSerif-BoldItalic.otf"))?,
             }
         },
-        sans_serif: if Path::new("fonts/book-sans-Regular.ttf").exists() {
+        sans_serif: if directory.join("book-sans-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-sans-Regular.ttf")?,
-                italic: opener.open("fonts/book-sans-Italic.ttf")?,
-                bold: opener.open("fonts/book-sans-Bold.ttf")?,
-                bold_italic: opener.open("fonts/book-sans-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("book-sans-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-sans-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-sans-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("book-sans-BoldItalic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/NotoSans-Regular.ttf")?,
-                italic: opener.open("fonts/NotoSans-Italic.ttf")?,
-                bold: opener.open("fonts/NotoSans-Bold.ttf")?,
-                bold_italic: opener.open("fonts/NotoSans-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("NotoSans-Regular.ttf"))?,
+                italic: opener.open(directory.join("NotoSans-Italic.ttf"))?,
+                bold: opener.open(directory.join("NotoSans-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("NotoSans-BoldItalic.ttf"))?,
             }
         },
-        monospace: if Path::new("fonts/book-monospace-Regular.ttf").exists() {
+        monospace: if directory.join("book-monospace-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-monospace-Regular.ttf")?,
-                italic: opener.open("fonts/book-monospace-Italic.ttf")?,
-                bold: opener.open("fonts/book-monospace-Regular.ttf")?,
-                bold_italic: opener.open("fonts/book-monospace-Italic.ttf")?,
+                regular: opener.open(directory.join("book-monospace-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-monospace-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-monospace-Regular.ttf"))?,
+                bold_italic: opener.open(directory.join("book-monospace-Italic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
-                bold: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                bold_italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
+                regular: opener.open(directory.join("SourceCodeVariable-Roman.otf"))?,
+                italic: opener.open(directory.join("SourceCodeVariable-Italic.otf"))?,
+                bold: opener.open(directory.join("SourceCodeVariable-Roman.otf"))?,
+                bold_italic: opener.open(directory.join("SourceCodeVariable-Italic.otf"))?,
             }
         },
-        cursive: opener.open("fonts/Parisienne-Regular.ttf")?,
-        fantasy: opener.open("fonts/Delius-Regular.ttf")?,
+        cursive: opener.open(directory.join("Parisienne-Regular.ttf"))?,
+        fantasy: opener.open(directory.join("Delius-Regular.ttf"))?,
     };
     fonts.monospace.bold.set_variations(&["wght=600"]);
     fonts.monospace.bold_italic.set_variations(&["wght=600"]);
     Ok(fonts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::css::CssParser;
+    use super::super::xml::XmlParser;
+
+    struct TestImages;
+
+    impl ResourceFetcher for TestImages {
+        fn fetch(&mut self, name: &str) -> Result<Vec<u8>, Error> {
+            assert_eq!(name, "cap.svg");
+            Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="black"/></svg>"#.to_vec())
+        }
+    }
+
+    fn layout(markup: &str, css: &str, height: i32, y: i32) -> (Engine, Vec<Page>) {
+        let mut engine = Engine::new();
+        engine.layout(240, height as u32, 12.0, 72);
+        engine.fonts = Some(default_fonts(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts")).unwrap());
+        let mut tree = XmlParser::new(markup).parse();
+        tree.wrap_lost_inlines();
+        let mut stylesheet = CssParser::new(css).parse();
+        stylesheet.sort();
+        let root = RootData { start_offset: 1000, spine_dir: PathBuf::new(), rect: rect![0, 0, 240, height] };
+        let style = StyleData {
+            font_size: 12.0, line_height: 16, start_x: 0, end_x: 240, width: 240,
+            text_align: TextAlign::Left, ..StyleData::default()
+        };
+        let mut state = DrawState { position: pt!(0, y), ..DrawState::default() };
+        let mut pages = vec![Vec::new()];
+        engine.build_display_list(tree.root(), &style, &LoopContext::default(), &stylesheet, &root, &mut TestImages, &mut state, &mut pages);
+        (engine, pages)
+    }
+
+    fn texts(pages: &[Page]) -> Vec<&TextCommand> {
+        pages.iter().flatten().filter_map(|command| match command {
+            DrawCommand::Text(text) => Some(text), _ => None,
+        }).collect()
+    }
+
+    const LINES: &str = "one<br/>two<br/>three<br/>four<br/>five";
+
+    #[test]
+    fn text_dropcap_wraps_then_returns_to_full_width() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap { float:left; font-size:3em; line-height:1; padding:2px; margin-right:4px; background:gray; }", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two", "three", "four", "five"]);
+        assert_eq!(words[0].font_size, 36 * 64);
+        assert_eq!(words[1].font_size, 12 * 64);
+        assert!(words[1..4].iter().all(|t| t.position.x > 0));
+        assert_eq!(words[4].position.x, 0);
+        assert!(words[0].offset >= 1000);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Background(..))));
+    }
+
+    #[test]
+    fn image_wrapper_preserves_padding_height_and_margin() {
+        let markup = format!("<p><span class='cap'><img src='cap.svg' style='width:100%; display:block'/></span>{LINES}</p>");
+        let (mut engine, pages) = layout(&markup, ".cap {float:left; width:3em; height:3em; padding:4px; margin-right:4px; background:gray}", 180, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.position, pt!(3, 3)); // CSS pixels are 0.75pt.
+        assert_eq!((image.rect.width(), image.rect.height()), (36, 36));
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 45); // 36 + 6 padding + 3 margin.
+        assert_eq!(words[3].position.x, 0);
+        let pixmap = engine.render_page(&pages[0], 1.0, 1, &mut TestImages).unwrap();
+        assert!(pixmap.data.iter().any(|&sample| sample == 0));
+    }
+
+    #[test]
+    fn right_float_and_negative_bottom_margin() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:right; width:3em; height:3em; font-size:1em; margin-bottom:-1em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 204);
+        assert!(words[1..].iter().all(|t| t.position.x == 0));
+        assert!(words[1..3].iter().all(|t| t.rect.max.x <= 204));
+    }
+
+    #[test]
+    fn dropcap_and_opening_lines_move_to_next_page_together() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>one<br/>two</p>", ".cap {float:left; font-size:3em; line-height:1}", 100, 80);
+        assert_eq!(pages.len(), 2);
+        assert!(pages[0].is_empty());
+        assert_eq!(texts(&pages[1..]).iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two"]);
+        assert!(texts(&pages[1..])[1].position.x > 0);
+    }
+
+    #[test]
+    fn float_only_paragraph_wraps_following_paragraph() {
+        let (_, pages) = layout("<p><span class='cap'>B</span></p><p>one<br/>two<br/>three<br/>four</p>", ".cap {float:left; width:3em; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].position.x, 36);
+        assert_eq!(words[4].position.x, 0);
+    }
+
+    #[test]
+    fn full_width_float_does_not_erase_following_text() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>one<br/>two</p>", ".cap {float:left; width:100%; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two"]);
+        assert!(words[1].position.y >= 36);
+        assert_eq!(words[1].position.x, 0);
+    }
+
+    #[test]
+    fn direct_floated_image_still_wraps_text() {
+        let (_, pages) = layout("<p><img src='cap.svg' style='float:left; height:3em; margin-right:4px'/>one<br/>two<br/>three<br/>four</p>", "", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 39);
+        assert_eq!(words[3].position.x, 0);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Image(..))));
+    }
+    #[test]
+    fn narrow_space_beside_float_preserves_unbreakable_word() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>abcdefghijk</p>", ".cap {float:left; width:19em; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].text, "abcdefghijk");
+        assert!(words[1].rect.width() > 12);
+        assert_eq!(words[1].position.x, 0);
+        assert!(words[1].position.y >= 36);
+    }
+
+    #[test]
+    fn negative_bottom_margin_releases_lines_early() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:left; width:3em; height:3em; margin-bottom:-1em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].position.x, 36);
+        assert_eq!(words[2].position.x, 36);
+        assert_eq!(words[3].position.x, 0);
+    }
+
+    #[test]
+    fn nested_styled_letter_sets_float_natural_height() {
+        let markup = format!("<p><span class='cap'><b>B</b></span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:left} b {font-size:3em; line-height:1}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].font_size, 36 * 64);
+        assert!(words[1..4].iter().all(|text| text.position.x > 0));
+        assert_eq!(words[4].position.x, 0);
+        assert!(words[0].position.y > words[1].position.y);
+    }
+
+    #[test]
+    fn first_letter_float_styles_only_the_initial() {
+        for selector in ["p::first-letter", "p:first-letter"] {
+            let css = format!("{selector} {{float:left; font-size:3em; line-height:1; margin-right:4px}}");
+            let (_, pages) = layout("<p>Behind the walls<br/>two<br/>three<br/>four</p>", &css, 180, 0);
+            let words = texts(&pages);
+            assert_eq!(words[0].text, "B");
+            assert_eq!(words[0].font_size, 36 * 64);
+            assert_eq!(words[1].text, "ehind");
+            assert_eq!(words[1].font_size, 12 * 64);
+            assert!(words[1].position.x > 0);
+            assert_eq!(words.last().unwrap().position.x, 0);
+            assert_eq!(words[1].offset, words[0].offset + 1);
+        }
+    }
+
+    #[test]
+    fn first_letter_includes_quotes_and_combining_accents() {
+        let (_, pages) = layout("<p>“E\u{301}lan” continued</p>", "p::first-letter {float:left; font-size:3em; line-height:1}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].text, "“E\u{301}");
+        assert_eq!(words[1].text, "lan”");
+        assert_eq!(words[1].offset, words[0].offset + "“E\u{301}".len());
+    }
+
+    #[test]
+    fn block_float_wraps_following_paragraph() {
+        let (_, pages) = layout("<div class='cap'><img src='cap.svg' style='width:3em; display:block'/></div><p>one<br/>two<br/>three<br/>four</p>", ".cap {float:left; width:3em; height:3em; margin-right:4px}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 39);
+        assert_eq!(words[3].position.x, 0);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Image(..))));
+    }
+
 }
