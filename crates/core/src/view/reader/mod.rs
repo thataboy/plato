@@ -4847,6 +4847,7 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::Quit) |
+            Event::Select(EntryId::Restart) |
             Event::Select(EntryId::Reboot) |
             Event::Back |
             Event::Suspend => {

@@ -1,6 +1,6 @@
 #! /bin/sh
 
-WORKDIR=$(dirname "$0")
+WORKDIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 cd "$WORKDIR" || exit 1
 
 PLATO_SET_FRAMEBUFFER_DEPTH=1
@@ -105,14 +105,66 @@ fi
 
 [ "$ORIG_BPP" ] && ./bin/utils/fbdepth -q -d 8
 
-LIBC_FATAL_STDERR_=1 ./plato >> info.log 2>&1
+# Keep the supervisor off the shared volume. Replacing this shell also
+# releases the open launcher script before Plato can export the volume.
+cd / || exit 1
+exec /bin/sh -c '
+WORKDIR=$1
+ORIG_BPP=$2
+USB_RESULT=
+export PLATO_USB_SUPERVISOR=1
 
-[ "$ORIG_BPP" ] && ./bin/utils/fbdepth -q -d "$ORIG_BPP"
+usb_session() {
+	USB_DIR=$(mktemp -d /tmp/plato-usb.XXXXXX) || return 1
+	if ! cp "$WORKDIR/scripts/usb-enable.sh" "$WORKDIR/scripts/usb-disable.sh" \
+	        "$WORKDIR/scripts/usb-session.sh" "$USB_DIR/"; then
+		rm -rf "$USB_DIR"
+		return 1
+	fi
+
+	(cd "$USB_DIR" && ./usb-session.sh) >"$USB_DIR/session.log" 2>&1
+	USB_STATUS=$?
+	if [ "$USB_STATUS" -eq 3 ]; then
+		logger -t plato-supervisor "USB storage could not be restored. See $USB_DIR/session.log."
+		return 3
+	fi
+	cat "$USB_DIR/session.log" >> "$WORKDIR/info.log"
+	rm -rf "$USB_DIR"
+	return "$USB_STATUS"
+}
+
+while :; do
+	# Clear stale requests before starting. A crash must not cause a loop.
+	rm -f /tmp/plato_restart /tmp/plato_usb_share || break
+	(
+		cd "$WORKDIR" || exit 1
+		PLATO_USB_RESULT="$USB_RESULT" LIBC_FATAL_STDERR_=1 exec ./plato >> info.log 2>&1
+	)
+	USB_RESULT=
+	[ -e /tmp/reboot ] && break
+	[ -e /tmp/power_off ] && break
+	if [ -e /tmp/plato_usb_share ]; then
+		usb_session
+		case $? in
+			0)
+				[ ! -e /mnt/onboard/.kobo/KoboRoot.tgz ] || exec reboot
+				USB_RESULT=done
+				;;
+			3) exit 1 ;;
+			*) USB_RESULT=failed ;;
+		esac
+		continue
+	fi
+	[ -e /tmp/plato_restart ] || break
+done
+
+[ "$ORIG_BPP" ] && "$WORKDIR/bin/utils/fbdepth" -q -d "$ORIG_BPP"
 
 if [ -e /tmp/reboot ] ; then
 	reboot
 elif [ -e /tmp/power_off ] ; then
 	poweroff -f
 else
-	./nickel.sh &
+	(cd "$WORKDIR" && exec ./nickel.sh) &
 fi
+' plato-supervisor "$WORKDIR" "${ORIG_BPP:-}"

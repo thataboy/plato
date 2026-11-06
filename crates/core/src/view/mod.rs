@@ -645,6 +645,8 @@ pub enum EntryId {
     New,
     Refresh,
     TakeScreenshot,
+    ConnectUsb,
+    Restart,
     Reboot,
     Quit,
 }

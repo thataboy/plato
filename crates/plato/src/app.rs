@@ -59,7 +59,6 @@ const POWER_INPUTS: [&str; 3] = ["/dev/input/by-path/platform-bd71828-pwrkey.6.a
                                  "/dev/input/by-path/platform-bd71828-pwrkey.4.auto-event",
                                  "/dev/input/by-path/platform-bd71828-pwrkey-event"];
 
-const KOBO_UPDATE_BUNDLE: &str = "/mnt/onboard/.kobo/KoboRoot.tgz";
 
 const CLOCK_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const BATTERY_REFRESH_INTERVAL: Duration = Duration::from_secs(299);
@@ -203,6 +202,8 @@ fn set_wifi(enable: bool, context: &mut Context) {
 #[derive(PartialEq)]
 enum ExitStatus {
     Quit,
+    Restart,
+    Share,
     Reboot,
     PowerOff,
 }
@@ -227,7 +228,13 @@ pub fn run() -> Result<(), Error> {
 
     context.plugged = context.battery.status().is_ok_and(|v| v[0].is_wired());
 
-    if context.settings.import.startup_trigger {
+    let usb_result = env::var("PLATO_USB_RESULT").unwrap_or_default();
+    let import = if usb_result == "done" {
+        context.settings.import.unshare_trigger
+    } else {
+        context.settings.import.startup_trigger
+    };
+    if import {
         context.batch_import();
     }
     context.load_dictionaries();
@@ -323,7 +330,6 @@ pub fn run() -> Result<(), Error> {
                                                      &mut rq, &mut context)?);
 
     let mut updating = Vec::new();
-    let current_dir = env::current_dir()?;
 
     println!("\n\n{} is running on a Kobo {}.", APP_NAME,
                                             CURRENT_DEVICE.model);
@@ -335,6 +341,9 @@ pub fn run() -> Result<(), Error> {
     schedule_task(TaskId::CheckBattery, Event::CheckBattery,
                   BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
     tx.send(Event::WakeUp).ok();
+    if usb_result == "failed" {
+        tx.send(Event::Notify("Could not start USB sharing. See info.log.".to_string())).ok();
+    }
 
     while let Ok(evt) = rx.recv() {
         match evt {
@@ -468,51 +477,15 @@ pub fn run() -> Result<(), Error> {
                             continue;
                         }
 
-                        if context.shared {
-                            context.shared = false;
-                            Command::new("scripts/usb-disable.sh").status().ok();
-                            env::set_current_dir(&current_dir)
-                                .map_err(|e| eprintln!("Can't set current directory to {}: {:#}.", current_dir.display(), e))
-                                .ok();
-                            let path = Path::new(SETTINGS_PATH);
-                            if let Ok(settings) = load_toml::<Settings, _>(path)
-                                                            .map_err(|e| eprintln!("Can't load settings: {:#}.", e)) {
-                                context.settings = settings;
+                        context.plugged = false;
+                        schedule_task(TaskId::CheckBattery, Event::CheckBattery,
+                                      BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
+                        if tasks.iter().any(|task| task.id == TaskId::Suspend) {
+                            if !context.covered {
+                                resume(TaskId::Suspend, &mut tasks, view.as_mut(), &tx, &mut rq, &mut context);
                             }
-                            if context.settings.wifi {
-                                Command::new("scripts/wifi-enable.sh")
-                                        .status()
-                                        .ok();
-                            }
-                            if context.settings.frontlight {
-                                let levels = context.settings.frontlight_levels;
-                                context.frontlight.set_warmth(levels.warmth);
-                                context.frontlight.set_intensity(levels.intensity);
-                            }
-                            if let Some(index) = locate::<Intermission>(view.as_ref()) {
-                                let rect = *view.child(index).rect();
-                                view.children_mut().remove(index);
-                                rq.add(RenderData::expose(rect, UpdateMode::Full));
-                            }
-                            if Path::new(KOBO_UPDATE_BUNDLE).exists() {
-                                tx.send(Event::Select(EntryId::Reboot)).ok();
-                            }
-                            context.library.reload();
-                            if context.settings.import.unshare_trigger {
-                                context.batch_import();
-                            }
-                            view.handle_event(&Event::Reseed, &tx, &mut bus, &mut rq, &mut context);
                         } else {
-                            context.plugged = false;
-                            schedule_task(TaskId::CheckBattery, Event::CheckBattery,
-                                          BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
-                            if tasks.iter().any(|task| task.id == TaskId::Suspend) {
-                                if !context.covered {
-                                    resume(TaskId::Suspend, &mut tasks, view.as_mut(), &tx, &mut rq, &mut context);
-                                }
-                            } else {
-                                tx.send(Event::BatteryTick).ok();
-                            }
+                            tx.send(Event::BatteryTick).ok();
                         }
                     },
                     DeviceEvent::RotateScreen(n) => {
@@ -630,11 +603,17 @@ pub fn run() -> Result<(), Error> {
                     }
                 }
             },
+            Event::Select(EntryId::ConnectUsb) |
             Event::PrepareShare => {
                 if context.shared {
                     continue;
                 }
+                if env::var_os("PLATO_USB_SUPERVISOR").is_none() {
+                    tx.send(Event::Notify("USB sharing requires the updated Plato launcher.".to_string())).ok();
+                    continue;
+                }
 
+                context.shared = true;
                 tasks.clear();
                 view.handle_event(&Event::Back, &tx, &mut bus, &mut rq, &mut context);
                 while let Some(mut item) = history.pop() {
@@ -649,16 +628,6 @@ pub fn run() -> Result<(), Error> {
                     }
                     view = item.view;
                 }
-                let path = Path::new(SETTINGS_PATH);
-                save_toml(&context.settings, path)
-                         .map_err(|e| eprintln!("Can't save settings: {:#}.", e)).ok();
-                context.library.flush();
-
-                if context.settings.frontlight {
-                    context.settings.frontlight_levels = context.frontlight.levels();
-                    context.frontlight.set_intensity(0.0);
-                    context.frontlight.set_warmth(0.0);
-                }
                 if context.settings.wifi {
                     Command::new("scripts/wifi-disable.sh")
                             .status()
@@ -672,12 +641,9 @@ pub fn run() -> Result<(), Error> {
                 tx.send(Event::Share).ok();
             },
             Event::Share => {
-                if context.shared {
-                    continue;
-                }
-
-                context.shared = true;
-                Command::new("scripts/usb-enable.sh").status().ok();
+                wait_for_all(&mut updating, &mut context);
+                exit_status = ExitStatus::Share;
+                break;
             },
             Event::Gesture(ge) => {
                 match ge {
@@ -959,6 +925,16 @@ pub fn run() -> Result<(), Error> {
                 let notif = Notification::new(msg, &tx, &mut rq, &mut context);
                 view.children_mut().push(Box::new(notif) as Box<dyn View>);
             },
+            Event::Select(EntryId::Restart) => {
+                // Save readers even when another application is on top of
+                // them. Restart must persist their current reading position.
+                view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);
+                for item in &mut history {
+                    item.view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);
+                }
+                exit_status = ExitStatus::Restart;
+                break;
+            },
             Event::Select(EntryId::Reboot) => {
                 exit_status = ExitStatus::Reboot;
                 break;
@@ -994,7 +970,11 @@ pub fn run() -> Result<(), Error> {
         }
     }
 
-    if exit_status == ExitStatus::Quit && !CURRENT_DEVICE.has_gyroscope() && context.display.rotation != initial_rotation {
+    if exit_status == ExitStatus::Restart {
+        wait_for_all(&mut updating, &mut context);
+    }
+
+    if matches!(exit_status, ExitStatus::Quit | ExitStatus::Restart) && !CURRENT_DEVICE.has_gyroscope() && context.display.rotation != initial_rotation {
         context.fb.set_rotation(initial_rotation).ok();
     }
 
@@ -1010,6 +990,17 @@ pub fn run() -> Result<(), Error> {
     save_toml(&context.settings, path).context("can't save settings")?;
 
     match exit_status {
+        ExitStatus::Share => {
+            File::create("/tmp/plato_usb_share").context("can't request USB sharing")?;
+            // Settings already contain the live levels for the next launch.
+            if context.settings.frontlight {
+                context.frontlight.set_intensity(0.0);
+                context.frontlight.set_warmth(0.0);
+            }
+        },
+        ExitStatus::Restart => {
+            File::create("/tmp/plato_restart").context("can't request Plato restart")?;
+        },
         ExitStatus::Reboot => {
             File::create("/tmp/reboot").ok();
         },

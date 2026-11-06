@@ -1,12 +1,16 @@
 #! /bin/sh
 
+set -e
+
+RECOVER=${1:-}
+
 grep -q ' /mnt/onboard ' /proc/mounts && exit 1
 
 DISK=/dev/mmcblk
 
 legacy() {
 	PARTITION=${DISK}0p3
-	LOADED_MODULE=$(grep -oE '^g_(file|mass)_storage\b' /proc/modules)
+	LOADED_MODULE=$(grep -oE '^g_(file|mass)_storage\b' /proc/modules || :)
 
 	case "$LOADED_MODULE" in
 		g_file_storage)
@@ -14,12 +18,12 @@ legacy() {
 
 			case "$PLATFORM" in
 				mx6[su]ll-ntx)
-					rmmod usb_f_mass_storage
-					rmmod libcomposite
-					rmmod configfs
+					rmmod usb_f_mass_storage || :
+					rmmod libcomposite || :
+					rmmod configfs || :
 					;;
 				*)
-					[ "$PLATFORM" != mx6sl-ntx ] && rmmod arcotg_udc
+					[ "$PLATFORM" != mx6sl-ntx ] && rmmod arcotg_udc || :
 					;;
 			esac
 			;;
@@ -27,7 +31,7 @@ legacy() {
 			rmmod g_mass_storage
 			;;
 		*)
-			exit 1
+			[ "$RECOVER" = --recover ] || exit 1
 			;;
 	esac
 
@@ -38,15 +42,19 @@ mtk() {
 	PARTITION=${DISK}0p12
 	DIR=/sys/kernel/config/usb_gadget/g1
 
-	mkdir -p "$DIR"/strings/0x409
-	echo "" > "$DIR"/UDC
+	if [ -e "$DIR"/UDC ]; then
+		if [ -n "$(cat "$DIR"/UDC)" ]; then
+			echo "" > "$DIR"/UDC
+		fi
+	else
+		[ "$RECOVER" = --recover ] || exit 1
+	fi
 
-	rm "$DIR"/configs/c.1/mass_storage.0
-	rmdir "$DIR"/configs/c.1/strings/0x409
-	rmdir "$DIR"/configs/c.1
-	rmdir "$DIR"/functions/mass_storage.0
-	rmdir "$DIR"/strings/0x409
-	rmdir "$DIR"
+	rm -f "$DIR"/configs/c.1/mass_storage.0
+	for entry in configs/c.1/strings/0x409 configs/c.1 functions/mass_storage.0 strings/0x409; do
+		[ ! -d "$DIR/$entry" ] || rmdir "$DIR/$entry" || :
+	done
+	[ ! -d "$DIR" ] || rmdir "$DIR" || :
 }
 
 case "$PLATFORM" in
@@ -60,12 +68,11 @@ esac
 
 MOUNT_ARGS="noatime,nodiratime,shortname=mixed,utf8"
 
-FS_CORRUPT=0
-dosfsck -a -w "$PARTITION" || dosfsck -a -w "$PARTITION" || FS_CORRUPT=1
-[ "$FS_CORRUPT" -eq 1 ] && reboot
-
-mount -o "$MOUNT_ARGS" -t vfat "$PARTITION" /mnt/onboard || reboot
+dosfsck -a -w "$PARTITION" || dosfsck -a -w "$PARTITION"
+mount -o "$MOUNT_ARGS" -t vfat "$PARTITION" /mnt/onboard
 
 PARTITION=${DISK}1p1
 
-[ -e "$PARTITION" ] && mount -o "$MOUNT_ARGS" -t vfat "$PARTITION" /mnt/sd
+if [ -e "$PARTITION" ] && ! grep -q ' /mnt/sd ' /proc/mounts; then
+	mount -o "$MOUNT_ARGS" -t vfat "$PARTITION" /mnt/sd
+fi

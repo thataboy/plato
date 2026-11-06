@@ -117,6 +117,8 @@ pub fn toggle_main_menu(view: &mut dyn View, rect: Rectangle, enable: Option<boo
                                EntryKind::SubMenu("Applications".to_string(), apps),
                                EntryKind::Separator];
 
+        entries.push(EntryKind::Command("USB Connect".to_string(), EntryId::ConnectUsb));
+        entries.push(EntryKind::Command("Restart Plato".to_string(), EntryId::Restart));
         entries.push(EntryKind::Command("Reboot".to_string(), EntryId::Reboot));
         entries.push(EntryKind::Command("Quit".to_string(), EntryId::Quit));
 

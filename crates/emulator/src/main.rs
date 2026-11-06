@@ -4,6 +4,7 @@ use std::fs::File;
 use std::sync::mpsc;
 use std::collections::VecDeque;
 use std::path::Path;
+use std::os::unix::process::CommandExt;
 use std::time::Duration;
 use plato_core::anyhow::{Error, Context as ResultExt};
 use plato_core::chrono::Local;
@@ -231,6 +232,7 @@ impl Framebuffer for FBCanvas {
 }
 
 fn main() -> Result<(), Error> {
+    let mut restart = false;
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let (width, height) = CURRENT_DEVICE.dims;
@@ -600,6 +602,14 @@ fn main() -> Result<(), Error> {
                 Event::Device(DeviceEvent::RotateScreen(n)) => {
                     tx.send(Event::Select(EntryId::Rotate(n))).ok();
                 },
+                Event::Select(EntryId::ConnectUsb) => {
+                    let notif = Notification::new("USB sharing is available on the Kobo.".to_string(), &tx, &mut rq, &mut context);
+                    view.children_mut().push(Box::new(notif) as Box<dyn View>);
+                },
+                Event::Select(EntryId::Restart) => {
+                    restart = true;
+                    break 'outer;
+                },
                 Event::Select(EntryId::Quit) => {
                     break 'outer;
                 },
@@ -632,6 +642,17 @@ fn main() -> Result<(), Error> {
 
     let path = Path::new(SETTINGS_PATH);
     save_toml(&context.settings, path).context("can't save settings")?;
+
+    if restart {
+        drop(view);
+        drop(context);
+        drop(video_subsystem);
+        drop(sdl_context);
+        let error = std::process::Command::new(std::env::current_exe()?)
+                    .args(std::env::args_os().skip(1))
+                    .exec();
+        return Err(error).context("can't restart Plato emulator");
+    }
 
     Ok(())
 }
