@@ -145,7 +145,7 @@ impl Engine {
     }
 
     pub fn build_display_list(&mut self, node: NodeRef, parent_style: &StyleData, loop_context: &LoopContext, stylesheet: &StyleSheet, root_data: &RootData, resource_fetcher: &mut dyn ResourceFetcher, draw_state: &mut DrawState, display_list: &mut Vec<Page>) -> ChildArtifact {
-        // TODO: border, background, text-transform, tab-size, text-decoration.
+        // TODO: text-transform, tab-size, text-decoration.
         let mut style = StyleData::default();
         let mut rects: Vec<Option<Rectangle>> = vec![None];
 
@@ -159,6 +159,7 @@ impl Engine {
 
         if style.display == Display::None || style.visibility != Visibility::Visible {
             return ChildArtifact {
+                cell_style: None,
                 sibling_style: SiblingStyle {
                     padding: Edge::default(),
                     margin: Edge::default(),
@@ -175,7 +176,7 @@ impl Engine {
             flow_style.margin = Edge::default();
             flow_style.padding = Edge::default();
             self.place_paragraphs(&inlines, &flow_style, root_data, &markers, resource_fetcher, draw_state, &mut rects, display_list);
-            return ChildArtifact { sibling_style: SiblingStyle::default(), rects };
+            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle::default(), rects };
         }
 
         style.font_style = parent_style.font_style;
@@ -242,6 +243,8 @@ impl Engine {
                            .and_then(|value| parse_color(value))
                            .unwrap_or(parent_style.color);
 
+        self.box_style(&props, &mut style);
+
         style.text_indent = props.get("text-indent")
                                  .and_then(|value| parse_text_indent(value, style.font_size, self.font_size,
                                                                  parent_style.width, self.dpi))
@@ -291,6 +294,16 @@ impl Engine {
                                        style.font_size, self.font_size, parent_style.width, self.dpi);
         }
 
+        if matches!(node.tag_name(), Some("td" | "th")) {
+            // CSS margins do not apply to table cells.
+            style.margin = Edge::default();
+        }
+
+        style.padding.top += style.borders[0].width;
+        style.padding.right += style.borders[1].width;
+        style.padding.bottom += style.borders[2].width;
+        style.padding.left += style.borders[3].width;
+
         style.width = props.get("width")
                            .and_then(|value| parse_width(value, style.font_size, self.font_size,
                                                          parent_style.width, self.dpi))
@@ -329,6 +342,17 @@ impl Engine {
             }
         }
 
+        if node.tag_name() == Some("table") {
+            let preferred = draw_state.max_column_widths.iter().sum::<i32>();
+            let table_width = if style.width > 0 { style.width.min(width) } else { preferred.min(width) }.max(0);
+            if draw_state.center_table {
+                style.start_x += (width - table_width) / 2;
+                draw_state.center_table = false;
+            }
+            width = table_width;
+            style.end_x = style.start_x + width;
+        }
+
         style.width = width;
 
         if props.get("page-break-before").map(String::as_str) == Some("always") {
@@ -336,7 +360,46 @@ impl Engine {
             draw_state.position.y = root_data.rect.min.y;
         }
 
+        if node.tag_name() == Some("table") {
+            // Cell margins do not collapse with their table. Consume the
+            // table's top margin here rather than passing it into the cells.
+            draw_state.position.y += style.margin.top;
+            style.margin.top = 0;
+        }
+
         draw_state.position.y += style.padding.top;
+
+        let first_page = display_list.len() - 1;
+        let first_command = display_list[first_page].len();
+        let box_top = draw_state.position.y - style.padding.top + style.margin.top;
+
+        if node.tag_name() == Some("hr") {
+            let legacy_length = |value: &str| {
+                if value.parse::<f32>().is_ok() { format!("{}px", value) } else { value.to_string() }
+            };
+            let width = props.get("width").cloned().or_else(|| node.attribute("width").map(legacy_length))
+                .and_then(|v| parse_width(&v, style.font_size, self.font_size, parent_style.width, self.dpi))
+                .unwrap_or(style.width).clamp(0, style.width.max(0));
+            let height = props.get("height").cloned().or_else(|| node.attribute("size").map(legacy_length))
+                .and_then(|v| parse_height(&v, style.font_size, self.font_size, parent_style.width, self.dpi))
+                .unwrap_or_else(|| parse_length("2px", style.font_size, self.font_size, self.dpi).unwrap()).max(0);
+            let x = style.start_x + match node.attribute("align").unwrap_or("center") {
+                "left" => 0, "right" => style.width - width, _ => (style.width - width) / 2,
+            };
+            let mut y = box_top;
+            let total_height = height + style.padding.top + style.padding.bottom;
+            if y + total_height > root_data.rect.max.y && y > root_data.rect.min.y {
+                display_list.push(Vec::new());
+                y = root_data.rect.min.y;
+            }
+            let rect = rect![x - style.padding.left, y, x + width + style.padding.right, y + total_height];
+            if !props.keys().any(|key| key.starts_with("border-")) && style.background.is_none() {
+                style.background = Some(style.color);
+            }
+            display_list.last_mut().unwrap().extend(box_commands(&style, rect, root_data.start_offset + node.offset(), true, true));
+            draw_state.position.y = rect.max.y;
+            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle { padding: style.padding, margin: style.margin }, rects: vec![Some(rect)] };
+        }
 
         let has_blocks = node.children().any(|n| n.is_block());
 
@@ -363,7 +426,9 @@ impl Engine {
                                                    width as f32).round() as i32)
                                           .collect();
                         } else if max_row_width <= width {
-                            draw_state.column_widths = draw_state.max_column_widths.clone();
+                            draw_state.column_widths = draw_state.max_column_widths.iter()
+                                .map(|w| if max_row_width > 0 { ((*w as f32 / max_row_width as f32) * width as f32).round() as i32 } else { 0 })
+                                .collect();
                         } else {
                             let dw = (width - min_row_width) as f32;
                             let dr = (max_row_width - min_row_width) as f32;
@@ -393,6 +458,7 @@ impl Engine {
                     let mut final_page = (0, position);
                     let page_index = display_list.len() - 1;
                     let mut index = 0;
+                    let mut cells = Vec::new();
 
                     // TODO: rowspan, vertical-align
                     for child in node.children().filter(|child| child.is_element()) {
@@ -402,13 +468,14 @@ impl Engine {
 
                         let colspan = child.attribute("colspan")
                                            .and_then(|v| v.parse().ok())
-                                           .unwrap_or(1)
+                                           .unwrap_or(1).max(1)
                                            .min(draw_state.column_widths.len()-index);
                         let column_width = draw_state.column_widths[index..index+colspan]
                                                      .iter().sum::<i32>();
                         let mut child_display_list = vec![Vec::new()];
                         style.start_x = cur_x;
                         style.end_x = cur_x + column_width;
+                        style.width = column_width;
                         draw_state.position = position;
                         let artifact = self.build_display_list(child, &style, &inner_loop_context, stylesheet, root_data, resource_fetcher, draw_state, &mut child_display_list);
                         let pages_count = child_display_list.len();
@@ -417,13 +484,7 @@ impl Engine {
                             final_page = (pages_count, draw_state.position);
                         }
 
-                        for (i, mut pg) in child_display_list.into_iter().enumerate() {
-                            if let Some(page) = display_list.get_mut(page_index+i) {
-                                page.append(&mut pg);
-                            } else {
-                                display_list.push(pg);
-                            }
-                        }
+                        cells.push((child_display_list, artifact.cell_style));
 
                         for (i, rect) in artifact.rects.into_iter().enumerate() {
                             if let Some(page_rect) = rects.get_mut(i) {
@@ -449,8 +510,35 @@ impl Engine {
                         cur_x += column_width;
                     }
 
+                    // All cells occupy the tallest cell's height, even when
+                    // empty or when another cell continues onto another page.
+                    for fragment in 0..final_page.0 {
+                        let offset = cells.iter().filter_map(|(pages, _)| pages.get(fragment))
+                            .filter_map(|page| page.first().map(DrawCommand::offset)).min()
+                            .unwrap_or(root_data.start_offset + node.offset());
+                        let mut row_page = Vec::new();
+                        let top = if fragment == 0 { position.y } else { root_data.rect.min.y };
+                        let bottom = if fragment + 1 == final_page.0 { final_page.1.y } else { root_data.rect.max.y };
+                        for (_, cell_style) in &cells {
+                            if let Some(cell) = cell_style {
+                                let rect = rect![cell.start_x - cell.padding.left, top.max(root_data.rect.min.y),
+                                                 cell.end_x + cell.padding.right, bottom.min(root_data.rect.max.y)];
+                                row_page.extend(box_commands(cell, rect, offset, fragment == 0, fragment + 1 == final_page.0));
+                            }
+                        }
+                        for (pages, _) in &mut cells {
+                            if let Some(page) = pages.get_mut(fragment) { row_page.append(page); }
+                        }
+                        if let Some(page) = display_list.get_mut(page_index + fragment) {
+                            page.append(&mut row_page);
+                        } else {
+                            display_list.push(row_page);
+                        }
+                    }
+
                     style.start_x = start_x;
                     style.end_x = end_x;
+                    style.width = end_x - start_x;
                     draw_state.position = final_page.1;
                 } else {
                     let mut iter = node.children().filter(|child| child.is_element()).peekable();
@@ -505,7 +593,9 @@ impl Engine {
                     markers.push(node.offset());
                 }
                 for child in node.children() {
-                    self.gather_inline_material(child, stylesheet, &style, &root_data.spine_dir, &mut markers, &mut inlines);
+                    let mut inline_style = style.clone();
+                    inline_style.background = None;
+                    self.gather_inline_material(child, stylesheet, &inline_style, &root_data.spine_dir, &mut markers, &mut inlines);
                 }
                 self.apply_first_letter(node, stylesheet, &style, &root_data.spine_dir, &mut inlines);
                 if !inlines.is_empty() {
@@ -531,6 +621,12 @@ impl Engine {
             }
         }
 
+        let empty = rects.is_empty() || rects == [None];
+        let has_box_height = style.height > 0 || style.padding.top + style.padding.bottom > 0;
+        if empty && has_box_height {
+            draw_state.position.y += style.margin.top;
+        }
+
         if style.height > 0 {
             let height = rects.iter()
                               .filter_map(|v| v.map(|r| r.height() as i32))
@@ -539,12 +635,30 @@ impl Engine {
         }
 
         // Collapse top and bottom margins of empty blocks.
-        if rects.is_empty() || rects == [None] {
+        if empty && !has_box_height {
             style.margin.bottom = collapse_margins(style.margin.bottom, style.margin.top);
             style.margin.top = 0;
         }
 
         draw_state.position.y += style.padding.bottom;
+
+        if !matches!(node.tag_name(), Some("td" | "th")) &&
+           (style.background.is_some() || style.borders.iter().any(|border| border.width > 0)) {
+            let last_page = display_list.len() - 1;
+            for page_index in first_page..=last_page {
+                let top = if page_index == first_page { box_top } else { root_data.rect.min.y };
+                let bottom = if page_index == last_page { draw_state.position.y } else { root_data.rect.max.y };
+                let rect = rect![style.start_x - style.padding.left, top.max(root_data.rect.min.y),
+                                 style.end_x + style.padding.right, bottom.min(root_data.rect.max.y)];
+                let index = if page_index == first_page { first_command } else { 0 };
+                // Page navigation uses the first command's source offset. A
+                // continued background must retain that page's text location.
+                let offset = display_list[page_index].get(index).map(DrawCommand::offset)
+                    .unwrap_or(root_data.start_offset + node.offset());
+                let commands = box_commands(&style, rect, offset, page_index == first_page, page_index == last_page);
+                display_list[page_index].splice(index..index, commands);
+            }
+        }
 
         if props.get("page-break-after").map(String::as_str) == Some("always") {
             display_list.push(Vec::new());
@@ -552,11 +666,30 @@ impl Engine {
         }
 
         ChildArtifact {
+            cell_style: if matches!(node.tag_name(), Some("td" | "th")) { Some(style.clone()) } else { None },
             sibling_style: SiblingStyle {
                 padding: style.padding,
                 margin: style.margin,
             },
             rects,
+        }
+    }
+
+    fn box_style(&self, props: &super::style::PropertyMap, style: &mut StyleData) {
+        style.background = props.get("background-color").and_then(|value| parse_color(value));
+        for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
+            let kind = props.get(&format!("border-{}-style", side)).map(String::as_str).unwrap_or("none");
+            let border = &mut style.borders[index];
+            if matches!(kind, "none" | "hidden") { continue; }
+            let value = props.get(&format!("border-{}-width", side)).map(String::as_str).unwrap_or("medium");
+            let value = match value { "thin" => "1px", "medium" => "3px", "thick" => "5px", _ => value };
+            border.width = parse_length(value, style.font_size, self.font_size, self.dpi).unwrap_or(0).max(0);
+            border.pattern = match kind { "dotted" => 1, "dashed" => 2, _ => 0 };
+            border.color = match props.get(&format!("border-{}-color", side)).map(String::as_str) {
+                Some("transparent") => None,
+                Some(value) => parse_color(value).or(Some(style.color)),
+                None => Some(style.color),
+            };
         }
     }
 
@@ -566,7 +699,7 @@ impl Engine {
             for child in node.children().filter(|c| c.is_element()) {
                 let colspan = child.attribute("colspan")
                                    .and_then(|v| v.parse().ok())
-                                   .unwrap_or(1);
+                                   .unwrap_or(1).max(1);
                 let mut display_list = vec![Vec::new()];
                 let artifact = self.build_display_list(child, parent_style, loop_context, stylesheet, root_data, resource_fetcher, draw_state, &mut display_list);
                 let horiz_padding = artifact.sibling_style.padding.left +
@@ -580,17 +713,19 @@ impl Engine {
                                                     _ => None,
                                                 }
                                             })
-                                            .max().unwrap_or(0);
+                                            .max().unwrap_or(horiz_padding);
                 let max_width = artifact.rects.into_iter()
                                         .filter_map(|v| v.map(|r| r.width() as i32 + horiz_padding))
-                                        .max().unwrap_or(0);
-                if colspan == 1 {
-                    if let Some(cw) = draw_state.min_column_widths.get_mut(index) {
+                                        .max().unwrap_or(horiz_padding);
+                let min_width = (min_width + colspan as i32 - 1) / colspan as i32;
+                let max_width = (max_width + colspan as i32 - 1) / colspan as i32;
+                for column in index..index + colspan {
+                    if let Some(cw) = draw_state.min_column_widths.get_mut(column) {
                         *cw = (*cw).max(min_width);
                     } else {
                         draw_state.min_column_widths.push(min_width);
                     }
-                    if let Some(cw) = draw_state.max_column_widths.get_mut(index) {
+                    if let Some(cw) = draw_state.max_column_widths.get_mut(column) {
                         *cw = (*cw).max(max_width);
                     } else {
                         draw_state.max_column_widths.push(max_width);
@@ -713,6 +848,9 @@ impl Engine {
                                    .and_then(|value| parse_color(value))
                                    .unwrap_or(parent_style.color);
 
+                style.background = props.get("background-color")
+                    .map(|value| parse_color(value)).unwrap_or(parent_style.background);
+
                 style.letter_spacing = props.get("letter-spacing")
                                             .and_then(|value| parse_letter_spacing(value, style.font_size, self.font_size, self.dpi))
                                             .unwrap_or(parent_style.letter_spacing);
@@ -761,8 +899,11 @@ impl Engine {
                                                props.get("padding-bottom").map(String::as_str),
                                                props.get("padding-left").map(String::as_str),
                                                style.font_size, self.font_size, parent_style.width, self.dpi);
-                    style.background = props.get("background-color").or_else(|| props.get("background"))
-                                            .and_then(|value| parse_color(value));
+                    self.box_style(&props, &mut style);
+                    style.padding.top += style.borders[0].width;
+                    style.padding.right += style.borders[1].width;
+                    style.padding.bottom += style.borders[2].width;
+                    style.padding.left += style.borders[3].width;
                     let mut contents = Vec::new();
                     self.gather_inline_material_inner(node, stylesheet, parent_style, spine_dir, markers, &mut contents, true);
                     inlines.push(InlineMaterial::Float(FloatMaterial {
@@ -970,6 +1111,7 @@ impl Engine {
                                             letter_spacing: style.letter_spacing,
                                             font_size,
                                             color: style.color,
+                                            background: style.background,
                                             float: style.float,
                                             margin: style.margin,
                                             uri: style.uri.clone(),
@@ -1200,14 +1342,7 @@ impl Engine {
         let width = width + padding.left + padding.right;
         let height = height + padding.top + padding.bottom;
         let mut commands = vec![DrawCommand::Marker(material.offset)];
-        if let Some(color) = style.background {
-            commands.push(DrawCommand::Background(BackgroundCommand {
-                offset: material.offset,
-                position: pt!(0, 0),
-                rect: rect![0, 0, width, height],
-                color,
-            }));
-        }
+        commands.extend(box_commands(&style, rect![0, 0, width, height], material.offset, true, true));
         for mut command in pages.into_iter().flatten() {
             command.translate(pt!(padding.left, padding.top));
             commands.push(command);
@@ -1504,6 +1639,22 @@ impl Engine {
                                         break;
                                     }
                                 }
+                                if let Some(color) = element.background {
+                                    // Join adjacent words on this line, including their spaces.
+                                    let previous_text_end = page.last().and_then(|command| match command { DrawCommand::Text(text) => Some(text.rect.max.x), _ => None });
+                                    let previous = page.iter_mut().rev().find(|command| !matches!(command, DrawCommand::Text(_) | DrawCommand::Marker(_)));
+                                    let joined = if let Some(DrawCommand::Background(background)) = previous {
+                                        if previous_text_end == Some(background.rect.max.x) && background.color == color && background.rect.min.y == rect.min.y && background.rect.max.y == rect.max.y && background.rect.max.x <= rect.min.x {
+                                            background.rect.max.x = rect.max.x;
+                                            true
+                                        } else { false }
+                                    } else { false };
+                                    if !joined {
+                                        page.push(DrawCommand::Background(BackgroundCommand {
+                                            offset: element.offset + root_data.start_offset, position: rect.min, rect, color,
+                                        }));
+                                    }
+                                }
                                 page.push(DrawCommand::Text(TextCommand {
                                     offset: element.offset + root_data.start_offset,
                                     position: pt,
@@ -1737,6 +1888,7 @@ impl Engine {
                 vertical_align: element.vertical_align,
                 letter_spacing: element.letter_spacing,
                 color: element.color,
+                background: element.background,
                 float: element.float,
                 margin: element.margin,
                 uri: element.uri.clone(),
@@ -2050,6 +2202,37 @@ fn default_fonts(directory: &Path) -> Result<Fonts, Error> {
     Ok(fonts)
 }
 
+// Paint backgrounds before contents; fragmented boxes keep their side borders.
+fn box_commands(style: &StyleData, rect: Rectangle, offset: usize, first: bool, last: bool) -> Vec<DrawCommand> {
+    let mut commands = Vec::new();
+    if rect.max.x <= rect.min.x || rect.max.y <= rect.min.y { return commands; }
+    let mut fill = |rect: Rectangle, color| {
+        commands.push(DrawCommand::Background(BackgroundCommand { offset, position: rect.min, rect, color }));
+    };
+    if let Some(color) = style.background { fill(rect, color); }
+    for (side, border) in style.borders.iter().enumerate() {
+        if border.width <= 0 || (side == 0 && !first) || (side == 2 && !last) { continue; }
+        let color = match border.color { Some(color) => color, None => continue };
+        let horizontal = side % 2 == 0;
+        let thickness = border.width.min(if horizontal { rect.height() } else { rect.width() } as i32);
+        let length = if horizontal { rect.width() } else { rect.height() } as i32;
+        let segment = match border.pattern { 1 => thickness, 2 => 3 * thickness, _ => length };
+        let mut start = 0;
+        while start < length {
+            let end = (start + segment).min(length);
+            let strip = match side {
+                0 => rect![rect.min.x + start, rect.min.y, rect.min.x + end, rect.min.y + thickness],
+                1 => rect![rect.max.x - thickness, rect.min.y + start, rect.max.x, rect.min.y + end],
+                2 => rect![rect.min.x + start, rect.max.y - thickness, rect.min.x + end, rect.max.y],
+                _ => rect![rect.min.x, rect.min.y + start, rect.min.x + thickness, rect.min.y + end],
+            };
+            fill(strip, color);
+            start += segment + thickness;
+        }
+    }
+    commands
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2088,6 +2271,133 @@ mod tests {
         pages.iter().flatten().filter_map(|command| match command {
             DrawCommand::Text(text) => Some(text), _ => None,
         }).collect()
+    }
+
+    #[test]
+    fn table_cells_fill_the_row_including_empty_cells() {
+        let (_, pages) = layout("<table><tr><th>Header</th><td>one<br/>two<br/>three</td><td/></tr></table>",
+            "table {margin-top:10px; border:2px solid; background:#eee;} td,th {padding:4px; border:2px dotted; background:#bbb;} th {background:#888;}", 200, 0);
+        let fills: Vec<_> = pages[0].iter().filter_map(|c| match c {
+            DrawCommand::Background(b) if b.color == parse_color("#bbb").unwrap() || b.color == parse_color("#888").unwrap() => Some(b.rect), _ => None,
+        }).collect();
+        assert_eq!(fills.len(), 3);
+        assert!(fills[0].height() > 40);
+        assert!(fills.iter().all(|rect| rect.min.y == fills[0].min.y && rect.max.y == fills[0].max.y));
+        assert_eq!(fills[0].max.x, fills[1].min.x);
+        assert_eq!(fills[1].max.x, fills[2].min.x);
+        assert!(fills[2].width() > 0);
+        assert!(matches!(pages[0][0], DrawCommand::Background(ref b) if b.color == parse_color("#eee").unwrap()));
+        if let DrawCommand::Background(table) = &pages[0][0] {
+            assert_eq!(fills[0].min.y, table.rect.min.y + 2);
+            assert_eq!(fills[0].max.y, table.rect.max.y - 2);
+        }
+    }
+
+    #[test]
+    fn table_short_cell_background_continues_across_pages() {
+        let (_, pages) = layout("<table><tr><td>short</td><td>one<br/>two<br/>three<br/>four<br/>five<br/>six<br/>seven</td></tr></table>",
+            "td {border:2px solid; padding:2px; background:#ddd;}", 50, 0);
+        assert!(pages.len() >= 3);
+        for page in &pages {
+            let fills: Vec<_> = page.iter().filter_map(|c| match c {
+                DrawCommand::Background(b) if b.color == parse_color("#ddd").unwrap() => Some(b.rect), _ => None,
+            }).collect();
+            assert_eq!(fills.len(), 2);
+            assert_eq!(fills[0].min.y, fills[1].min.y);
+            assert_eq!(fills[0].max.y, fills[1].max.y);
+            assert!(fills[0].max.y <= 50);
+        }
+        for pair in pages.windows(2) { assert!(pair[0][0].offset() < pair[1][0].offset()); }
+        assert_eq!(texts(&pages).len(), 8);
+    }
+
+    #[test]
+    fn table_colspan_and_empty_cells_keep_borders() {
+        let (_, pages) = layout("<table><tr><th colspan='2'>Title</th></tr><tr><td/><td/></tr></table>",
+            "table {width:200px; border:2px solid;} td,th {padding:4px; background:#ddd; border:2px solid;}", 200, 0);
+        let fills: Vec<_> = pages[0].iter().filter_map(|c| match c {
+            DrawCommand::Background(b) if b.color == parse_color("#ddd").unwrap() => Some(b.rect), _ => None,
+        }).collect();
+        assert_eq!(fills.len(), 3);
+        assert_eq!(fills[0].min.x, fills[1].min.x);
+        assert_eq!(fills[0].max.x, fills[2].max.x);
+        assert_eq!(fills[1].max.x, fills[2].min.x);
+        assert_eq!(fills[0].max.y, fills[1].min.y);
+    }
+
+    #[test]
+    fn horizontal_rules_honor_legacy_dimensions_and_alignment() {
+        let (_, pages) = layout("<div><hr align='left' width='50%' size='4'/><hr align='right' width='80' size='8'/><hr width='40%'/></div>", "", 180, 0);
+        let boxes: Vec<_> = pages.iter().flatten().filter_map(|c| match c { DrawCommand::Background(b) => Some(b.rect), _ => None }).collect();
+        assert_eq!(boxes.len(), 3);
+        assert_eq!(boxes[0], rect![0, 0, 120, 3]);
+        assert_eq!(boxes[1], rect![180, 3, 240, 9]);
+        assert_eq!(boxes[2].min.x, 72);
+        assert_eq!(boxes[2].width(), 96);
+    }
+
+    #[test]
+    fn horizontal_rule_moves_to_next_page() {
+        let (_, pages) = layout("<hr size='16'/>", "", 100, 95);
+        assert_eq!(pages.len(), 2);
+        assert!(pages[0].is_empty());
+        assert!(matches!(&pages[1][0], DrawCommand::Background(b) if b.rect.min.y == 0 && b.rect.height() == 12));
+    }
+
+    #[test]
+    fn block_background_and_borders_precede_text_and_reserve_space() {
+        let (_, pages) = layout("<p>Hello</p>", "p { padding:4px; background:#ddd; border:4px solid; border-left-width:8px; }", 180, 0);
+        let boxes: Vec<_> = pages[0].iter().filter_map(|c| match c { DrawCommand::Background(b) => Some(b.rect), _ => None }).collect();
+        assert_eq!(boxes.len(), 5);
+        assert_eq!(boxes[0].min, pt!(0, 0));
+        assert_eq!(boxes[0].width(), 240);
+        assert_eq!(boxes[4].width(), 6);
+        assert_eq!(texts(&pages)[0].rect.min.x, 9);
+        assert!(matches!(pages[0][0], DrawCommand::Background(_)));
+    }
+
+    #[test]
+    fn fragmented_background_stays_behind_text_on_every_page() {
+        let (_, pages) = layout("<div><p>one<br/>two<br/>three<br/>four<br/>five<br/>six</p></div>", "div {background:#ddd; border:2px solid;} p {background:#eee;}", 50, 0);
+        assert!(pages.len() > 1);
+        for pair in pages.windows(2) {
+            assert!(pair[0][0].offset() < pair[1][0].offset());
+        }
+        for page in &pages {
+            assert!(matches!(page.first(), Some(DrawCommand::Background(_))));
+            for command in page {
+                if let DrawCommand::Background(b) = command { assert!(b.rect.min.y >= 0 && b.rect.max.y <= 50); }
+            }
+        }
+        assert_eq!(texts(&pages).iter().map(|text| text.text.as_str()).collect::<Vec<_>>(), ["one", "two", "three", "four", "five", "six"]);
+    }
+
+    #[test]
+    fn inline_background_covers_spaces_without_coloring_following_text() {
+        let (_, pages) = layout("<p><span style='background:#ddd'>one two</span> plain</p>", "", 180, 0);
+        let boxes: Vec<_> = pages[0].iter().filter_map(|c| match c { DrawCommand::Background(b) => Some(b), _ => None }).collect();
+        assert_eq!(boxes.len(), 1);
+        let text = texts(&pages);
+        assert_eq!(boxes[0].rect.min.x, text[0].rect.min.x);
+        assert_eq!(boxes[0].rect.max.x, text[1].rect.max.x);
+        assert!(boxes[0].rect.max.x < text[2].rect.min.x);
+    }
+
+    #[test]
+    fn dotted_dashed_and_fallback_borders() {
+        let mut style = StyleData::default();
+        let sheet = CssParser::new("p {border:2px dotted; border-right-style:dashed; border-bottom-style:double; border-left-style:none;}").parse();
+        let tree = XmlParser::new("<p/>").parse();
+        let props = specified_values(tree.root().first_child().unwrap(), &sheet);
+        let mut engine = Engine::new();
+        engine.dpi = 96;
+        engine.box_style(&props, &mut style);
+        assert_eq!(style.borders[0].width, 2);
+        assert_eq!(style.borders[1].pattern, 2);
+        assert_eq!(style.borders[2].pattern, 0);
+        assert_eq!(style.borders[3].width, 0);
+        let commands = box_commands(&style, rect![0, 0, 20, 20], 0, true, true);
+        assert_eq!(commands.len(), 9); // five dots, three dashes, one solid edge
     }
 
     const LINES: &str = "one<br/>two<br/>three<br/>four<br/>five";

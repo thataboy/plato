@@ -169,6 +169,15 @@ impl PseudoClass {
     }
 }
 
+fn border_values(value: &str) -> Vec<&str> {
+    let mut depth = 0;
+    value.split(|c: char| {
+        if c == '(' { depth += 1; }
+        if c == ')' { depth -= 1; }
+        c.is_whitespace() && depth == 0
+    }).filter(|s| !s.is_empty()).collect()
+}
+
 fn expand_and_insert(name: &str, value: &str, props: &mut PropertyMap) {
     match name {
         "margin" | "padding" => {
@@ -210,9 +219,44 @@ fn expand_and_insert(name: &str, value: &str, props: &mut PropertyMap) {
                 _ => (),
             }
         },
-        // TODO: border -> border-{top,right,bottom,left}-{width,style,color}
-        // border-left -> border-left-{width,style,color}
-        // border-style -> border-{top,right,bottom,left}-style
+        "background" => {
+            // Color-only backgrounds; images and positioning are not rendered.
+            props.insert("background-color".into(), value.into());
+        },
+        "border-width" | "border-style" | "border-color" => {
+            let values = border_values(value);
+            if (1..=4).contains(&values.len()) {
+                let indices = match values.len() {
+                    1 => [0, 0, 0, 0], 2 => [0, 1, 0, 1],
+                    3 => [0, 1, 2, 1], _ => [0, 1, 2, 3],
+                };
+                for (side, index) in ["top", "right", "bottom", "left"].iter().zip(indices.iter()) {
+                    props.insert(format!("border-{}-{}", side, &name[7..]), values[*index].into());
+                }
+            }
+        },
+        "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
+            let mut width = "medium";
+            let mut style = "none";
+            let mut color = "currentColor";
+            // Keep functional colors (including spaces) together.
+            for token in border_values(value) {
+                match token {
+                    "none" | "hidden" | "solid" | "dotted" | "dashed" | "double" |
+                    "groove" | "ridge" | "inset" | "outset" => style = token,
+                    "thin" | "medium" | "thick" => width = token,
+                    _ if token.starts_with(|c: char| c.is_ascii_digit() || c == '.') => width = token,
+                    _ => color = token,
+                }
+            }
+            for side in ["top", "right", "bottom", "left"] {
+                if name == "border" || name == format!("border-{}", side) {
+                    for (property, value) in [("width", width), ("style", style), ("color", color)] {
+                        props.insert(format!("border-{}-{}", side, property), value.into());
+                    }
+                }
+            }
+        },
         _ => {
             props.insert(name.to_string(), value.to_string());
         }
@@ -224,6 +268,19 @@ mod tests {
     use super::specified_values;
     use super::super::css::CssParser;
     use super::super::xml::XmlParser;
+
+    #[test]
+    fn border_shorthands_follow_declaration_order_and_reset_omitted_parts() {
+        let xml = XmlParser::new("<p style='border: 4px dotted red; border-width:1px 2px 3px 4px; border-left:solid; background:red; background-color:blue'/>").parse();
+        let props = specified_values(xml.root().first_child().unwrap(), &CssParser::new("").parse());
+        assert_eq!(props["border-top-width"], "1px");
+        assert_eq!(props["border-right-width"], "2px");
+        assert_eq!(props["border-bottom-width"], "3px");
+        assert_eq!(props["border-left-width"], "medium");
+        assert_eq!(props["border-left-color"], "currentColor");
+        assert_eq!(props["border-left-style"], "solid");
+        assert_eq!(props["background-color"], "blue");
+    }
 
     #[test]
     fn simple_style() {

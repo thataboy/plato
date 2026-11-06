@@ -351,8 +351,22 @@ pub fn parse_font_variant(value: &str) -> Vec<String> {
 }
 
 pub fn parse_color(value: &str) -> Option<Color> {
+    let value = value.trim();
+    if let Some(channels) = value.strip_prefix("rgb(").and_then(|v| v.strip_suffix(')')) {
+        let values = channels.split(',').map(|channel| {
+            let channel = channel.trim();
+            let value = if let Some(percent) = channel.strip_suffix('%') {
+                percent.parse::<f32>().ok()? * 2.55
+            } else {
+                channel.parse::<f32>().ok()?
+            };
+            if !value.is_finite() { return None; }
+            Some(value.round().clamp(0.0, 255.0) as u8)
+        }).collect::<Option<Vec<_>>>()?;
+        return if values.len() == 3 { Some(Color::from_rgb(&values)) } else { None };
+    }
     if value.starts_with('#') {
-        if value.len() < 4 {
+        if !matches!(value.len(), 4 | 7) || !value[1..].is_ascii() {
             return None;
         }
         let chunk_size = if value.len() < 7 { 1 } else { 2 };
@@ -388,6 +402,15 @@ pub fn parse_color(value: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgb_colors_and_invalid_hex() {
+        assert_eq!(parse_color("rgb(255, 0, 128)"), parse_color("#ff0080"));
+        assert_eq!(parse_color("rgb(100%, 0%, 100%)"), parse_color("#ff00ff"));
+        assert_eq!(parse_color("rgb(1, 2)"), None);
+        assert_eq!(parse_color("#abcd"), None);
+        assert_eq!(parse_color("#ééé"), None);
+    }
 
     #[test]
     fn test_parse_color() {

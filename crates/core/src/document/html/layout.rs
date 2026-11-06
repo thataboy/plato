@@ -54,6 +54,7 @@ pub struct StyleData {
     pub margin: Edge,
     pub padding: Edge,
     pub background: Option<Color>,
+    pub borders: [Border; 4],
     pub relative_offset: Point,
     pub start_x: i32,
     pub end_x: i32,
@@ -73,6 +74,14 @@ pub struct StyleData {
     pub vertical_align: i32,
     pub list_style_type: Option<ListStyleType>,
     pub uri: Option<String>,
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Border {
+    pub width: i32,
+    // 0 = solid, 1 = dotted, 2 = dashed.
+    pub pattern: u8,
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -120,6 +129,8 @@ pub enum ListStyleType {
 
 #[derive(Debug, Clone)]
 pub struct ChildArtifact {
+    // Cell decoration is deferred until the row height is known.
+    pub cell_style: Option<StyleData>,
     pub sibling_style: SiblingStyle,
     pub rects: Vec<Option<Rectangle>>,
 }
@@ -188,6 +199,7 @@ impl Default for StyleData {
             margin: Edge::default(),
             padding: Edge::default(),
             background: None,
+            borders: [Border::default(); 4],
             relative_offset: Point::default(),
             start_x: 0,
             end_x: 0,
@@ -367,6 +379,7 @@ pub struct TextElement {
     pub letter_spacing: i32,
     pub vertical_align: i32,
     pub color: Color,
+    pub background: Option<Color>,
     pub float: Option<Float>,  // handle float for text
     pub margin: Edge,
     pub uri: Option<String>,
