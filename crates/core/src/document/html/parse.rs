@@ -5,7 +5,7 @@ use super::layout::{TextAlign, Display, Float, ListStyleType};
 use super::layout::{InlineMaterial, GlueMaterial, PenaltyMaterial};
 use crate::geom::Edge;
 use crate::color::{Color, BLACK, WHITE};
-use crate::unit::{pt_to_px, pc_to_px, mm_to_px, in_to_px};
+use crate::unit::pt_to_px;
 use crate::unit::{POINTS_PER_INCH, PICAS_PER_INCH, MILLIMETERS_PER_INCH, CENTIMETERS_PER_INCH};
 
 const SIZE_FACTOR: f32 = 1.26;
@@ -15,65 +15,47 @@ const RELATIVE_SIZE_KEYWORDS: [&str; 2] = ["smaller", "larger"];
 const BORDER_WIDTH_KEYWORDS: [&str; 3] = ["thin", "medium", "thick"];
 const BORDER_STYLE_KEYWORDS: [&str; 10] = ["none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset"];
 
-// TODO: vh, vw, vmin, vmax?
-pub fn parse_length(value: &str, em: f32, rem: f32, dpi: u16) -> Option<i32> {
-    if let Some(index) = value.find(|c: char| c.is_ascii_alphabetic()) {
-        value[..index].parse().ok().and_then(|v| {
-            match &value[index..] {
-                "em" => Some(pt_to_px(v * em, dpi).round() as i32),
-                "rem" => Some(pt_to_px(v * rem, dpi).round() as i32),
-                "pt" => Some(pt_to_px(v, dpi).round() as i32),
-                "pc" => Some(pc_to_px(v, dpi).round() as i32),
-                "cm" => Some(mm_to_px(10.0 * v, dpi).round() as i32),
-                "mm" => Some(mm_to_px(v, dpi).round() as i32),
-                "in" => Some(in_to_px(v, dpi).round() as i32),
-                "px" => Some(pt_to_px(v * 0.75, dpi).round() as i32),
-                _ => None,
-            }
-        })
-    } else if value == "0" {
-        Some(0)
-    } else {
-        None
+// CSS absolute lengths are converted to points before device scaling.
+// TODO: font-metric (ex/ch), viewport units and calc().
+fn length_in_points(value: &str, em: f32, rem: f32) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    for unit in ["rem", "em", "px", "pt", "pc", "cm", "mm", "in"] {
+        if let Some(number) = value.strip_suffix(unit) {
+            let v = number.parse::<f32>().ok().filter(|v| v.is_finite())?;
+            let points = v * match unit {
+                "em" => em,
+                "rem" => rem,
+                "pt" => 1.0,
+                "pc" => POINTS_PER_INCH / PICAS_PER_INCH,
+                "cm" => POINTS_PER_INCH / CENTIMETERS_PER_INCH,
+                "mm" => POINTS_PER_INCH / MILLIMETERS_PER_INCH,
+                "in" => POINTS_PER_INCH,
+                "px" => 0.75,
+                _ => unreachable!(),
+            };
+            return points.is_finite().then_some(points);
+        }
     }
+    value.parse::<f32>().ok().filter(|v| *v == 0.0)
 }
 
-// Input and output sizes are in points.
+pub fn parse_length(value: &str, em: f32, rem: f32, dpi: u16) -> Option<i32> {
+    length_in_points(value, em, rem).map(|v| pt_to_px(v, dpi).round() as i32)
+}
+
+// Input and output font sizes are in points; do not round until rasterization.
 pub fn parse_font_size(value: &str, em: f32, rem: f32) -> Option<f32> {
-    if value.find(|c: char| c.is_ascii_digit()).is_some() {
-        if let Some(index) = value.find(|c: char| c.is_ascii_alphabetic()) {
-            value[..index].parse().ok().and_then(|v| {
-                if v <= 0.0 {
-                    return None;
-                }
-                match &value[index..] {
-                    "em" => Some(v * em),
-                    "rem" => Some(v * rem),
-                    "pt" => Some(v),
-                    "pc" => Some(v * POINTS_PER_INCH / PICAS_PER_INCH),
-                    "cm" => Some(v * POINTS_PER_INCH / CENTIMETERS_PER_INCH),
-                    "mm" => Some(v * POINTS_PER_INCH / MILLIMETERS_PER_INCH),
-                    "in" => Some(v * POINTS_PER_INCH),
-                    "px" => Some(v * 0.75),
-                    _ => None,
-                }
-            })
-        } else if let Some(percent) = value.strip_suffix('%') {
-            percent.parse::<f32>().ok().map(|v| {
-                v / 100.0 * em
-            })
-        } else {
-            None
-        }
-    } else if let Some(index) = ABSOLUTE_SIZE_KEYWORDS.iter().position(|&v| v == value) {
-        let e = index as i32 - 3;
-        Some(SIZE_FACTOR.powi(e) * rem)
+    let value = value.trim().to_ascii_lowercase();
+    let size = if let Some(index) = ABSOLUTE_SIZE_KEYWORDS.iter().position(|&v| v == value) {
+        Some(SIZE_FACTOR.powi(index as i32 - 3) * rem)
     } else if let Some(index) = RELATIVE_SIZE_KEYWORDS.iter().position(|&v| v == value) {
-        let e = (2 * index) as i32 - 1;
-        Some(SIZE_FACTOR.powi(e) * em)
+        Some(SIZE_FACTOR.powi((2 * index) as i32 - 1) * em)
+    } else if let Some(percent) = value.strip_suffix('%') {
+        percent.parse::<f32>().ok().map(|v| v / 100.0 * em)
     } else {
-        None
-    }
+        length_in_points(&value, em, rem)
+    };
+    size.filter(|v| v.is_finite() && *v > 0.0)
 }
 
 pub fn parse_inline_material(value: &str, em: f32, rem: f32, dpi: u16) -> Vec<InlineMaterial> {
@@ -143,7 +125,7 @@ pub fn parse_vertical_align(value: &str, em: f32, rem: f32, line_height: i32, dp
     } else if value == "sub" || value == "bottom" {
         Some(pt_to_px(-0.2 * em, dpi).round() as i32)
     } else if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
+        percent.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| {
             (v / 100.0 * line_height as f32) as i32
         })
     } else {
@@ -216,27 +198,26 @@ pub fn parse_list_style_type(value: &str) -> Option<ListStyleType> {
 }
 
 pub fn parse_width(value: &str, em: f32, rem: f32, width: i32, dpi: u16) -> Option<i32> {
-    if value == "auto" {
-        Some(0)
-    } else if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
-            (v / 100.0 * width as f32) as i32
-        })
+    if value == "auto" { return Some(0); }
+    if let Some(percent) = value.strip_suffix('%') {
+        percent.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| (v / 100.0 * width as f32).round() as i32)
     } else {
-        parse_length(value, em, rem, dpi)
+        parse_length(value, em, rem, dpi).filter(|v| *v >= 0)
     }
 }
 
-pub fn parse_height(value: &str, em: f32, rem: f32, width: i32, dpi: u16) -> Option<i32> {
-    if value == "auto" {
-        Some(0)
-    } else if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
-            (v / 100.0 * width as f32) as i32
-        })
+// Percentage heights require a definite containing-block height, unlike
+// percentage margins/padding, which always use its width.
+pub fn parse_height(value: &str, em: f32, rem: f32, height: Option<i32>, dpi: u16) -> Option<i32> {
+    if value == "auto" { return None; }
+    let result = if let Some(percent) = value.strip_suffix('%') {
+        let percent = percent.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
+        Some((percent / 100.0 * height? as f32).round() as i32)
     } else {
         parse_length(value, em, rem, dpi)
-    }
+    };
+    result.filter(|v| *v >= 0)
 }
 
 fn parse_edge_length(value: &str, em: f32, rem: f32, width: i32, auto_value: i32, dpi: u16) -> i32 {
@@ -245,8 +226,8 @@ fn parse_edge_length(value: &str, em: f32, rem: f32, width: i32, auto_value: i32
     } else if value == "0" {
         0
     } else if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
-            (v / 100.0 * width as f32) as i32
+        percent.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| {
+            (v / 100.0 * width as f32).round() as i32
         }).unwrap_or_default()
     } else {
         parse_length(value, em, rem, dpi).unwrap_or_default()
@@ -261,7 +242,7 @@ pub fn parse_edge(top_edge: Option<&str>, right_edge: Option<&str>, bottom_edge:
     }
 
     if let Some(v) = right_edge {
-        e.right = parse_edge_length(v, em, rem, width, width, dpi);
+        e.right = parse_edge_length(v, em, rem, width, 0, dpi);
     }
 
     if let Some(v) = bottom_edge {
@@ -269,10 +250,19 @@ pub fn parse_edge(top_edge: Option<&str>, right_edge: Option<&str>, bottom_edge:
     }
 
     if let Some(v) = left_edge {
-        e.left = parse_edge_length(v, em, rem, width, width, dpi);
+        e.left = parse_edge_length(v, em, rem, width, 0, dpi);
     }
 
     e
+}
+
+pub fn parse_padding(top: Option<&str>, right: Option<&str>, bottom: Option<&str>, left: Option<&str>, em: f32, rem: f32, width: i32, dpi: u16) -> Edge {
+    let mut edge = parse_edge(top, right, bottom, left, em, rem, width, dpi);
+    edge.top = edge.top.max(0);
+    edge.right = edge.right.max(0);
+    edge.bottom = edge.bottom.max(0);
+    edge.left = edge.left.max(0);
+    edge
 }
 
 pub fn parse_text_align(value: &str) -> Option<TextAlign> {
@@ -289,7 +279,7 @@ pub fn parse_line_height(value: &str, em: f32, rem: f32, dpi: u16) -> Option<i32
     if value == "normal" {
         Some(pt_to_px(1.2 * em, dpi).round() as i32)
     } else if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
+        percent.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| {
             pt_to_px(v / 100.0 * em as f32, dpi).round() as i32
         })
     } else if value.ends_with(|c: char| !c.is_ascii_alphabetic()) {
@@ -303,8 +293,8 @@ pub fn parse_line_height(value: &str, em: f32, rem: f32, dpi: u16) -> Option<i32
 
 pub fn parse_text_indent(value: &str, em: f32, rem: f32, width: i32, dpi: u16) -> Option<i32> {
     if let Some(percent) = value.strip_suffix('%') {
-        percent.parse::<f32>().ok().map(|v| {
-            (v / 100.0 * width as f32) as i32
+        percent.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| {
+            (v / 100.0 * width as f32).round() as i32
         })
     } else {
         parse_length(value, em, rem, dpi)
@@ -402,6 +392,24 @@ pub fn parse_color(value: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn css_units_and_percentage_bases() {
+        for value in ["1in", "72pt", "6pc", "2.54cm", "25.4mm", "96px"] {
+            assert_eq!(parse_length(value, 12.0, 16.0, 300), Some(300), "{}", value);
+        }
+        assert_eq!(parse_length("3em", 12.0, 16.0, 300), Some(150));
+        assert_eq!(parse_length("1rem", 12.0, 16.0, 300), Some(67));
+        for value in ["+0", "-0", "0.0", "0e2"] { assert_eq!(parse_length(value, 12.0, 16.0, 300), Some(0)); }
+        assert_eq!(parse_length("1e2PX", 12.0, 16.0, 96), Some(100));
+        assert_eq!(parse_length("NaNpx", 12.0, 16.0, 96), None);
+        let edge = parse_edge(Some("10%"), Some("10%"), Some("10%"), Some("10%"), 12.0, 12.0, 240, 72);
+        assert_eq!(edge.top, 24);
+        assert_eq!(edge.left, 24);
+        assert_eq!(parse_height("50%", 12.0, 12.0, Some(100), 72), Some(50));
+        assert_eq!(parse_height("50%", 12.0, 12.0, None, 72), None);
+        assert_eq!(parse_padding(Some("-1em"), None, None, None, 12.0, 12.0, 240, 72).top, 0);
+    }
 
     #[test]
     fn rgb_colors_and_invalid_hex() {

@@ -51,7 +51,14 @@ pub struct StyleData {
     pub float: Option<Float>,
     pub width: i32,
     pub height: i32,
+    pub min_width: i32,
+    pub max_width: Option<i32>,
+    pub min_height: i32,
+    pub max_height: Option<i32>,
     pub margin: Edge,
+    pub auto_margins: [bool; 2],
+    pub margin_top_strut: MarginStrut,
+    pub margin_bottom_strut: MarginStrut,
     pub padding: Edge,
     pub background: Option<Color>,
     pub borders: [Border; 4],
@@ -61,7 +68,11 @@ pub struct StyleData {
     pub retain_whitespace: bool,
     pub text_align: TextAlign,
     pub text_indent: i32,
+    pub text_indent_ratio: Option<f32>,
     pub line_height: i32,
+    pub line_height_ratio: Option<f32>,
+    pub root_font_size: f32,
+    pub definite_height: Option<i32>,
     pub language: Option<String>,
     pub font_kind: FontKind,
     pub font_style: FontStyle,
@@ -137,6 +148,7 @@ pub struct ChildArtifact {
 
 #[derive(Debug, Clone)]
 pub struct SiblingStyle {
+    pub bottom_margin: MarginStrut,
     pub padding: Edge,
     pub margin: Edge,
 }
@@ -163,6 +175,7 @@ impl Default for LineStats {
 impl Default for SiblingStyle {
     fn default() -> Self {
         SiblingStyle {
+            bottom_margin: MarginStrut::default(),
             padding: Edge::default(),
             margin: Edge::default(),
         }
@@ -196,7 +209,14 @@ impl Default for StyleData {
             float: None,
             width: 0,
             height: 0,
+            min_width: 0,
+            max_width: None,
+            min_height: 0,
+            max_height: None,
             margin: Edge::default(),
+            auto_margins: [false; 2],
+            margin_top_strut: MarginStrut::default(),
+            margin_bottom_strut: MarginStrut::default(),
             padding: Edge::default(),
             background: None,
             borders: [Border::default(); 4],
@@ -206,7 +226,11 @@ impl Default for StyleData {
             retain_whitespace: false,
             text_align: TextAlign::Left,
             text_indent: 0,
+            text_indent_ratio: None,
             line_height: 0,
+            line_height_ratio: None,
+            root_font_size: 0.0,
+            definite_height: None,
             language: None,
             font_kind: FontKind::Serif,
             font_style: FontStyle::Normal,
@@ -496,6 +520,23 @@ impl DrawCommand {
         };
         *offset += delta;
     }
+}
+
+// Keep both extrema until the whole adjoining-margin group is resolved.
+// Adding a negative margin must not lose the positive part for the next sibling.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct MarginStrut {
+    positive: i32,
+    negative: i32,
+}
+
+impl MarginStrut {
+    pub fn new(value: i32) -> Self { Self { positive: value.max(0), negative: value.min(0) } }
+    pub fn merge(&mut self, other: Self) {
+        self.positive = self.positive.max(other.positive);
+        self.negative = self.negative.min(other.negative);
+    }
+    pub fn value(self) -> i32 { self.positive + self.negative }
 }
 
 pub fn collapse_margins(a: i32, b: i32) -> i32 {

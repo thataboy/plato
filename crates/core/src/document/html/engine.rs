@@ -17,7 +17,7 @@ use crate::geom::{Point, Vec2, Rectangle, Edge};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::settings::{DEFAULT_FONT_SIZE, DEFAULT_MARGIN_WIDTH, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT};
 use crate::settings::PROGRESS_BAR_PADDING;
-use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent, parse_visibility};
+use super::parse::{parse_display, parse_edge, parse_padding, parse_float, parse_text_align, parse_text_indent, parse_visibility};
 use super::parse::{parse_width, parse_height, parse_length, parse_inline_material, parse_font_kind, parse_font_style};
 use super::parse::{parse_font_weight, parse_font_size, parse_font_features, parse_font_variant};
 use super::parse::{parse_letter_spacing, parse_word_spacing};
@@ -28,7 +28,7 @@ use super::layout::{FloatMaterial, FloatElement, BackgroundCommand};
 use super::layout::{GlueMaterial, PenaltyMaterial, ChildArtifact, SiblingStyle, LoopContext};
 use super::layout::{RootData, DrawState, DrawCommand, TextCommand, ImageCommand, FontKind, Fonts};
 use super::layout::{TextAlign, ParagraphElement, TextElement, ImageElement, Display, Float};
-use super::layout::{WordSpacing, ListStyleType, LineStats};
+use super::layout::{WordSpacing, ListStyleType, LineStats, MarginStrut};
 use super::layout::{hyph_lang, collapse_margins, DEFAULT_HYPH_LANG, HYPHENATION_PATTERNS};
 use super::layout::{EM_SPACE_RATIOS, WORD_SPACE_RATIOS, FONT_SPACES};
 use super::style::{StyleSheet, specified_values, first_letter_values};
@@ -150,6 +150,16 @@ impl Engine {
         let mut rects: Vec<Option<Rectangle>> = vec![None];
 
         let props = specified_values(node, stylesheet);
+        let root_font_size = if parent_style.root_font_size > 0.0 && node.tag_name() != Some("html") {
+            parent_style.root_font_size
+        } else {
+            let html = if node.tag_name() == Some("html") { Some(node) }
+                       else { node.ancestor_elements().find(|n| n.tag_name() == Some("html")) };
+            html.and_then(|html| specified_values(html, stylesheet).get("font-size")
+                .and_then(|v| parse_font_size(v, self.font_size, self.font_size)))
+                .unwrap_or(self.font_size)
+        };
+        style.root_font_size = root_font_size;
 
         style.display = props.get("display").and_then(|value| parse_display(value))
                              .unwrap_or(Display::Block);
@@ -160,10 +170,7 @@ impl Engine {
         if style.display == Display::None || style.visibility != Visibility::Visible {
             return ChildArtifact {
                 cell_style: None,
-                sibling_style: SiblingStyle {
-                    padding: Edge::default(),
-                    margin: Edge::default(),
-                },
+                sibling_style: loop_context.sibling_style.clone(),
                 rects: Vec::new(),
             }
         }
@@ -174,9 +181,18 @@ impl Engine {
             self.gather_inline_material(node, stylesheet, parent_style, &root_data.spine_dir, &mut markers, &mut inlines);
             let mut flow_style = parent_style.clone();
             flow_style.margin = Edge::default();
+            flow_style.margin.top = loop_context.sibling_style.margin.bottom;
+            if loop_context.is_first {
+                flow_style.margin.top = collapse_margins(flow_style.margin.top, parent_style.margin.top);
+            }
             flow_style.padding = Edge::default();
+            let original_y = draw_state.position.y;
+            let original_page = display_list.len();
             self.place_paragraphs(&inlines, &flow_style, root_data, &markers, resource_fetcher, draw_state, &mut rects, display_list);
-            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle::default(), rects };
+            // A float does not consume the pending normal-flow margin. The
+            // following block still collapses against the preceding block.
+            draw_state.position.y = if display_list.len() == original_page { original_y } else { root_data.rect.min.y };
+            return ChildArtifact { cell_style: None, sibling_style: loop_context.sibling_style.clone(), rects };
         }
 
         style.font_style = parent_style.font_style;
@@ -199,32 +215,28 @@ impl Engine {
             _ => (),
         }
 
-        style.retain_whitespace |= props.get("white-space")
-                                        .map(String::as_str)
-                                        .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
-                                        .unwrap_or(false);
+        style.retain_whitespace = props.get("white-space").map(|v| matches!(v.as_str(), "pre" | "pre-wrap"))
+            .unwrap_or(style.retain_whitespace);
 
         style.language = props.get("lang").cloned()
                               .or_else(|| parent_style.language.clone());
 
         style.font_size = props.get("font-size")
-                               .and_then(|value| parse_font_size(value, parent_style.font_size, self.font_size))
-                               .unwrap_or(parent_style.font_size);
+                               .and_then(|value| parse_font_size(value, parent_style.font_size, if node.tag_name() == Some("html") { self.font_size } else { root_font_size }))
+                               .unwrap_or(if node.tag_name() == Some("body") && parent_style.root_font_size == 0.0 { root_font_size } else { parent_style.font_size });
 
-        style.line_height = props.get("line-height")
-                                 .and_then(|value| parse_line_height(value, style.font_size, self.font_size, self.dpi))
-                                 .unwrap_or_else(|| ((style.font_size / parent_style.font_size) * parent_style.line_height as f32).round() as i32);
+        self.resolve_line_height(props.get("line-height"), &mut style, parent_style);
 
         style.letter_spacing = props.get("letter-spacing")
-                                    .and_then(|value| parse_letter_spacing(value, style.font_size, self.font_size, self.dpi))
+                                    .and_then(|value| parse_letter_spacing(value, style.font_size, root_font_size, self.dpi))
                                     .unwrap_or(parent_style.letter_spacing);
 
         style.word_spacing = props.get("word-spacing")
-                                    .and_then(|value| parse_word_spacing(value, style.font_size, self.font_size, self.dpi))
+                                    .and_then(|value| parse_word_spacing(value, style.font_size, root_font_size, self.dpi))
                                     .unwrap_or(parent_style.word_spacing);
 
         style.vertical_align = props.get("vertical-align")
-                                    .and_then(|value| parse_vertical_align(value, style.font_size, self.font_size, style.line_height, self.dpi))
+                                    .and_then(|value| parse_vertical_align(value, style.font_size, root_font_size, style.line_height, self.dpi))
                                     .unwrap_or(parent_style.vertical_align);
 
         style.font_kind = props.get("font-family")
@@ -245,10 +257,12 @@ impl Engine {
 
         self.box_style(&props, &mut style);
 
+        style.text_indent_ratio = if let Some(value) = props.get("text-indent") {
+            value.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v / 100.0)
+        } else { parent_style.text_indent_ratio };
         style.text_indent = props.get("text-indent")
-                                 .and_then(|value| parse_text_indent(value, style.font_size, self.font_size,
-                                                                 parent_style.width, self.dpi))
-                                 .unwrap_or(parent_style.text_indent);
+            .and_then(|value| parse_text_indent(value, style.font_size, root_font_size, parent_style.width, self.dpi))
+            .unwrap_or_else(|| style.text_indent_ratio.map(|v| (v * parent_style.width as f32).round() as i32).unwrap_or(parent_style.text_indent));
 
         style.text_align = props.get("text-align")
                                 .map(String::as_str)
@@ -277,26 +291,31 @@ impl Engine {
                                       props.get("margin-right").map(String::as_str),
                                       props.get("margin-bottom").map(String::as_str),
                                       props.get("margin-left").map(String::as_str),
-                                      style.font_size, self.font_size, parent_style.width, self.dpi);
+                                      style.font_size, root_font_size, parent_style.width, self.dpi);
 
-            // Collapse the bottom margin of the previous sibling with the current top margin
-            style.margin.top = collapse_margins(loop_context.sibling_style.margin.bottom, style.margin.top);
+            style.margin_top_strut = MarginStrut::new(style.margin.top);
+            style.margin_bottom_strut = MarginStrut::new(style.margin.bottom);
+            style.margin_top_strut.merge(loop_context.sibling_style.bottom_margin);
+            style.margin.top = style.margin_top_strut.value();
 
             // Collapse the top margin of the first child and its parent.
-            if loop_context.is_first {
-                style.margin.top = collapse_margins(parent_style.margin.top, style.margin.top);
+            if loop_context.is_first && parent_style.padding.top == 0 {
+                style.margin_top_strut.merge(parent_style.margin_top_strut);
+                style.margin.top = style.margin_top_strut.value();
             }
 
-            style.padding = parse_edge(props.get("padding-top").map(String::as_str),
+            style.padding = parse_padding(props.get("padding-top").map(String::as_str),
                                        props.get("padding-right").map(String::as_str),
                                        props.get("padding-bottom").map(String::as_str),
                                        props.get("padding-left").map(String::as_str),
-                                       style.font_size, self.font_size, parent_style.width, self.dpi);
+                                       style.font_size, root_font_size, parent_style.width, self.dpi);
         }
 
         if matches!(node.tag_name(), Some("td" | "th")) {
             // CSS margins do not apply to table cells.
             style.margin = Edge::default();
+            style.margin_top_strut = MarginStrut::default();
+            style.margin_bottom_strut = MarginStrut::default();
         }
 
         style.padding.top += style.borders[0].width;
@@ -305,50 +324,45 @@ impl Engine {
         style.padding.left += style.borders[3].width;
 
         style.width = props.get("width")
-                           .and_then(|value| parse_width(value, style.font_size, self.font_size,
+                           .and_then(|value| parse_width(value, style.font_size, root_font_size,
                                                          parent_style.width, self.dpi))
                            .unwrap_or(0);
 
-        style.height = props.get("height")
-                            .and_then(|value| parse_height(value, style.font_size, self.font_size,
-                                                           parent_style.width, self.dpi))
-                            .unwrap_or(0);
+        style.definite_height = props.get("height")
+            .and_then(|value| parse_height(value, style.font_size, root_font_size, parent_style.definite_height, self.dpi));
+        if node.tag_name().is_none() { style.definite_height = parent_style.definite_height; }
+        style.height = if node.tag_name().is_some() { style.definite_height.unwrap_or(0) } else { 0 };
 
-        style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
-        style.end_x = parent_style.end_x - style.margin.right - style.padding.right;
-
-        let mut width = style.end_x - style.start_x;
-
-        if width < 0 {
-            if style.width > 0 {
-                let total_space = style.margin.left + style.padding.left + style.margin.right + style.padding.right;
-                let remaining_space = parent_style.width - style.width;
-                let ratio = remaining_space as f32 / total_space as f32;
-                style.margin.left = (style.margin.left as f32 * ratio).round() as i32;
-                style.padding.left = (style.padding.left as f32 * ratio).round() as i32;
-                style.margin.right = (style.margin.right as f32 * ratio).round() as i32;
-                style.padding.right = (style.padding.right as f32 * ratio).round() as i32;
-                style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
-                style.end_x = parent_style.end_x - style.margin.right - style.padding.right;
-                width = style.width;
-            } else {
-                style.margin.left = 0;
-                style.padding.left = 0;
-                style.margin.right = 0;
-                style.padding.right = 0;
-                style.start_x = parent_style.start_x;
-                style.end_x = parent_style.end_x;
-                width = parent_style.width;
+        self.box_constraints(&props, &mut style, parent_style);
+        let auto_left = props.get("margin-left").map(String::as_str) == Some("auto");
+        let auto_right = props.get("margin-right").map(String::as_str) == Some("auto");
+        let available = parent_style.width - style.margin.left - style.margin.right - style.padding.left - style.padding.right;
+        let specified_width = props.get("width").filter(|v| v.as_str() != "auto")
+            .and_then(|v| parse_width(v, style.font_size, root_font_size, parent_style.width, self.dpi))
+            .filter(|v| *v >= 0);
+        let mut width = if node.tag_name() == Some("hr") { available.max(0) } else { specified_width.unwrap_or(available.max(0)) };
+        width = width.min(style.max_width.unwrap_or(i32::MAX)).max(style.min_width);
+        let extra = (available - width).max(0);
+        if specified_width.is_some() || width != available.max(0) {
+            match (auto_left, auto_right) {
+                (true, true) => { style.margin.left = extra / 2; style.margin.right = extra - extra / 2; },
+                (true, false) => style.margin.left = extra,
+                (false, true) => style.margin.right = extra,
+                _ => (),
             }
         }
+        style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
+        style.end_x = style.start_x + width;
 
         if node.tag_name() == Some("table") {
             let preferred = draw_state.max_column_widths.iter().sum::<i32>();
             let table_width = if style.width > 0 { style.width.min(width) } else { preferred.min(width) }.max(0);
-            if draw_state.center_table {
-                style.start_x += (width - table_width) / 2;
-                draw_state.center_table = false;
-            }
+            let shift = if draw_state.center_table || (auto_left && auto_right) {
+                (width - table_width) / 2
+            } else if auto_left { width - table_width } else { 0 };
+            style.start_x += shift;
+            style.margin.left += shift;
+            draw_state.center_table = false;
             width = table_width;
             style.end_x = style.start_x + width;
         }
@@ -360,29 +374,28 @@ impl Engine {
             draw_state.position.y = root_data.rect.min.y;
         }
 
-        if node.tag_name() == Some("table") {
-            // Cell margins do not collapse with their table. Consume the
-            // table's top margin here rather than passing it into the cells.
+        let has_blocks = node.children().any(|n| n.is_block());
+        let box_top = draw_state.position.y + style.margin.top;
+        if has_blocks && (style.padding.top > 0 || node.tag_name() == Some("table")) {
             draw_state.position.y += style.margin.top;
             style.margin.top = 0;
+            style.margin_top_strut = MarginStrut::default();
         }
-
         draw_state.position.y += style.padding.top;
-
+        let content_top = draw_state.position.y + style.margin.top;
         let first_page = display_list.len() - 1;
         let first_command = display_list[first_page].len();
-        let box_top = draw_state.position.y - style.padding.top + style.margin.top;
 
         if node.tag_name() == Some("hr") {
             let legacy_length = |value: &str| {
                 if value.parse::<f32>().is_ok() { format!("{}px", value) } else { value.to_string() }
             };
             let width = props.get("width").cloned().or_else(|| node.attribute("width").map(legacy_length))
-                .and_then(|v| parse_width(&v, style.font_size, self.font_size, parent_style.width, self.dpi))
+                .and_then(|v| parse_width(&v, style.font_size, root_font_size, parent_style.width, self.dpi))
                 .unwrap_or(style.width).clamp(0, style.width.max(0));
             let height = props.get("height").cloned().or_else(|| node.attribute("size").map(legacy_length))
-                .and_then(|v| parse_height(&v, style.font_size, self.font_size, parent_style.width, self.dpi))
-                .unwrap_or_else(|| parse_length("2px", style.font_size, self.font_size, self.dpi).unwrap()).max(0);
+                .and_then(|v| parse_height(&v, style.font_size, root_font_size, parent_style.definite_height, self.dpi))
+                .unwrap_or_else(|| parse_length("2px", style.font_size, root_font_size, self.dpi).unwrap()).max(0);
             let x = style.start_x + match node.attribute("align").unwrap_or("center") {
                 "left" => 0, "right" => style.width - width, _ => (style.width - width) / 2,
             };
@@ -398,10 +411,8 @@ impl Engine {
             }
             display_list.last_mut().unwrap().extend(box_commands(&style, rect, root_data.start_offset + node.offset(), true, true));
             draw_state.position.y = rect.max.y;
-            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle { padding: style.padding, margin: style.margin }, rects: vec![Some(rect)] };
+            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle { padding: style.padding, margin: style.margin, bottom_margin: style.margin_bottom_strut }, rects: vec![Some(rect)] };
         }
-
-        let has_blocks = node.children().any(|n| n.is_block());
 
         if has_blocks {
             if node.id().is_some() {
@@ -503,7 +514,12 @@ impl Engine {
                         inner_loop_context.sibling_style = artifact.sibling_style;
 
                         if inner_loop_context.is_last {
-                            style.margin.bottom = collapse_margins(inner_loop_context.sibling_style.margin.bottom, style.margin.bottom);
+                            if style.padding.bottom == 0 && style.definite_height.is_none() {
+                                style.margin_bottom_strut.merge(inner_loop_context.sibling_style.bottom_margin);
+                                style.margin.bottom = style.margin_bottom_strut.value();
+                            } else {
+                                draw_state.position.y += inner_loop_context.sibling_style.margin.bottom;
+                            }
                         }
 
                         index += colspan;
@@ -559,11 +575,20 @@ impl Engine {
 
                         let artifact = self.build_display_list(child, &style, &inner_loop_context, stylesheet, root_data, resource_fetcher, draw_state, display_list);
                         inner_loop_context.sibling_style = artifact.sibling_style;
-                        inner_loop_context.is_first = false;
+                        let child_props = specified_values(child, stylesheet);
+                        if child_props.get("float").and_then(|v| parse_float(v)).is_none() &&
+                           child_props.get("display").map(String::as_str) != Some("none") {
+                            inner_loop_context.is_first = false;
+                        }
 
                         // Collapse the bottom margin of the last child and its parent.
                         if inner_loop_context.is_last {
-                            style.margin.bottom = collapse_margins(inner_loop_context.sibling_style.margin.bottom, style.margin.bottom);
+                            if style.padding.bottom == 0 && style.definite_height.is_none() {
+                                style.margin_bottom_strut.merge(inner_loop_context.sibling_style.bottom_margin);
+                                style.margin.bottom = style.margin_bottom_strut.value();
+                            } else {
+                                draw_state.position.y += inner_loop_context.sibling_style.margin.bottom;
+                            }
                         }
 
                         let last_index = rects.len() - 1;
@@ -622,22 +647,29 @@ impl Engine {
         }
 
         let empty = rects.is_empty() || rects == [None];
+        style.height = style.height.max(style.min_height);
         let has_box_height = style.height > 0 || style.padding.top + style.padding.bottom > 0;
         if empty && has_box_height {
             draw_state.position.y += style.margin.top;
         }
 
         if style.height > 0 {
-            let height = rects.iter()
-                              .filter_map(|v| v.map(|r| r.height() as i32))
-                              .sum::<i32>();
+            let height = if display_list.len() - 1 == first_page {
+                draw_state.position.y - content_top
+            } else {
+                root_data.rect.max.y - content_top +
+                    (display_list.len() - first_page - 2) as i32 * root_data.rect.height() as i32 +
+                    draw_state.position.y - root_data.rect.min.y
+            };
             draw_state.position.y += (style.height - height).max(0);
         }
 
         // Collapse top and bottom margins of empty blocks.
         if empty && !has_box_height {
-            style.margin.bottom = collapse_margins(style.margin.bottom, style.margin.top);
+            style.margin_bottom_strut.merge(style.margin_top_strut);
+            style.margin.bottom = style.margin_bottom_strut.value();
             style.margin.top = 0;
+            style.margin_top_strut = MarginStrut::default();
         }
 
         draw_state.position.y += style.padding.bottom;
@@ -668,10 +700,34 @@ impl Engine {
         ChildArtifact {
             cell_style: if matches!(node.tag_name(), Some("td" | "th")) { Some(style.clone()) } else { None },
             sibling_style: SiblingStyle {
+                bottom_margin: style.margin_bottom_strut,
                 padding: style.padding,
                 margin: style.margin,
             },
             rects,
+        }
+    }
+
+    fn box_constraints(&self, props: &super::style::PropertyMap, style: &mut StyleData, parent: &StyleData) {
+        let width = |name| props.get(name).and_then(|v| parse_width(v, style.font_size, style.root_font_size, parent.width, self.dpi)).filter(|v| *v >= 0);
+        let height = |name| props.get(name).and_then(|v| parse_height(v, style.font_size, style.root_font_size, parent.definite_height, self.dpi));
+        style.min_width = width("min-width").unwrap_or(0);
+        style.max_width = width("max-width");
+        style.min_height = height("min-height").unwrap_or(0);
+        style.max_height = height("max-height");
+    }
+
+    fn resolve_line_height(&self, value: Option<&String>, style: &mut StyleData, parent: &StyleData) {
+        let ratio = value.and_then(|v| if v == "normal" { Some(1.2) } else {
+            v.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)
+        });
+        if let Some(height) = value.and_then(|v| parse_line_height(v, style.font_size, style.root_font_size, self.dpi)).filter(|v| *v >= 0) {
+            style.line_height = height;
+            style.line_height_ratio = ratio;
+        } else {
+            style.line_height_ratio = parent.line_height_ratio;
+            style.line_height = parent.line_height_ratio.map(|ratio| pt_to_px(ratio * style.font_size, self.dpi).round() as i32)
+                .unwrap_or(parent.line_height);
         }
     }
 
@@ -683,7 +739,7 @@ impl Engine {
             if matches!(kind, "none" | "hidden") { continue; }
             let value = props.get(&format!("border-{}-width", side)).map(String::as_str).unwrap_or("medium");
             let value = match value { "thin" => "1px", "medium" => "3px", "thick" => "5px", _ => value };
-            border.width = parse_length(value, style.font_size, self.font_size, self.dpi).unwrap_or(0).max(0);
+            border.width = parse_length(value, style.font_size, style.root_font_size, self.dpi).unwrap_or(0).max(0);
             border.pattern = match kind { "dotted" => 1, "dashed" => 2, _ => 0 };
             border.color = match props.get(&format!("border-{}-color", side)).map(String::as_str) {
                 Some("transparent") => None,
@@ -810,11 +866,8 @@ impl Engine {
                 style.font_style = parent_style.font_style;
                 style.line_height = parent_style.line_height;
                 style.text_indent = parent_style.text_indent;
-                style.retain_whitespace = parent_style.retain_whitespace
-                                          || props.get("white-space")
-                                                  .map(String::as_str)
-                                                  .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
-                                                  .unwrap_or(false);
+                style.retain_whitespace = props.get("white-space").map(|v| matches!(v.as_str(), "pre" | "pre-wrap"))
+                    .unwrap_or(parent_style.retain_whitespace);
                 style.language = parent_style.language.clone();
                 style.uri = parent_style.uri.clone();
 
@@ -828,17 +881,21 @@ impl Engine {
                     return;
                 }
 
+                let root_font_size = if parent_style.root_font_size > 0.0 { parent_style.root_font_size } else { self.font_size };
+                style.root_font_size = root_font_size;
                 style.font_size = props.get("font-size")
-                                       .and_then(|value| parse_font_size(value, parent_style.font_size, self.font_size))
+                                       .and_then(|value| parse_font_size(value, parent_style.font_size, root_font_size))
                                        .unwrap_or(parent_style.font_size);
 
                 style.width = props.get("width")
-                                   .and_then(|value| parse_width(value, style.font_size, self.font_size, parent_style.width, self.dpi))
+                                   .and_then(|value| parse_width(value, style.font_size, root_font_size, parent_style.width, self.dpi))
                                    .unwrap_or(0);
 
-                style.height = props.get("height")
-                                    .and_then(|value| parse_height(value, style.font_size, self.font_size, parent_style.width, self.dpi))
-                                    .unwrap_or(0);
+                style.definite_height = props.get("height")
+                    .and_then(|value| parse_height(value, style.font_size, root_font_size, parent_style.definite_height, self.dpi));
+                style.height = style.definite_height.unwrap_or(0);
+
+                self.box_constraints(&props, &mut style, parent_style);
 
                 style.font_kind = props.get("font-family")
                                        .and_then(|value| parse_font_kind(value))
@@ -852,16 +909,12 @@ impl Engine {
                     .map(|value| parse_color(value)).unwrap_or(parent_style.background);
 
                 style.letter_spacing = props.get("letter-spacing")
-                                            .and_then(|value| parse_letter_spacing(value, style.font_size, self.font_size, self.dpi))
+                                            .and_then(|value| parse_letter_spacing(value, style.font_size, root_font_size, self.dpi))
                                             .unwrap_or(parent_style.letter_spacing);
 
                 style.word_spacing = props.get("word-spacing")
-                                            .and_then(|value| parse_word_spacing(value, style.font_size, self.font_size, self.dpi))
+                                            .and_then(|value| parse_word_spacing(value, style.font_size, root_font_size, self.dpi))
                                             .unwrap_or(parent_style.word_spacing);
-
-                style.vertical_align = props.get("vertical-align")
-                                            .and_then(|value| parse_vertical_align(value, style.font_size, self.font_size, style.line_height, self.dpi))
-                                            .unwrap_or(parent_style.vertical_align);
 
                 style.font_style = props.get("font-style")
                                         .and_then(|value| parse_font_style(value))
@@ -882,9 +935,11 @@ impl Engine {
                     }
                 }
 
-                style.line_height = props.get("line-height")
-                                         .and_then(|value| parse_line_height(value, style.font_size, self.font_size, self.dpi))
-                                         .unwrap_or_else(|| (parent_style.line_height as f32 * style.font_size / parent_style.font_size).round() as i32);
+                self.resolve_line_height(props.get("line-height"), &mut style, parent_style);
+                style.vertical_align = props.get("vertical-align")
+                                            .and_then(|value| parse_vertical_align(value, style.font_size, root_font_size, style.line_height, self.dpi))
+                                            .unwrap_or(0);
+
                 style.text_align = props.get("text-align").and_then(|value| parse_text_align(value))
                                         .unwrap_or(parent_style.text_align);
                 style.float = props.get("float").and_then(|value| parse_float(value));
@@ -893,12 +948,12 @@ impl Engine {
                                               props.get("margin-right").map(String::as_str),
                                               props.get("margin-bottom").map(String::as_str),
                                               props.get("margin-left").map(String::as_str),
-                                              style.font_size, self.font_size, parent_style.width, self.dpi);
-                    style.padding = parse_edge(props.get("padding-top").map(String::as_str),
+                                              style.font_size, root_font_size, parent_style.width, self.dpi);
+                    style.padding = parse_padding(props.get("padding-top").map(String::as_str),
                                                props.get("padding-right").map(String::as_str),
                                                props.get("padding-bottom").map(String::as_str),
                                                props.get("padding-left").map(String::as_str),
-                                               style.font_size, self.font_size, parent_style.width, self.dpi);
+                                               style.font_size, root_font_size, parent_style.width, self.dpi);
                     self.box_style(&props, &mut style);
                     style.padding.top += style.borders[0].width;
                     style.padding.right += style.borders[1].width;
@@ -918,8 +973,8 @@ impl Engine {
                 style.float = None;
                 if props.get("position").map(String::as_str) == Some("relative") {
                     style.relative_offset = pt!(
-                        props.get("left").and_then(|v| parse_length(v, style.font_size, self.font_size, self.dpi)).unwrap_or(0),
-                        props.get("top").and_then(|v| parse_length(v, style.font_size, self.font_size, self.dpi)).unwrap_or(0));
+                        props.get("left").and_then(|v| parse_length(v, style.font_size, root_font_size, self.dpi)).unwrap_or(0),
+                        props.get("top").and_then(|v| parse_length(v, style.font_size, root_font_size, self.dpi)).unwrap_or(0));
                 }
 
                 if node.id().is_some() {
@@ -940,12 +995,14 @@ impl Engine {
                             style.display = Display::Block;
                         }
                         let is_block = style.display == Display::Block;
-                        if is_block && !float_contents {
+                        style.auto_margins = [props.get("margin-left").map(String::as_str) == Some("auto"),
+                                              props.get("margin-right").map(String::as_str) == Some("auto")];
+                        if !float_contents {
                             style.margin = parse_edge(props.get("margin-top").map(String::as_str),
                                                       props.get("margin-right").map(String::as_str),
                                                       props.get("margin-bottom").map(String::as_str),
                                                       props.get("margin-left").map(String::as_str),
-                                                      style.font_size, self.font_size, parent_style.width, self.dpi);
+                                                      style.font_size, root_font_size, parent_style.width, self.dpi);
                         }
                         if is_block {
                             inlines.push(InlineMaterial::LineBreak);
@@ -973,16 +1030,28 @@ impl Engine {
                 }
 
                 if let Some(mut v) = props.get("-plato-insert-before")
-                                          .map(|value| parse_inline_material(value, style.font_size, self.font_size, self.dpi)) {
+                                          .map(|value| parse_inline_material(value, style.font_size, root_font_size, self.dpi)) {
                     inlines.append(&mut v);
                 }
+
+                if !float_contents || style.width == 0 { style.width = parent_style.width; }
+                if !float_contents { style.definite_height = parent_style.definite_height; }
+                let inline_margin = parse_edge(None, props.get("margin-right").map(String::as_str), None,
+                    props.get("margin-left").map(String::as_str), style.font_size, root_font_size, parent_style.width, self.dpi);
+                let inline_padding = parse_padding(None, props.get("padding-right").map(String::as_str), None,
+                    props.get("padding-left").map(String::as_str), style.font_size, root_font_size, parent_style.width, self.dpi);
+                let left = inline_margin.left + inline_padding.left;
+                let right = inline_margin.right + inline_padding.right;
+                if !float_contents && left != 0 { inlines.push(InlineMaterial::Box(left)); }
 
                 for child in node.children() {
                     self.gather_inline_material(child, stylesheet, &style, spine_dir, markers, inlines);
                 }
 
+                if !float_contents && right != 0 { inlines.push(InlineMaterial::Box(right)); }
+
                 if let Some(mut v) = props.get("-plato-insert-after")
-                                          .map(|value| parse_inline_material(value, style.font_size, self.font_size, self.dpi)) {
+                                          .map(|value| parse_inline_material(value, style.font_size, root_font_size, self.dpi)) {
                     inlines.append(&mut v);
                 }
             },
@@ -1043,11 +1112,30 @@ impl Engine {
                                 } else if height != 0 {
                                     width = (height as f32 * w / h).round() as i32;
                                 }
+                                // Constrain replaced images without losing their aspect ratio.
+                                let shrink = (style.max_width.unwrap_or(i32::MAX) as f32 / width.max(1) as f32)
+                                    .min(style.max_height.unwrap_or(i32::MAX) as f32 / height.max(1) as f32).min(1.0);
+                                width = (width as f32 * shrink).round() as i32;
+                                height = (height as f32 * shrink).round() as i32;
+                                let grow = (style.min_width as f32 / width.max(1) as f32)
+                                    .max(style.min_height as f32 / height.max(1) as f32).max(1.0);
+                                width = (width as f32 * grow).round() as i32;
+                                height = (height as f32 * grow).round() as i32;
                                 scale = width as f32 / w;
                             }
                         }
 
-                        if width * height > 0 {
+                        if width > 0 && height > 0 {
+                            let mut margin = style.margin;
+                            if style.display == Display::Block {
+                                let remaining = (line_width - width - margin.left - margin.right).max(0);
+                                match style.auto_margins {
+                                    [true, true] => { margin.left = remaining / 2; margin.right = remaining - remaining / 2; },
+                                    [true, false] => margin.left = remaining,
+                                    [false, true] => margin.right = remaining,
+                                    _ => (),
+                                }
+                            }
                             let element = ImageElement {
                                     offset: *offset,
                                     width,
@@ -1056,7 +1144,7 @@ impl Engine {
                                     vertical_align: style.vertical_align,
                                     relative_offset: style.relative_offset,
                                     display: style.display,
-                                    margin: style.margin,
+                                    margin,
                                     float: style.float,
                                     path: path.clone(),
                                     uri: style.uri.clone(),
@@ -1072,9 +1160,9 @@ impl Engine {
                     let font_size = (style.font_size * 64.0) as u32;
                     let space_plan = {
                         let font = self.fonts.as_mut().unwrap()
-                                       .get_mut(parent_style.font_kind,
-                                                parent_style.font_style,
-                                                parent_style.font_weight);
+                                       .get_mut(style.font_kind,
+                                                style.font_style,
+                                                style.font_weight);
                         font.set_size(font_size, self.dpi);
                         font.plan(" 0.", None, None)
                     };
@@ -1119,7 +1207,7 @@ impl Engine {
                                     });
                                 }
                                 if c.is_whitespace() {
-                                    if c == '\n' && parent_style.retain_whitespace {
+                                    if c == '\n' && style.retain_whitespace {
                                         let stretch = if parent_style.text_align == TextAlign::Center { big_stretch } else { line_width };
 
                                         items.push(ParagraphItem::Penalty { penalty: INFINITE_PENALTY, width: 0, flagged: false });
@@ -1148,13 +1236,13 @@ impl Engine {
                                                    inlines[index+1..].iter().any(|m| m.text().map_or(false,
                                                                                       |text| text.chars().any(|c| !c.is_xml_whitespace())));
 
-                                    if !parent_style.retain_whitespace && c.is_xml_whitespace() &&
+                                    if !style.retain_whitespace && c.is_xml_whitespace() &&
                                         (last_c.map(|c| c.is_xml_whitespace()) != Some(false) || !has_more) {
                                             start_index += chunk.len();
                                             continue;
                                     }
 
-                                    let mut width = if !parent_style.retain_whitespace {
+                                    let mut width = if !style.retain_whitespace && c.is_xml_whitespace() {
                                         space_plan.glyph_advance(0)
                                     } else if let Some(index) = FONT_SPACES.chars().position(|x| x == c) {
                                         space_plan.glyph_advance(index)
@@ -1174,7 +1262,7 @@ impl Engine {
 
                                     let is_unbreakable = c == '\u{00A0}' || c == '\u{202F}' || c == '\u{2007}';
 
-                                    if (is_unbreakable || (parent_style.retain_whitespace && c.is_xml_whitespace())) &&
+                                    if (is_unbreakable || (style.retain_whitespace && c.is_xml_whitespace())) &&
                                        (last_c == Some('\n') || last_c.is_none()) {
                                         items.push(ParagraphItem::Box { width: 0, data: ParagraphElement::Nothing });
                                     }
@@ -1275,7 +1363,8 @@ impl Engine {
         let side = style.float.unwrap();
         let margin = style.margin;
         let padding = style.padding;
-        let max_width = (line_width - margin.left - margin.right - padding.left - padding.right).max(1);
+        let max_width = (line_width - margin.left - margin.right - padding.left - padding.right)
+            .min(style.max_width.unwrap_or(i32::MAX)).max(style.min_width).max(1);
         let mut inlines = material.inlines.as_slice();
         let is_blank = |inline: &InlineMaterial| match inline {
             InlineMaterial::LineBreak => true,
@@ -1287,6 +1376,14 @@ impl Engine {
         }
         while inlines.last().map_or(false, &is_blank) {
             inlines = &inlines[..inlines.len()-1];
+        }
+        let mut image_contents;
+        if inlines.len() == 1 && matches!(inlines[0], InlineMaterial::Image(_)) {
+            image_contents = inlines.to_vec();
+            if let InlineMaterial::Image(image) = &mut image_contents[0] {
+                image.style.display = Display::Block;
+            }
+            inlines = &image_contents;
         }
         // Inline children can carry the font size (for example a bold letter
         // inside a floated span). Their line box determines the natural size.
@@ -1318,7 +1415,7 @@ impl Engine {
         }
         preferred_width = preferred_width.max(current_width);
         let width = if style.width > 0 { style.width } else { preferred_width }.clamp(1, max_width);
-        let explicit_height = style.height;
+        let explicit_height = style.height.max(style.min_height);
         style.width = width;
         style.start_x = 0;
         style.end_x = width;
@@ -1363,11 +1460,7 @@ impl Engine {
 
         let position = &mut draw_state.position;
 
-        let text_indent = if style.text_align == TextAlign::Center {
-            0
-        } else {
-            style.text_indent
-        };
+        let text_indent = style.text_indent;
 
         let (ascender, descender) = {
             let fonts = self.fonts.as_mut().unwrap();
@@ -1376,8 +1469,8 @@ impl Engine {
             (font.ascender(), font.descender())
         };
 
-        let ratio = ascender as f32 / (ascender - descender) as f32;
-        let space_top = (style.line_height as f32 * ratio) as i32;
+        let leading = style.line_height - (ascender - descender);
+        let space_top = ascender + leading / 2;
         let space_bottom = style.line_height - space_top;
 
         position.y += style.margin.top + space_top;
@@ -1445,7 +1538,7 @@ impl Engine {
         }
 
         let mut para_shape = if let Some(floating_rects) = draw_state.floats.get(&page_index) {
-            let max_lines = (root_data.rect.max.y - position.y + space_top) / style.line_height;
+            let max_lines = (root_data.rect.max.y - position.y + space_top) / style.line_height.max(1);
             let mut para_shape = Vec::new();
             for index in 0..max_lines {
                 let y_min = position.y - space_top + index * style.line_height;
@@ -1605,7 +1698,7 @@ impl Engine {
             let current_text_indent = if is_first_line { text_indent } else { 0 };
 
             match style.text_align {
-                TextAlign::Right => position.x = end_x - width - current_text_indent,
+                TextAlign::Right => position.x = end_x - width,
                 _ => position.x = start_x + current_text_indent,
             }
 
@@ -2271,6 +2364,144 @@ mod tests {
         pages.iter().flatten().filter_map(|command| match command {
             DrawCommand::Text(text) => Some(text), _ => None,
         }).collect()
+    }
+
+    #[test]
+    fn percentage_image_width_uses_the_floats_content_width() {
+        let (_, pages) = layout("<div class='cap'><img src='cap.svg'/></div><p>Text</p>",
+            ".cap {float:left; width:40px;} img {width:100%;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 30);
+        assert_eq!(image.rect.height(), 30);
+    }
+
+    #[test]
+    fn image_auto_margins_and_empty_fixed_height_do_not_consume_margin() {
+        let (_, pages) = layout("<p><img src='cap.svg'/></p>", "img {display:block; width:80px; margin:0 auto;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.min.x, 90);
+        let (_, pages) = layout("<div/>", "div {height:40px; margin-top:20px; background:#ddd;}", 200, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.min.y == 15 && b.rect.height() == 30));
+    }
+
+    #[test]
+    fn inline_pre_and_unicode_spaces_preserve_their_width() {
+        let (_, normal) = layout("<p>X Y</p>", "", 200, 0);
+        let (_, em) = layout("<p>X&#x2003;Y</p>", "", 200, 0);
+        let gap = |pages: &[Page]| { let text = texts(pages); text[1].rect.min.x - text[0].rect.max.x };
+        assert_eq!(gap(&em), 12);
+        assert!(gap(&em) > gap(&normal));
+        let (_, preserved) = layout("<p><span>X   Y</span></p>", "span {white-space:pre;}", 200, 0);
+        assert_eq!(gap(&preserved), 3 * gap(&normal));
+        let (_, reset) = layout("<p><span>X   Y</span></p>", "p {white-space:pre;} span {white-space:normal;}", 200, 0);
+        assert_eq!(gap(&reset), gap(&normal));
+    }
+
+    #[test]
+    fn adjoining_margin_groups_preserve_positive_and_negative_extrema() {
+        let (_, pages) = layout("<div><p>A</p><div class='empty'/><p class='last'>B</p></div>",
+            "p {margin-bottom:20px;} .empty {margin-top:-8px;} .last {margin-top:16px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15 - 6);
+        let (_, pages) = layout("<div><p>A</p><div style='display:none'/><p>B</p></div>", "p {margin-bottom:20px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15);
+    }
+
+    #[test]
+    fn inherited_percentage_indent_resolves_against_child_containing_block() {
+        let (_, pages) = layout("<div><section><p>X</p></section></div>", "div {text-indent:10%;} section {width:100px;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 8);
+    }
+
+    #[test]
+    fn min_max_widths_and_image_size_constraints() {
+        let (_, pages) = layout("<div><p>X</p></div>", "div {max-width:100px; margin:0 auto; background:#ddd;}", 200, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.width() == 75 && b.rect.min.x == 82));
+        let (_, pages) = layout("<p><img src='cap.svg'/></p>", "img {max-width:20%;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 48);
+        assert_eq!(image.rect.height(), 48);
+    }
+
+    #[test]
+    fn floated_image_preserves_previous_margin_and_starts_at_box_top() {
+        let markup = "<div><p class='quote'>Quote</p><div class='cap'><img src='cap.svg'/></div><p>Opening</p></div>";
+        let css = ".quote {margin-bottom:20px;} .cap {float:left; width:30px;} .cap img {width:30px;}";
+        let (_, pages) = layout(markup, css, 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.min.y, 16 + 15);
+        let (_, without_float) = layout("<div><p class='quote'>Quote</p><p>Opening</p></div>", css, 200, 0);
+        assert_eq!(text[1].position.y, texts(&without_float)[1].position.y);
+    }
+
+    #[test]
+    fn padding_and_borders_stop_parent_child_margin_collapse() {
+        let (_, plain) = layout("<p>X</p>", "", 200, 0);
+        let baseline = texts(&plain)[0].position.y;
+        for barrier in ["padding-top:4px", "border-top:4px solid"] {
+            let css = format!("div {{margin-top:10px;{};}} p {{margin-top:8px;}}", barrier);
+            let (_, pages) = layout("<div><p>X</p></div>", &css, 200, 0);
+            assert_eq!(texts(&pages)[0].position.y - baseline, 8 + 3 + 6);
+        }
+        let (_, pages) = layout("<section><div><p>X</p></div><p>Y</p></section>", "div {padding-bottom:4px;} div p {margin-bottom:8px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 6 + 3);
+    }
+
+    #[test]
+    fn block_width_auto_margins_and_negative_margins() {
+        let (_, pages) = layout("<div><p>X</p></div>", "div {width:100px; margin:0 auto; padding:4px; background:#ddd;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 82);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.width() == 81));
+        let (_, pages) = layout("<p>X</p>", "p {margin:0 auto;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 0);
+        let (_, pages) = layout("<p>X</p>", "p {margin-left:-8px; padding-left:4px;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, -3);
+    }
+
+    #[test]
+    fn em_margins_and_indent_use_the_elements_font_size() {
+        let (_, pages) = layout("<p>X</p>", "p {font-size:150%; margin:0 3em; text-indent:1.5em;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 54 + 27);
+    }
+
+    #[test]
+    fn rem_tracks_computed_html_font_size() {
+        let (_, pages) = layout("<html><body><p>X</p></body></html>", "html {font-size:200%;} p {font-size:50%; margin-left:1rem; text-indent:1em;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 24 + 12);
+    }
+
+    #[test]
+    fn line_height_inherits_numbers_as_ratios_and_lengths_as_lengths() {
+        for (value, expected) in [("2", 48), ("24px", 18), ("150%", 18)] {
+            let css = format!("div {{line-height:{};}} p {{font-size:200%;}}", value);
+            let (_, pages) = layout("<div><p>one<br/>two</p></div>", &css, 200, 0);
+            let text = texts(&pages);
+            assert_eq!(text[1].position.y - text[0].position.y, expected, "{}", value);
+        }
+    }
+
+    #[test]
+    fn inline_spacing_and_percentage_width_survive_inline_ancestors() {
+        let (_, a) = layout("<p>X<span>Y</span>Z</p>", "", 200, 0);
+        let (_, b) = layout("<p>X<span>Y</span>Z</p>", "span {margin-left:-4px; padding-right:8px;}", 200, 0);
+        assert_eq!(texts(&b)[1].rect.min.x - texts(&a)[1].rect.min.x, -3);
+        assert_eq!(texts(&b)[2].rect.min.x - texts(&a)[2].rect.min.x, 3);
+        let (_, pages) = layout("<p><span><img src='cap.svg' style='width:25%'/></span></p>", "", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 60);
+    }
+
+    #[test]
+    fn percentage_height_uses_definite_height_and_fixed_height_uses_line_boxes() {
+        let (_, pages) = layout("<div><p/></div>", "div {height:200px;} p {height:50%; background:#ddd;}", 300, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.height() == 75));
+        let (_, plain) = layout("<p>X</p>", "", 200, 0);
+        let (_, pages) = layout("<div><p>one<br/>two</p></div><p>X</p>", "div {height:40px;}", 200, 0);
+        assert_eq!(texts(&pages)[2].position.y - texts(&plain)[0].position.y, 32);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
 use crate::geom::{Rectangle, CornerSpec};
 use super::menu::MenuKind;
-use super::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, EntryKind};
+use super::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, EntryKind, EntryId};
 use super::icon::ICONS_PIXMAPS;
 use crate::input::{DeviceEvent, FingerStatus};
 use crate::gesture::GestureEvent;
@@ -108,7 +108,9 @@ impl View for MenuEntry {
                     },
                     EntryKind::CommandEx(_, ref id, ref entries) => {
                         let dot_menu_x = self.rect.max.x - *DOT_MENU_WIDTH.lock().unwrap();
-                        if center.x < dot_menu_x {
+                        let held_style = matches!(id, EntryId::SetCssTweak(_))
+                            && matches!(evt, Event::Gesture(GestureEvent::HoldFingerShort(..)));
+                        if center.x < dot_menu_x && !held_style {
                             bus.push_back(Event::Select(id.clone()));
                             bus.push_back(Event::Validate);
                         } else {

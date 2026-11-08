@@ -213,6 +213,8 @@ impl HtmlDocument {
             language,
             font_size: self.engine.font_size,
             line_height: pt_to_px(self.engine.line_height * self.engine.font_size, self.engine.dpi).round() as i32,
+            line_height_ratio: Some(self.engine.line_height),
+            definite_height: Some(rect.height() as i32),
             text_align: self.engine.text_align,
             start_x: rect.min.x,
             end_x: rect.max.x,

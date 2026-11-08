@@ -80,8 +80,39 @@ impl NamedInput {
         }
     }
 
+    /// A full-width input below a wrapped prompt, for longer instructions.
+    pub fn with_prompt(text: &str, view_id: ViewId, input_id: ViewId, context: &mut Context) -> NamedInput {
+        let dpi = CURRENT_DEVICE.dpi;
+        let (width, height) = context.display.dims;
+        let font = font_from_style(&mut context.fonts, &NORMAL_STYLE, dpi);
+        let padding = font.em() as i32;
+        let line_height = 3 * font.x_heights.0 as i32;
+        let available = (width as i32 - 5 * padding).max(padding);
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for word in text.split_whitespace() {
+            let next = if line.is_empty() { word.to_string() } else { format!("{} {}", line, word) };
+            if !line.is_empty() && font.plan(&next, None, None).width > available {
+                lines.push(line);
+                line = word.to_string();
+            } else { line = next; }
+        }
+        if !line.is_empty() { lines.push(line); }
+        let total_height = (lines.len() as i32 + 2) * line_height + 2 * padding;
+        let top = (height as i32 / 3 - total_height / 2).max(padding);
+        let rect = rect![padding, top, width as i32 - padding, top + total_height];
+        let mut children: Vec<Box<dyn View>> = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            let y = top + padding + index as i32 * line_height;
+            children.push(Box::new(Label::new(rect![2 * padding, y, width as i32 - 2 * padding, y + line_height], line.clone(), Align::Left(0))));
+        }
+        let y = top + padding + lines.len() as i32 * line_height;
+        children.push(Box::new(InputField::new(rect![2 * padding, y, width as i32 - 2 * padding, y + 2 * line_height], input_id)));
+        NamedInput { id: ID_FEEDER.next(), rect, children, view_id }
+    }
+
     pub fn set_text(&mut self, text: &str, rq: &mut RenderQueue, context: &mut Context) {
-        if let Some(input_field) = self.children[1].downcast_mut::<InputField>() {
+        if let Some(input_field) = self.children.iter_mut().find_map(|child| child.downcast_mut::<InputField>()) {
             input_field.set_text(text, true, rq, context);
         }
     }
