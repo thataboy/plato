@@ -42,7 +42,32 @@ This is a rather trivial example that is not necessary per se, since there's bui
 
 `CSS Tweaks` provides a way to add CSS styles to individual epubs and override their styles, without resorting to editing books in a program like Calibre.
 
-Styles are defined in `Settings.toml` using the following format:
+To enter a style directly in the reader, select text in the element you want to
+change, then choose **CSS tweaks → New**. The New command appears after a
+separator below the existing entries and remains available when no saved styles
+exist.
+
+The first prompt says:
+
+> Enter CSS without {  } e.g. text-align: center; font-size: 1.2em;
+
+After submitting the declarations, the second prompt says:
+
+> Enter name (if you want to reuse it)
+
+Submit a blank name to apply the declarations without adding a saved preset.
+Enter a name to append a reusable `[[css-styles]]` entry and save `Settings.toml`
+immediately. The usual selector choices, per-book persistence, and Undo commands
+apply in either case. Dismissing either prompt cancels the new style; submitting
+empty CSS also cancels. A save error is reported and the named style remains
+available in the running session.
+
+Long-press a saved style name in **CSS tweaks** to open **Edit**, **Rename**,
+and **Delete**. Edit and Rename start with the current value. Changes are saved
+to `Settings.toml` and affect the preset when you next apply it. Use the book's
+Undo commands to remove rules already applied.
+
+Styles can also be defined in `Settings.toml` using the following format:
 
 ```
 [[css-styles]]

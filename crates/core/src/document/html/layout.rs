@@ -51,14 +51,28 @@ pub struct StyleData {
     pub float: Option<Float>,
     pub width: i32,
     pub height: i32,
+    pub min_width: i32,
+    pub max_width: Option<i32>,
+    pub min_height: i32,
+    pub max_height: Option<i32>,
     pub margin: Edge,
+    pub auto_margins: [bool; 2],
+    pub margin_top_strut: MarginStrut,
+    pub margin_bottom_strut: MarginStrut,
     pub padding: Edge,
+    pub background: Option<Color>,
+    pub borders: [Border; 4],
+    pub relative_offset: Point,
     pub start_x: i32,
     pub end_x: i32,
     pub retain_whitespace: bool,
     pub text_align: TextAlign,
     pub text_indent: i32,
+    pub text_indent_ratio: Option<f32>,
     pub line_height: i32,
+    pub line_height_ratio: Option<f32>,
+    pub root_font_size: f32,
+    pub definite_height: Option<i32>,
     pub language: Option<String>,
     pub font_kind: FontKind,
     pub font_style: FontStyle,
@@ -71,6 +85,14 @@ pub struct StyleData {
     pub vertical_align: i32,
     pub list_style_type: Option<ListStyleType>,
     pub uri: Option<String>,
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Border {
+    pub width: i32,
+    // 0 = solid, 1 = dotted, 2 = dashed.
+    pub pattern: u8,
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -118,12 +140,15 @@ pub enum ListStyleType {
 
 #[derive(Debug, Clone)]
 pub struct ChildArtifact {
+    // Cell decoration is deferred until the row height is known.
+    pub cell_style: Option<StyleData>,
     pub sibling_style: SiblingStyle,
     pub rects: Vec<Option<Rectangle>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SiblingStyle {
+    pub bottom_margin: MarginStrut,
     pub padding: Edge,
     pub margin: Edge,
 }
@@ -150,6 +175,7 @@ impl Default for LineStats {
 impl Default for SiblingStyle {
     fn default() -> Self {
         SiblingStyle {
+            bottom_margin: MarginStrut::default(),
             padding: Edge::default(),
             margin: Edge::default(),
         }
@@ -183,14 +209,28 @@ impl Default for StyleData {
             float: None,
             width: 0,
             height: 0,
+            min_width: 0,
+            max_width: None,
+            min_height: 0,
+            max_height: None,
             margin: Edge::default(),
+            auto_margins: [false; 2],
+            margin_top_strut: MarginStrut::default(),
+            margin_bottom_strut: MarginStrut::default(),
             padding: Edge::default(),
+            background: None,
+            borders: [Border::default(); 4],
+            relative_offset: Point::default(),
             start_x: 0,
             end_x: 0,
             retain_whitespace: false,
             text_align: TextAlign::Left,
             text_indent: 0,
+            text_indent_ratio: None,
             line_height: 0,
+            line_height_ratio: None,
+            root_font_size: 0.0,
+            definite_height: None,
             language: None,
             font_kind: FontKind::Serif,
             font_style: FontStyle::Normal,
@@ -211,6 +251,7 @@ impl Default for StyleData {
 pub enum InlineMaterial {
     Text(TextMaterial),
     Image(ImageMaterial),
+    Float(FloatMaterial),
     Glue(GlueMaterial),
     Penalty(PenaltyMaterial),
     Box(i32),
@@ -221,7 +262,8 @@ impl InlineMaterial {
     pub fn offset(&self) -> Option<usize> {
         match self {
             InlineMaterial::Text(TextMaterial { offset, .. }) |
-            InlineMaterial::Image(ImageMaterial { offset, .. }) => Some(*offset),
+            InlineMaterial::Image(ImageMaterial { offset, .. }) |
+            InlineMaterial::Float(FloatMaterial { offset, .. }) => Some(*offset),
             _ => None,
         }
     }
@@ -246,6 +288,22 @@ pub struct ImageMaterial {
     pub offset: usize,
     pub path: String,
     pub style: StyleData,
+}
+
+#[derive(Debug, Clone)]
+pub struct FloatMaterial {
+    pub offset: usize,
+    pub inlines: Vec<InlineMaterial>,
+    pub style: StyleData,
+}
+
+#[derive(Debug, Clone)]
+pub struct FloatElement {
+    pub width: i32,
+    pub height: i32,
+    pub margin: Edge,
+    pub side: Float,
+    pub commands: Vec<DrawCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +403,7 @@ pub struct TextElement {
     pub letter_spacing: i32,
     pub vertical_align: i32,
     pub color: Color,
+    pub background: Option<Color>,
     pub float: Option<Float>,  // handle float for text
     pub margin: Edge,
     pub uri: Option<String>,
@@ -357,6 +416,7 @@ pub struct ImageElement {
     pub height: i32,
     pub scale: f32,
     pub vertical_align: i32,
+    pub relative_offset: Point,
     pub display: Display,
     pub margin: Edge,
     pub float: Option<Float>,
@@ -369,7 +429,16 @@ pub enum DrawCommand {
     Text(TextCommand),
     ExtraText(TextCommand),
     Image(ImageCommand),
+    Background(BackgroundCommand),
     Marker(usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct BackgroundCommand {
+    pub offset: usize,
+    pub position: Point,
+    pub rect: Rectangle,
+    pub color: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -403,6 +472,7 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { offset, .. }) => offset,
             DrawCommand::ExtraText(TextCommand { offset, .. }) => offset,
             DrawCommand::Image(ImageCommand { offset, .. }) => offset,
+            DrawCommand::Background(BackgroundCommand { offset, .. }) => offset,
             DrawCommand::Marker(offset) => offset,
         }
     }
@@ -412,6 +482,7 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { rect, .. }) => Some(rect),
             DrawCommand::ExtraText(TextCommand { rect, .. }) => Some(rect),
             DrawCommand::Image(ImageCommand { rect, .. }) => Some(rect),
+            DrawCommand::Background(BackgroundCommand { rect, .. }) => Some(rect),
             _ => None,
         }
     }
@@ -421,9 +492,51 @@ impl DrawCommand {
             DrawCommand::Text(TextCommand { ref mut position, .. }) => Some(position),
             DrawCommand::ExtraText(TextCommand { ref mut position, .. }) => Some(position),
             DrawCommand::Image(ImageCommand { ref mut position, .. }) => Some(position),
+            DrawCommand::Background(BackgroundCommand { ref mut position, .. }) => Some(position),
             _ => None,
         }
     }
+
+    pub fn translate(&mut self, delta: Point) {
+        if let Some(position) = self.position_mut() {
+            *position += delta;
+        }
+        let rect = match self {
+            DrawCommand::Text(command) | DrawCommand::ExtraText(command) => &mut command.rect,
+            DrawCommand::Image(command) => &mut command.rect,
+            DrawCommand::Background(command) => &mut command.rect,
+            DrawCommand::Marker(..) => return,
+        };
+        rect.min += delta;
+        rect.max += delta;
+    }
+
+    pub fn add_offset(&mut self, delta: usize) {
+        let offset = match self {
+            DrawCommand::Text(command) | DrawCommand::ExtraText(command) => &mut command.offset,
+            DrawCommand::Image(command) => &mut command.offset,
+            DrawCommand::Background(command) => &mut command.offset,
+            DrawCommand::Marker(offset) => offset,
+        };
+        *offset += delta;
+    }
+}
+
+// Keep both extrema until the whole adjoining-margin group is resolved.
+// Adding a negative margin must not lose the positive part for the next sibling.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct MarginStrut {
+    positive: i32,
+    negative: i32,
+}
+
+impl MarginStrut {
+    pub fn new(value: i32) -> Self { Self { positive: value.max(0), negative: value.min(0) } }
+    pub fn merge(&mut self, other: Self) {
+        self.positive = self.positive.max(other.positive);
+        self.negative = self.negative.min(other.negative);
+    }
+    pub fn value(self) -> i32 { self.positive + self.negative }
 }
 
 pub fn collapse_margins(a: i32, b: i32) -> i32 {

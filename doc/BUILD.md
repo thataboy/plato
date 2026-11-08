@@ -64,6 +64,14 @@ can cause undefined font-symbol errors at link time or fail at runtime.
 Rebuild matching native dependencies with `./build.sh slow` after upgrading
 them; keep a backup of any locally built libraries first.
 
+MuPDF must also use the configured headers from `thirdparty/libjpeg` when
+linking Plato's external JPEG library. Do not substitute MuPDF's bundled
+`scripts/libjpeg/jconfig.h`: its boolean layout differs from the shipped IJG
+library. This causes `JPEG parameter struct mismatch` errors and missing
+JPEG images in EPUBs, even when the JPEG version numbers match. The Kobo
+build script checks for these headers and recompiles JPEG consumers to avoid
+reusing objects built with the wrong configuration.
+
 ### Distribution
 
 ```sh

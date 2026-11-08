@@ -5,6 +5,7 @@ use super::style::StyleSheet;
 pub struct Selector {
     pub simple_selectors: Vec<SimpleSelector>,
     pub combinators: Vec<Combinator>,
+    pub first_letter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +59,7 @@ impl Default for Selector {
         Selector {
             simple_selectors: Vec::new(),
             combinators: Vec::new(),
+            first_letter: false,
         }
     }
 }
@@ -86,6 +88,7 @@ impl Selector {
             spec[1] = spec[1].saturating_add(sel.attributes.len());
             spec[2] = spec[2].saturating_add(sel.tag_name.iter().count());
         }
+        spec[2] = spec[2].saturating_add(self.first_letter as usize);
         spec
     }
 }
@@ -315,17 +318,20 @@ impl<'a> CssParser<'a> {
                 },
                 Some(':') => {
                     self.advance(1);
-                    if self.next() == Some(':') {
-                        supported = false;
+                    let double_colon = self.next() == Some(':');
+                    if double_colon {
                         self.advance(1);
                     }
                     let offset = self.offset;
                     self.skip_ident();
                     match &self.input[offset..self.offset] {
-                        "first-child" => {
+                        "first-letter" => {
+                            s.first_letter = true;
+                        },
+                        "first-child" if !double_colon => {
                             selec.pseudo_classes.push(PseudoClass::FirstChild);
                         },
-                        "last-child" => {
+                        "last-child" if !double_colon => {
                             selec.pseudo_classes.push(PseudoClass::LastChild);
                         },
                         _ => {
@@ -353,6 +359,9 @@ impl<'a> CssParser<'a> {
                         s.combinators.push(comb);
                         selec = SimpleSelector::default();
 
+                        if s.first_letter && !matches!(self.next(), Some(',') | Some('{')) {
+                            supported = false;
+                        }
                         match self.next() {
                             Some(',') => {
                                 self.advance(1);

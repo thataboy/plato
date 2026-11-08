@@ -52,7 +52,8 @@ use crate::view::theme::{ThemeDialog, ThemeProp};
 use crate::settings::{guess_frontlight, FinishedAction, SouthEastCornerAction, BottomRightGestureAction, SouthStripAction, WestStripAction, EastStripAction, ProgressBarSettings};
 use crate::settings::{DEFAULT_FONT_FAMILY, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT, DEFAULT_MARGIN_WIDTH, MIN_LINE_HEIGHT_GRADIENT, MAX_LINE_HEIGHT_GRADIENT};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
-use crate::settings::Theme;
+use crate::settings::{Theme, CssStyle, SETTINGS_PATH};
+use crate::helpers::save_toml;
 use crate::frontlight::LightLevels;
 use crate::gesture::GestureEvent;
 use crate::document::{Document, open, Location, TextLocation, BoundedText, Neighbors, BYTES_PER_PAGE};
@@ -127,6 +128,8 @@ pub struct Reader {
     ephemeral: bool,
     finished: bool,
     progress_bar: ProgressBarSettings,
+    new_css_tweak: Option<(usize, String)>,
+    managed_css_style: Option<usize>,
     theme: Option<ThemeStash>, // temporarily store selection in theme dialog
     chapter: RefCell<Chapter>, // cache chapter info
     time_format: String,
@@ -438,6 +441,8 @@ impl Reader {
                 reflowable,
                 finished: false,
                 progress_bar,
+                new_css_tweak: None,
+                managed_css_style: None,
                 theme: None,
                 chapter: RefCell::new(Chapter::default()),
                 time_format: context.settings.time_format.clone(),
@@ -513,6 +518,8 @@ impl Reader {
             reflowable: true,
             finished: false,
             progress_bar,
+            new_css_tweak: None,
+            managed_css_style: None,
             theme: None,
             chapter: RefCell::new(Chapter::default()),
             time_format: context.settings.time_format.clone(),
@@ -1944,26 +1951,24 @@ impl Reader {
 
             if self.info.file.kind == "epub" {
                 let has_extra_css = self.info.reader.as_ref().map_or(false, |r| r.extra_css.is_some());
-                if has_extra_css || !context.settings.css_styles.is_empty() {
-                    let mut tweaks = context.settings.css_styles.iter()
-                                     .enumerate()
-                                     .filter(|(_, x)| !x.css.trim().is_empty())
-                                     .map(|(i, x)| { EntryKind::Command(x.name.clone(),
-                                                                        EntryId::SetCssTweak(i)) })
-                                     .collect::<Vec<EntryKind>>();
-                    if has_extra_css {
-                        if !tweaks.is_empty() {
-                            tweaks.push(EntryKind::Separator);
-                        }
-                        tweaks.push(EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak));
-                        tweaks.push(EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks));
-                    }
-                    if !tweaks.is_empty() {
-                        entries.push(EntryKind::Separator);
-                        entries.push(EntryKind::Command("Inspect".to_string(), EntryId::ShowCssTweaks));
-                        entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
-                    }
+                let mut tweaks: Vec<_> = context.settings.css_styles.iter().enumerate()
+                    .map(|(index, style)| EntryKind::CommandEx(style.name.clone(), EntryId::SetCssTweak(index), vec![
+                        EntryKind::Command("Edit".to_string(), EntryId::EditCssStyle(index)),
+                        EntryKind::Command("Rename".to_string(), EntryId::RenameCssStyle(index)),
+                        EntryKind::Command("Delete".to_string(), EntryId::DeleteCssStyle(index)),
+                    ]))
+                    .collect();
+                if !tweaks.is_empty() {
+                    tweaks.push(EntryKind::Separator);
                 }
+                tweaks.push(EntryKind::Command("New".to_string(), EntryId::NewCssTweak));
+                if has_extra_css {
+                    tweaks.push(EntryKind::Separator);
+                    tweaks.push(EntryKind::Command("Undo last".to_string(), EntryId::UndoLastCssTweak));
+                    tweaks.push(EntryKind::Command("Undo all".to_string(), EntryId::UndoAllCssTweaks));
+                }
+                entries.push(EntryKind::Command("Inspect".to_string(), EntryId::ShowCssTweaks));
+                entries.push(EntryKind::SubMenu("CSS tweaks".to_string(), tweaks));
             }
 
             entries.push(EntryKind::Separator);
@@ -2767,11 +2772,54 @@ impl Reader {
         }
     }
 
+    fn show_css_prompt(&mut self, naming: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let (prompt, view, input) = if naming {
+            ("Enter name (if you want to reuse it)", ViewId::NameCssTweak, ViewId::NameCssTweakInput)
+        } else {
+            ("Enter CSS without {  } e.g. text-align: center; font-size: 1.2em;", ViewId::NewCssTweak, ViewId::NewCssTweakInput)
+        };
+        let mut dialog = NamedInput::with_prompt(prompt, view, input, context);
+        if !naming {
+            if let Some((_, ref css)) = self.new_css_tweak { dialog.set_text(css, rq, context); }
+        }
+        rq.add(RenderData::new(dialog.id(), *dialog.rect(), UpdateMode::Gui));
+        self.children.push(Box::new(dialog));
+        hub.send(Event::Focus(Some(input))).ok();
+    }
+
+    fn save_css_styles(hub: &Hub, context: &Context) {
+        if let Err(error) = save_toml(&context.settings, SETTINGS_PATH) {
+            hub.send(Event::Notify(format!("CSS style changes are available this session, but Settings.toml could not be saved: {}", error))).ok();
+        }
+    }
+
+    fn close_css_prompt(&mut self, view: ViewId, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) -> bool {
+        if let Some(index) = locate_by_id(self, view) {
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+            self.toggle_keyboard(false, None, hub, rq, context);
+            true
+        } else { false }
+    }
+
     fn apply_css_tweak(&mut self, index: usize, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
         if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
+            if let Some(style) = context.settings.css_styles.get(index)
+                .filter(|style| !style.css.trim().is_empty()).cloned() {
+                self.apply_css_style(offset, &style, hub, rq, context);
+            }
+        }
+    }
+
+    fn apply_css_style(&mut self, offset: usize, style: &CssStyle, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        if Arc::strong_count(&self.doc) > 1 {
+            hub.send(Event::Notify("Please wait for the current document operation to finish".to_string())).ok();
+            return;
+        }
+        {
             let (div_sel, span_sel);
             {
                 let mut doc = self.doc.lock().unwrap();
@@ -2783,7 +2831,7 @@ impl Reader {
                 }
             }
             if span_sel.is_empty() {
-                self.apply_css_tweak_aux(&div_sel, index, hub, context);
+                self.apply_css_tweak_aux(&div_sel, &style.name, &style.css, hub, context);
             } else {
                 let entries = vec![div_sel.to_owned(),
                                    span_sel.to_owned(),
@@ -2792,7 +2840,7 @@ impl Reader {
                                    format!("{0}, {0} {1}", div_sel, span_sel)];
                 let entries = entries.iter()
                     .map(|x| { EntryKind::Command(x.clone(),
-                                                  EntryId::SetCssTweakEx(x.clone(), index))
+                                                  EntryId::SetCssTweakEx(x.clone(), style.name.clone(), style.css.clone()))
                 }).collect();
                 let pt = pt!(self.rect().width() as i32 / 2, self.rect().height() as i32 / 3);
                 let menu = Menu::new(rect![pt, pt], ViewId::CssSelectorMenu, MenuKind::Contextual, entries, context);
@@ -2802,14 +2850,14 @@ impl Reader {
         }
     }
 
-    fn apply_css_tweak_aux(&mut self, selector: &str, index: usize, hub: &Hub, context: &mut Context) {
+    fn apply_css_tweak_aux(&mut self, selector: &str, name: &str, declarations: &str, hub: &Hub, context: &mut Context) {
         if Arc::strong_count(&self.doc) > 1 {
             return;
         }
         let mut dirty = false;
         let mut doc = self.doc.lock().unwrap();
         if let Some(ref mut r) = self.info.reader {
-            let mut css = context.settings.css_styles[index].css.trim().to_string();
+            let mut css = declarations.trim().to_string();
             // \n used to separate rules
             css = format!("\n{} {}{}{}",
                           selector,
@@ -2823,7 +2871,7 @@ impl Reader {
             set_extra_css!(doc, css, &context.settings);
             dirty = true;
             hub.send(Event::Notify(format!("{} applied to {}",
-                                           context.settings.css_styles[index].name,
+                                           name,
                                            selector))).ok();
         }
         if dirty {
@@ -4623,14 +4671,104 @@ impl View for Reader {
                 self.selection = None;
                 true
             },
+            Event::Select(EntryId::EditCssStyle(index)) |
+            Event::Select(EntryId::RenameCssStyle(index)) => {
+                if let Some(style) = context.settings.css_styles.get(index) {
+                    let (prompt, input, current) = if matches!(evt, Event::Select(EntryId::EditCssStyle(_))) {
+                        ("Edit CSS declarations", ViewId::EditCssStyleInput, style.css.clone())
+                    } else {
+                        ("Enter a new style name", ViewId::RenameCssStyleInput, style.name.clone())
+                    };
+                    self.managed_css_style = Some(index);
+                    let mut dialog = NamedInput::with_prompt(prompt, ViewId::ManageCssStyle, input, context);
+                    dialog.set_text(&current, rq, context);
+                    rq.add(RenderData::new(dialog.id(), *dialog.rect(), UpdateMode::Gui));
+                    self.children.push(Box::new(dialog));
+                    hub.send(Event::Focus(Some(input))).ok();
+                }
+                true
+            },
+            Event::Submit(input @ ViewId::EditCssStyleInput, ref text) |
+            Event::Submit(input @ ViewId::RenameCssStyleInput, ref text) => {
+                self.close_css_prompt(ViewId::ManageCssStyle, hub, rq, context);
+                if let Some(index) = self.managed_css_style.take() {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        if let Some(style) = context.settings.css_styles.get_mut(index) {
+                            if input == ViewId::EditCssStyleInput {
+                                style.css = text.to_string();
+                            } else {
+                                style.name = text.to_string();
+                            }
+                            Self::save_css_styles(hub, context);
+                        }
+                    }
+                }
+                true
+            },
+            Event::Close(ViewId::ManageCssStyle) => {
+                if self.close_css_prompt(ViewId::ManageCssStyle, hub, rq, context) {
+                    self.managed_css_style = None;
+                }
+                true
+            },
+            Event::Select(EntryId::DeleteCssStyle(index)) => {
+                if index < context.settings.css_styles.len() {
+                    context.settings.css_styles.remove(index);
+                    Self::save_css_styles(hub, context);
+                }
+                true
+            },
+            Event::Select(EntryId::NewCssTweak) => {
+                if let Some(Selection { anchor: TextLocation::Dynamic(offset), .. }) = self.selection {
+                    self.new_css_tweak = Some((offset, String::new()));
+                    self.show_css_prompt(false, hub, rq, context);
+                }
+                true
+            },
+            Event::Submit(ViewId::NewCssTweakInput, ref text) => {
+                self.close_css_prompt(ViewId::NewCssTweak, hub, rq, context);
+                if let Some((_, ref mut css)) = self.new_css_tweak {
+                    *css = text.trim().to_string();
+                    if css.is_empty() {
+                        self.new_css_tweak = None;
+                    } else {
+                        self.show_css_prompt(true, hub, rq, context);
+                    }
+                }
+                true
+            },
+            Event::Submit(ViewId::NameCssTweakInput, ref name) => {
+                self.close_css_prompt(ViewId::NameCssTweak, hub, rq, context);
+                if let Some((offset, css)) = self.new_css_tweak.take() {
+                    let name = name.trim();
+                    let style = CssStyle { name: if name.is_empty() { "Ad hoc style".to_string() } else { name.to_string() }, css };
+                    if !name.is_empty() {
+                        context.settings.css_styles.push(style.clone());
+                        Self::save_css_styles(hub, context);
+                    }
+                    self.apply_css_style(offset, &style, hub, rq, context);
+                    self.selection = None;
+                    self.update(Some(UpdateMode::Partial), hub, rq, context);
+                }
+                true
+            },
+            Event::Close(view @ ViewId::NewCssTweak) | Event::Close(view @ ViewId::NameCssTweak) => {
+                if self.close_css_prompt(view, hub, rq, context) {
+                    self.new_css_tweak = None;
+                    self.selection = None;
+                    self.update(Some(UpdateMode::Partial), hub, rq, context);
+                }
+                true
+            },
             Event::Select(EntryId::SetCssTweak(index)) => {
                 self.apply_css_tweak(index, hub, rq, context);
                 self.selection = None;
                 self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
             },
-            Event::Select(EntryId::SetCssTweakEx(ref selector, index)) => {
-                self.apply_css_tweak_aux(selector, index, hub, context);
+            Event::Select(EntryId::SetCssTweakEx(ref selector, ref name, ref css)) => {
+                self.apply_css_tweak_aux(selector, name, css, hub, context);
                 self.selection = None;
                 self.update(Some(UpdateMode::Partial), hub, rq, context);
                 true
@@ -4847,6 +4985,7 @@ impl View for Reader {
                 true
             },
             Event::Select(EntryId::Quit) |
+            Event::Select(EntryId::Restart) |
             Event::Select(EntryId::Reboot) |
             Event::Back |
             Event::Suspend => {

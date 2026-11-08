@@ -17,20 +17,21 @@ use crate::geom::{Point, Vec2, Rectangle, Edge};
 use crate::settings::{HYPHEN_PENALTY, STRETCH_TOLERANCE};
 use crate::settings::{DEFAULT_FONT_SIZE, DEFAULT_MARGIN_WIDTH, DEFAULT_TEXT_ALIGN, DEFAULT_LINE_HEIGHT};
 use crate::settings::PROGRESS_BAR_PADDING;
-use super::parse::{parse_display, parse_edge, parse_float, parse_text_align, parse_text_indent, parse_visibility};
-use super::parse::{parse_width, parse_height, parse_inline_material, parse_font_kind, parse_font_style};
+use super::parse::{parse_display, parse_edge, parse_padding, parse_float, parse_text_align, parse_text_indent, parse_visibility};
+use super::parse::{parse_width, parse_height, parse_length, parse_inline_material, parse_font_kind, parse_font_style};
 use super::parse::{parse_font_weight, parse_font_size, parse_font_features, parse_font_variant};
 use super::parse::{parse_letter_spacing, parse_word_spacing};
 use super::parse::{parse_line_height, parse_vertical_align, parse_color, parse_list_style_type};
 use super::dom::{NodeRef, NodeData, ElementData, TextData, WRAPPER_TAG_NAME};
 use super::layout::{ImageMaterial, InlineMaterial, StyleData, TextMaterial, Visibility};
+use super::layout::{FloatMaterial, FloatElement, BackgroundCommand};
 use super::layout::{GlueMaterial, PenaltyMaterial, ChildArtifact, SiblingStyle, LoopContext};
 use super::layout::{RootData, DrawState, DrawCommand, TextCommand, ImageCommand, FontKind, Fonts};
 use super::layout::{TextAlign, ParagraphElement, TextElement, ImageElement, Display, Float};
-use super::layout::{WordSpacing, ListStyleType, LineStats};
+use super::layout::{WordSpacing, ListStyleType, LineStats, MarginStrut};
 use super::layout::{hyph_lang, collapse_margins, DEFAULT_HYPH_LANG, HYPHENATION_PATTERNS};
 use super::layout::{EM_SPACE_RATIOS, WORD_SPACE_RATIOS, FONT_SPACES};
-use super::style::{StyleSheet, specified_values};
+use super::style::{StyleSheet, specified_values, first_letter_values};
 use super::xml::XmlExt;
 
 const DEFAULT_DPI: u16 = 300;
@@ -86,7 +87,7 @@ impl Engine {
     #[inline]
     pub fn load_fonts(&mut self) {
         if self.fonts.is_none() {
-            self.fonts = default_fonts().ok();
+            self.fonts = default_fonts(Path::new("fonts")).ok();
         }
     }
 
@@ -144,11 +145,21 @@ impl Engine {
     }
 
     pub fn build_display_list(&mut self, node: NodeRef, parent_style: &StyleData, loop_context: &LoopContext, stylesheet: &StyleSheet, root_data: &RootData, resource_fetcher: &mut dyn ResourceFetcher, draw_state: &mut DrawState, display_list: &mut Vec<Page>) -> ChildArtifact {
-        // TODO: border, background, text-transform, tab-size, text-decoration.
+        // TODO: text-transform, tab-size, text-decoration.
         let mut style = StyleData::default();
         let mut rects: Vec<Option<Rectangle>> = vec![None];
 
         let props = specified_values(node, stylesheet);
+        let root_font_size = if parent_style.root_font_size > 0.0 && node.tag_name() != Some("html") {
+            parent_style.root_font_size
+        } else {
+            let html = if node.tag_name() == Some("html") { Some(node) }
+                       else { node.ancestor_elements().find(|n| n.tag_name() == Some("html")) };
+            html.and_then(|html| specified_values(html, stylesheet).get("font-size")
+                .and_then(|v| parse_font_size(v, self.font_size, self.font_size)))
+                .unwrap_or(self.font_size)
+        };
+        style.root_font_size = root_font_size;
 
         style.display = props.get("display").and_then(|value| parse_display(value))
                              .unwrap_or(Display::Block);
@@ -158,12 +169,30 @@ impl Engine {
 
         if style.display == Display::None || style.visibility != Visibility::Visible {
             return ChildArtifact {
-                sibling_style: SiblingStyle {
-                    padding: Edge::default(),
-                    margin: Edge::default(),
-                },
+                cell_style: None,
+                sibling_style: loop_context.sibling_style.clone(),
                 rects: Vec::new(),
             }
+        }
+
+        if props.get("float").and_then(|value| parse_float(value)).is_some() {
+            let mut inlines = Vec::new();
+            let mut markers = Vec::new();
+            self.gather_inline_material(node, stylesheet, parent_style, &root_data.spine_dir, &mut markers, &mut inlines);
+            let mut flow_style = parent_style.clone();
+            flow_style.margin = Edge::default();
+            flow_style.margin.top = loop_context.sibling_style.margin.bottom;
+            if loop_context.is_first {
+                flow_style.margin.top = collapse_margins(flow_style.margin.top, parent_style.margin.top);
+            }
+            flow_style.padding = Edge::default();
+            let original_y = draw_state.position.y;
+            let original_page = display_list.len();
+            self.place_paragraphs(&inlines, &flow_style, root_data, &markers, resource_fetcher, draw_state, &mut rects, display_list);
+            // A float does not consume the pending normal-flow margin. The
+            // following block still collapses against the preceding block.
+            draw_state.position.y = if display_list.len() == original_page { original_y } else { root_data.rect.min.y };
+            return ChildArtifact { cell_style: None, sibling_style: loop_context.sibling_style.clone(), rects };
         }
 
         style.font_style = parent_style.font_style;
@@ -186,32 +215,28 @@ impl Engine {
             _ => (),
         }
 
-        style.retain_whitespace |= props.get("white-space")
-                                        .map(String::as_str)
-                                        .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
-                                        .unwrap_or(false);
+        style.retain_whitespace = props.get("white-space").map(|v| matches!(v.as_str(), "pre" | "pre-wrap"))
+            .unwrap_or(style.retain_whitespace);
 
         style.language = props.get("lang").cloned()
                               .or_else(|| parent_style.language.clone());
 
         style.font_size = props.get("font-size")
-                               .and_then(|value| parse_font_size(value, parent_style.font_size, self.font_size))
-                               .unwrap_or(parent_style.font_size);
+                               .and_then(|value| parse_font_size(value, parent_style.font_size, if node.tag_name() == Some("html") { self.font_size } else { root_font_size }))
+                               .unwrap_or(if node.tag_name() == Some("body") && parent_style.root_font_size == 0.0 { root_font_size } else { parent_style.font_size });
 
-        style.line_height = props.get("line-height")
-                                 .and_then(|value| parse_line_height(value, style.font_size, self.font_size, self.dpi))
-                                 .unwrap_or_else(|| ((style.font_size / parent_style.font_size) * parent_style.line_height as f32).round() as i32);
+        self.resolve_line_height(props.get("line-height"), &mut style, parent_style);
 
         style.letter_spacing = props.get("letter-spacing")
-                                    .and_then(|value| parse_letter_spacing(value, style.font_size, self.font_size, self.dpi))
+                                    .and_then(|value| parse_letter_spacing(value, style.font_size, root_font_size, self.dpi))
                                     .unwrap_or(parent_style.letter_spacing);
 
         style.word_spacing = props.get("word-spacing")
-                                    .and_then(|value| parse_word_spacing(value, style.font_size, self.font_size, self.dpi))
+                                    .and_then(|value| parse_word_spacing(value, style.font_size, root_font_size, self.dpi))
                                     .unwrap_or(parent_style.word_spacing);
 
         style.vertical_align = props.get("vertical-align")
-                                    .and_then(|value| parse_vertical_align(value, style.font_size, self.font_size, style.line_height, self.dpi))
+                                    .and_then(|value| parse_vertical_align(value, style.font_size, root_font_size, style.line_height, self.dpi))
                                     .unwrap_or(parent_style.vertical_align);
 
         style.font_kind = props.get("font-family")
@@ -230,10 +255,14 @@ impl Engine {
                            .and_then(|value| parse_color(value))
                            .unwrap_or(parent_style.color);
 
+        self.box_style(&props, &mut style);
+
+        style.text_indent_ratio = if let Some(value) = props.get("text-indent") {
+            value.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v / 100.0)
+        } else { parent_style.text_indent_ratio };
         style.text_indent = props.get("text-indent")
-                                 .and_then(|value| parse_text_indent(value, style.font_size, self.font_size,
-                                                                 parent_style.width, self.dpi))
-                                 .unwrap_or(parent_style.text_indent);
+            .and_then(|value| parse_text_indent(value, style.font_size, root_font_size, parent_style.width, self.dpi))
+            .unwrap_or_else(|| style.text_indent_ratio.map(|v| (v * parent_style.width as f32).round() as i32).unwrap_or(parent_style.text_indent));
 
         style.text_align = props.get("text-align")
                                 .map(String::as_str)
@@ -262,59 +291,80 @@ impl Engine {
                                       props.get("margin-right").map(String::as_str),
                                       props.get("margin-bottom").map(String::as_str),
                                       props.get("margin-left").map(String::as_str),
-                                      style.font_size, self.font_size, parent_style.width, self.dpi);
+                                      style.font_size, root_font_size, parent_style.width, self.dpi);
 
-            // Collapse the bottom margin of the previous sibling with the current top margin
-            style.margin.top = collapse_margins(loop_context.sibling_style.margin.bottom, style.margin.top);
+            style.margin_top_strut = MarginStrut::new(style.margin.top);
+            style.margin_bottom_strut = MarginStrut::new(style.margin.bottom);
+            style.margin_top_strut.merge(loop_context.sibling_style.bottom_margin);
+            style.margin.top = style.margin_top_strut.value();
 
             // Collapse the top margin of the first child and its parent.
-            if loop_context.is_first {
-                style.margin.top = collapse_margins(parent_style.margin.top, style.margin.top);
+            if loop_context.is_first && parent_style.padding.top == 0 {
+                style.margin_top_strut.merge(parent_style.margin_top_strut);
+                style.margin.top = style.margin_top_strut.value();
             }
 
-            style.padding = parse_edge(props.get("padding-top").map(String::as_str),
+            style.padding = parse_padding(props.get("padding-top").map(String::as_str),
                                        props.get("padding-right").map(String::as_str),
                                        props.get("padding-bottom").map(String::as_str),
                                        props.get("padding-left").map(String::as_str),
-                                       style.font_size, self.font_size, parent_style.width, self.dpi);
+                                       style.font_size, root_font_size, parent_style.width, self.dpi);
         }
 
+        if matches!(node.tag_name(), Some("td" | "th")) {
+            // CSS margins do not apply to table cells.
+            style.margin = Edge::default();
+            style.margin_top_strut = MarginStrut::default();
+            style.margin_bottom_strut = MarginStrut::default();
+        }
+
+        style.padding.top += style.borders[0].width;
+        style.padding.right += style.borders[1].width;
+        style.padding.bottom += style.borders[2].width;
+        style.padding.left += style.borders[3].width;
+
         style.width = props.get("width")
-                           .and_then(|value| parse_width(value, style.font_size, self.font_size,
+                           .and_then(|value| parse_width(value, style.font_size, root_font_size,
                                                          parent_style.width, self.dpi))
                            .unwrap_or(0);
 
-        style.height = props.get("height")
-                            .and_then(|value| parse_height(value, style.font_size, self.font_size,
-                                                           parent_style.width, self.dpi))
-                            .unwrap_or(0);
+        style.definite_height = props.get("height")
+            .and_then(|value| parse_height(value, style.font_size, root_font_size, parent_style.definite_height, self.dpi));
+        if node.tag_name().is_none() { style.definite_height = parent_style.definite_height; }
+        style.height = if node.tag_name().is_some() { style.definite_height.unwrap_or(0) } else { 0 };
 
-        style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
-        style.end_x = parent_style.end_x - style.margin.right - style.padding.right;
-
-        let mut width = style.end_x - style.start_x;
-
-        if width < 0 {
-            if style.width > 0 {
-                let total_space = style.margin.left + style.padding.left + style.margin.right + style.padding.right;
-                let remaining_space = parent_style.width - style.width;
-                let ratio = remaining_space as f32 / total_space as f32;
-                style.margin.left = (style.margin.left as f32 * ratio).round() as i32;
-                style.padding.left = (style.padding.left as f32 * ratio).round() as i32;
-                style.margin.right = (style.margin.right as f32 * ratio).round() as i32;
-                style.padding.right = (style.padding.right as f32 * ratio).round() as i32;
-                style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
-                style.end_x = parent_style.end_x - style.margin.right - style.padding.right;
-                width = style.width;
-            } else {
-                style.margin.left = 0;
-                style.padding.left = 0;
-                style.margin.right = 0;
-                style.padding.right = 0;
-                style.start_x = parent_style.start_x;
-                style.end_x = parent_style.end_x;
-                width = parent_style.width;
+        self.box_constraints(&props, &mut style, parent_style);
+        let auto_left = props.get("margin-left").map(String::as_str) == Some("auto");
+        let auto_right = props.get("margin-right").map(String::as_str) == Some("auto");
+        let available = parent_style.width - style.margin.left - style.margin.right - style.padding.left - style.padding.right;
+        let specified_width = props.get("width").filter(|v| v.as_str() != "auto")
+            .and_then(|v| parse_width(v, style.font_size, root_font_size, parent_style.width, self.dpi))
+            .filter(|v| *v >= 0);
+        let mut width = if node.tag_name() == Some("hr") { available.max(0) } else { specified_width.unwrap_or(available.max(0)) };
+        width = width.min(style.max_width.unwrap_or(i32::MAX)).max(style.min_width);
+        let extra = (available - width).max(0);
+        if specified_width.is_some() || width != available.max(0) {
+            match (auto_left, auto_right) {
+                (true, true) => { style.margin.left = extra / 2; style.margin.right = extra - extra / 2; },
+                (true, false) => style.margin.left = extra,
+                (false, true) => style.margin.right = extra,
+                _ => (),
             }
+        }
+        style.start_x = parent_style.start_x + style.margin.left + style.padding.left;
+        style.end_x = style.start_x + width;
+
+        if node.tag_name() == Some("table") {
+            let preferred = draw_state.max_column_widths.iter().sum::<i32>();
+            let table_width = if style.width > 0 { style.width.min(width) } else { preferred.min(width) }.max(0);
+            let shift = if draw_state.center_table || (auto_left && auto_right) {
+                (width - table_width) / 2
+            } else if auto_left { width - table_width } else { 0 };
+            style.start_x += shift;
+            style.margin.left += shift;
+            draw_state.center_table = false;
+            width = table_width;
+            style.end_x = style.start_x + width;
         }
 
         style.width = width;
@@ -324,9 +374,45 @@ impl Engine {
             draw_state.position.y = root_data.rect.min.y;
         }
 
-        draw_state.position.y += style.padding.top;
-
         let has_blocks = node.children().any(|n| n.is_block());
+        let box_top = draw_state.position.y + style.margin.top;
+        if has_blocks && (style.padding.top > 0 || node.tag_name() == Some("table")) {
+            draw_state.position.y += style.margin.top;
+            style.margin.top = 0;
+            style.margin_top_strut = MarginStrut::default();
+        }
+        draw_state.position.y += style.padding.top;
+        let content_top = draw_state.position.y + style.margin.top;
+        let first_page = display_list.len() - 1;
+        let first_command = display_list[first_page].len();
+
+        if node.tag_name() == Some("hr") {
+            let legacy_length = |value: &str| {
+                if value.parse::<f32>().is_ok() { format!("{}px", value) } else { value.to_string() }
+            };
+            let width = props.get("width").cloned().or_else(|| node.attribute("width").map(legacy_length))
+                .and_then(|v| parse_width(&v, style.font_size, root_font_size, parent_style.width, self.dpi))
+                .unwrap_or(style.width).clamp(0, style.width.max(0));
+            let height = props.get("height").cloned().or_else(|| node.attribute("size").map(legacy_length))
+                .and_then(|v| parse_height(&v, style.font_size, root_font_size, parent_style.definite_height, self.dpi))
+                .unwrap_or_else(|| parse_length("2px", style.font_size, root_font_size, self.dpi).unwrap()).max(0);
+            let x = style.start_x + match node.attribute("align").unwrap_or("center") {
+                "left" => 0, "right" => style.width - width, _ => (style.width - width) / 2,
+            };
+            let mut y = box_top;
+            let total_height = height + style.padding.top + style.padding.bottom;
+            if y + total_height > root_data.rect.max.y && y > root_data.rect.min.y {
+                display_list.push(Vec::new());
+                y = root_data.rect.min.y;
+            }
+            let rect = rect![x - style.padding.left, y, x + width + style.padding.right, y + total_height];
+            if !props.keys().any(|key| key.starts_with("border-")) && style.background.is_none() {
+                style.background = Some(style.color);
+            }
+            display_list.last_mut().unwrap().extend(box_commands(&style, rect, root_data.start_offset + node.offset(), true, true));
+            draw_state.position.y = rect.max.y;
+            return ChildArtifact { cell_style: None, sibling_style: SiblingStyle { padding: style.padding, margin: style.margin, bottom_margin: style.margin_bottom_strut }, rects: vec![Some(rect)] };
+        }
 
         if has_blocks {
             if node.id().is_some() {
@@ -351,7 +437,9 @@ impl Engine {
                                                    width as f32).round() as i32)
                                           .collect();
                         } else if max_row_width <= width {
-                            draw_state.column_widths = draw_state.max_column_widths.clone();
+                            draw_state.column_widths = draw_state.max_column_widths.iter()
+                                .map(|w| if max_row_width > 0 { ((*w as f32 / max_row_width as f32) * width as f32).round() as i32 } else { 0 })
+                                .collect();
                         } else {
                             let dw = (width - min_row_width) as f32;
                             let dr = (max_row_width - min_row_width) as f32;
@@ -381,6 +469,7 @@ impl Engine {
                     let mut final_page = (0, position);
                     let page_index = display_list.len() - 1;
                     let mut index = 0;
+                    let mut cells = Vec::new();
 
                     // TODO: rowspan, vertical-align
                     for child in node.children().filter(|child| child.is_element()) {
@@ -390,13 +479,14 @@ impl Engine {
 
                         let colspan = child.attribute("colspan")
                                            .and_then(|v| v.parse().ok())
-                                           .unwrap_or(1)
+                                           .unwrap_or(1).max(1)
                                            .min(draw_state.column_widths.len()-index);
                         let column_width = draw_state.column_widths[index..index+colspan]
                                                      .iter().sum::<i32>();
                         let mut child_display_list = vec![Vec::new()];
                         style.start_x = cur_x;
                         style.end_x = cur_x + column_width;
+                        style.width = column_width;
                         draw_state.position = position;
                         let artifact = self.build_display_list(child, &style, &inner_loop_context, stylesheet, root_data, resource_fetcher, draw_state, &mut child_display_list);
                         let pages_count = child_display_list.len();
@@ -405,13 +495,7 @@ impl Engine {
                             final_page = (pages_count, draw_state.position);
                         }
 
-                        for (i, mut pg) in child_display_list.into_iter().enumerate() {
-                            if let Some(page) = display_list.get_mut(page_index+i) {
-                                page.append(&mut pg);
-                            } else {
-                                display_list.push(pg);
-                            }
-                        }
+                        cells.push((child_display_list, artifact.cell_style));
 
                         for (i, rect) in artifact.rects.into_iter().enumerate() {
                             if let Some(page_rect) = rects.get_mut(i) {
@@ -430,15 +514,47 @@ impl Engine {
                         inner_loop_context.sibling_style = artifact.sibling_style;
 
                         if inner_loop_context.is_last {
-                            style.margin.bottom = collapse_margins(inner_loop_context.sibling_style.margin.bottom, style.margin.bottom);
+                            if style.padding.bottom == 0 && style.definite_height.is_none() {
+                                style.margin_bottom_strut.merge(inner_loop_context.sibling_style.bottom_margin);
+                                style.margin.bottom = style.margin_bottom_strut.value();
+                            } else {
+                                draw_state.position.y += inner_loop_context.sibling_style.margin.bottom;
+                            }
                         }
 
                         index += colspan;
                         cur_x += column_width;
                     }
 
+                    // All cells occupy the tallest cell's height, even when
+                    // empty or when another cell continues onto another page.
+                    for fragment in 0..final_page.0 {
+                        let offset = cells.iter().filter_map(|(pages, _)| pages.get(fragment))
+                            .filter_map(|page| page.first().map(DrawCommand::offset)).min()
+                            .unwrap_or(root_data.start_offset + node.offset());
+                        let mut row_page = Vec::new();
+                        let top = if fragment == 0 { position.y } else { root_data.rect.min.y };
+                        let bottom = if fragment + 1 == final_page.0 { final_page.1.y } else { root_data.rect.max.y };
+                        for (_, cell_style) in &cells {
+                            if let Some(cell) = cell_style {
+                                let rect = rect![cell.start_x - cell.padding.left, top.max(root_data.rect.min.y),
+                                                 cell.end_x + cell.padding.right, bottom.min(root_data.rect.max.y)];
+                                row_page.extend(box_commands(cell, rect, offset, fragment == 0, fragment + 1 == final_page.0));
+                            }
+                        }
+                        for (pages, _) in &mut cells {
+                            if let Some(page) = pages.get_mut(fragment) { row_page.append(page); }
+                        }
+                        if let Some(page) = display_list.get_mut(page_index + fragment) {
+                            page.append(&mut row_page);
+                        } else {
+                            display_list.push(row_page);
+                        }
+                    }
+
                     style.start_x = start_x;
                     style.end_x = end_x;
+                    style.width = end_x - start_x;
                     draw_state.position = final_page.1;
                 } else {
                     let mut iter = node.children().filter(|child| child.is_element()).peekable();
@@ -459,11 +575,20 @@ impl Engine {
 
                         let artifact = self.build_display_list(child, &style, &inner_loop_context, stylesheet, root_data, resource_fetcher, draw_state, display_list);
                         inner_loop_context.sibling_style = artifact.sibling_style;
-                        inner_loop_context.is_first = false;
+                        let child_props = specified_values(child, stylesheet);
+                        if child_props.get("float").and_then(|v| parse_float(v)).is_none() &&
+                           child_props.get("display").map(String::as_str) != Some("none") {
+                            inner_loop_context.is_first = false;
+                        }
 
                         // Collapse the bottom margin of the last child and its parent.
                         if inner_loop_context.is_last {
-                            style.margin.bottom = collapse_margins(inner_loop_context.sibling_style.margin.bottom, style.margin.bottom);
+                            if style.padding.bottom == 0 && style.definite_height.is_none() {
+                                style.margin_bottom_strut.merge(inner_loop_context.sibling_style.bottom_margin);
+                                style.margin.bottom = style.margin_bottom_strut.value();
+                            } else {
+                                draw_state.position.y += inner_loop_context.sibling_style.margin.bottom;
+                            }
                         }
 
                         let last_index = rects.len() - 1;
@@ -493,8 +618,11 @@ impl Engine {
                     markers.push(node.offset());
                 }
                 for child in node.children() {
-                    self.gather_inline_material(child, stylesheet, &style, &root_data.spine_dir, &mut markers, &mut inlines);
+                    let mut inline_style = style.clone();
+                    inline_style.background = None;
+                    self.gather_inline_material(child, stylesheet, &inline_style, &root_data.spine_dir, &mut markers, &mut inlines);
                 }
+                self.apply_first_letter(node, stylesheet, &style, &root_data.spine_dir, &mut inlines);
                 if !inlines.is_empty() {
                     draw_state.prefix = match style.list_style_type {
                         None => {
@@ -518,20 +646,51 @@ impl Engine {
             }
         }
 
+        let empty = rects.is_empty() || rects == [None];
+        style.height = style.height.max(style.min_height);
+        let has_box_height = style.height > 0 || style.padding.top + style.padding.bottom > 0;
+        if empty && has_box_height {
+            draw_state.position.y += style.margin.top;
+        }
+
         if style.height > 0 {
-            let height = rects.iter()
-                              .filter_map(|v| v.map(|r| r.height() as i32))
-                              .sum::<i32>();
+            let height = if display_list.len() - 1 == first_page {
+                draw_state.position.y - content_top
+            } else {
+                root_data.rect.max.y - content_top +
+                    (display_list.len() - first_page - 2) as i32 * root_data.rect.height() as i32 +
+                    draw_state.position.y - root_data.rect.min.y
+            };
             draw_state.position.y += (style.height - height).max(0);
         }
 
         // Collapse top and bottom margins of empty blocks.
-        if rects.is_empty() || rects == [None] {
-            style.margin.bottom = collapse_margins(style.margin.bottom, style.margin.top);
+        if empty && !has_box_height {
+            style.margin_bottom_strut.merge(style.margin_top_strut);
+            style.margin.bottom = style.margin_bottom_strut.value();
             style.margin.top = 0;
+            style.margin_top_strut = MarginStrut::default();
         }
 
         draw_state.position.y += style.padding.bottom;
+
+        if !matches!(node.tag_name(), Some("td" | "th")) &&
+           (style.background.is_some() || style.borders.iter().any(|border| border.width > 0)) {
+            let last_page = display_list.len() - 1;
+            for page_index in first_page..=last_page {
+                let top = if page_index == first_page { box_top } else { root_data.rect.min.y };
+                let bottom = if page_index == last_page { draw_state.position.y } else { root_data.rect.max.y };
+                let rect = rect![style.start_x - style.padding.left, top.max(root_data.rect.min.y),
+                                 style.end_x + style.padding.right, bottom.min(root_data.rect.max.y)];
+                let index = if page_index == first_page { first_command } else { 0 };
+                // Page navigation uses the first command's source offset. A
+                // continued background must retain that page's text location.
+                let offset = display_list[page_index].get(index).map(DrawCommand::offset)
+                    .unwrap_or(root_data.start_offset + node.offset());
+                let commands = box_commands(&style, rect, offset, page_index == first_page, page_index == last_page);
+                display_list[page_index].splice(index..index, commands);
+            }
+        }
 
         if props.get("page-break-after").map(String::as_str) == Some("always") {
             display_list.push(Vec::new());
@@ -539,11 +698,54 @@ impl Engine {
         }
 
         ChildArtifact {
+            cell_style: if matches!(node.tag_name(), Some("td" | "th")) { Some(style.clone()) } else { None },
             sibling_style: SiblingStyle {
+                bottom_margin: style.margin_bottom_strut,
                 padding: style.padding,
                 margin: style.margin,
             },
             rects,
+        }
+    }
+
+    fn box_constraints(&self, props: &super::style::PropertyMap, style: &mut StyleData, parent: &StyleData) {
+        let width = |name| props.get(name).and_then(|v| parse_width(v, style.font_size, style.root_font_size, parent.width, self.dpi)).filter(|v| *v >= 0);
+        let height = |name| props.get(name).and_then(|v| parse_height(v, style.font_size, style.root_font_size, parent.definite_height, self.dpi));
+        style.min_width = width("min-width").unwrap_or(0);
+        style.max_width = width("max-width");
+        style.min_height = height("min-height").unwrap_or(0);
+        style.max_height = height("max-height");
+    }
+
+    fn resolve_line_height(&self, value: Option<&String>, style: &mut StyleData, parent: &StyleData) {
+        let ratio = value.and_then(|v| if v == "normal" { Some(1.2) } else {
+            v.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)
+        });
+        if let Some(height) = value.and_then(|v| parse_line_height(v, style.font_size, style.root_font_size, self.dpi)).filter(|v| *v >= 0) {
+            style.line_height = height;
+            style.line_height_ratio = ratio;
+        } else {
+            style.line_height_ratio = parent.line_height_ratio;
+            style.line_height = parent.line_height_ratio.map(|ratio| pt_to_px(ratio * style.font_size, self.dpi).round() as i32)
+                .unwrap_or(parent.line_height);
+        }
+    }
+
+    fn box_style(&self, props: &super::style::PropertyMap, style: &mut StyleData) {
+        style.background = props.get("background-color").and_then(|value| parse_color(value));
+        for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
+            let kind = props.get(&format!("border-{}-style", side)).map(String::as_str).unwrap_or("none");
+            let border = &mut style.borders[index];
+            if matches!(kind, "none" | "hidden") { continue; }
+            let value = props.get(&format!("border-{}-width", side)).map(String::as_str).unwrap_or("medium");
+            let value = match value { "thin" => "1px", "medium" => "3px", "thick" => "5px", _ => value };
+            border.width = parse_length(value, style.font_size, style.root_font_size, self.dpi).unwrap_or(0).max(0);
+            border.pattern = match kind { "dotted" => 1, "dashed" => 2, _ => 0 };
+            border.color = match props.get(&format!("border-{}-color", side)).map(String::as_str) {
+                Some("transparent") => None,
+                Some(value) => parse_color(value).or(Some(style.color)),
+                None => Some(style.color),
+            };
         }
     }
 
@@ -553,7 +755,7 @@ impl Engine {
             for child in node.children().filter(|c| c.is_element()) {
                 let colspan = child.attribute("colspan")
                                    .and_then(|v| v.parse().ok())
-                                   .unwrap_or(1);
+                                   .unwrap_or(1).max(1);
                 let mut display_list = vec![Vec::new()];
                 let artifact = self.build_display_list(child, parent_style, loop_context, stylesheet, root_data, resource_fetcher, draw_state, &mut display_list);
                 let horiz_padding = artifact.sibling_style.padding.left +
@@ -567,17 +769,19 @@ impl Engine {
                                                     _ => None,
                                                 }
                                             })
-                                            .max().unwrap_or(0);
+                                            .max().unwrap_or(horiz_padding);
                 let max_width = artifact.rects.into_iter()
                                         .filter_map(|v| v.map(|r| r.width() as i32 + horiz_padding))
-                                        .max().unwrap_or(0);
-                if colspan == 1 {
-                    if let Some(cw) = draw_state.min_column_widths.get_mut(index) {
+                                        .max().unwrap_or(horiz_padding);
+                let min_width = (min_width + colspan as i32 - 1) / colspan as i32;
+                let max_width = (max_width + colspan as i32 - 1) / colspan as i32;
+                for column in index..index + colspan {
+                    if let Some(cw) = draw_state.min_column_widths.get_mut(column) {
                         *cw = (*cw).max(min_width);
                     } else {
                         draw_state.min_column_widths.push(min_width);
                     }
-                    if let Some(cw) = draw_state.max_column_widths.get_mut(index) {
+                    if let Some(cw) = draw_state.max_column_widths.get_mut(column) {
                         *cw = (*cw).max(max_width);
                     } else {
                         draw_state.max_column_widths.push(max_width);
@@ -593,7 +797,67 @@ impl Engine {
         }
     }
 
+    fn apply_first_letter(&self, node: NodeRef, stylesheet: &StyleSheet, paragraph_style: &StyleData, spine_dir: &PathBuf, inlines: &mut Vec<InlineMaterial>) {
+        let props = first_letter_values(node, stylesheet);
+        if props.is_empty() {
+            return;
+        }
+        for index in 0..inlines.len() {
+            let material = match &inlines[index] {
+                InlineMaterial::Text(text) if text.text.trim().is_empty() => continue,
+                InlineMaterial::Text(text) => text.clone(),
+                // A replaced element or an existing drop cap already occupies
+                // the start of the line; don't decorate the following letter.
+                _ => return,
+            };
+            let start = material.text.find(|c: char| !c.is_whitespace()).unwrap();
+            let mut end = start;
+            let mut found_letter = false;
+            for (offset, ch) in material.text[start..].char_indices() {
+                let punctuation = ch.is_ascii_punctuation() || matches!(ch, '“' | '”' | '‘' | '’' | '«' | '»' | '‹' | '›' | '„' | '…');
+                if found_letter && !punctuation && !unicode_normalization::char::is_combining_mark(ch) {
+                    break;
+                }
+                if ch.is_whitespace() {
+                    break;
+                }
+                found_letter |= !punctuation;
+                end = start + offset + ch.len_utf8();
+            }
+            if end == start {
+                return;
+            }
+            // Feed the pseudo-element through the same inline/float path as
+            // an explicit span, retaining the original document offsets.
+            let mut tree = super::dom::XmlTree::new();
+            let mut attrs = super::dom::Attributes::default();
+            attrs.insert("style".to_string(), props.iter().map(|(name, value)| format!("{}:{};", name, value)).collect());
+            let id = tree.root_mut().append(super::dom::element("span", material.offset + start, attrs));
+            tree.get_mut(id).append(super::dom::text(&material.text[start..end], material.offset + start));
+            let mut replacement = Vec::new();
+            if start > 0 {
+                replacement.push(InlineMaterial::Text(TextMaterial {
+                    offset: material.offset, text: material.text[..start].to_string(), style: material.style.clone(),
+                }));
+            }
+            let mut inherited = material.style.clone();
+            inherited.width = paragraph_style.width;
+            self.gather_inline_material(tree.get(id), &StyleSheet::new(), &inherited, spine_dir, &mut Vec::new(), &mut replacement);
+            if end < material.text.len() {
+                replacement.push(InlineMaterial::Text(TextMaterial {
+                    offset: material.offset + end, text: material.text[end..].to_string(), style: material.style,
+                }));
+            }
+            inlines.splice(index..=index, replacement);
+            return;
+        }
+    }
+
     fn gather_inline_material(&self, node: NodeRef, stylesheet: &StyleSheet, parent_style: &StyleData, spine_dir: &PathBuf, markers: &mut Vec<usize>, inlines: &mut Vec<InlineMaterial>) {
+        self.gather_inline_material_inner(node, stylesheet, parent_style, spine_dir, markers, inlines, false);
+    }
+
+    fn gather_inline_material_inner(&self, node: NodeRef, stylesheet: &StyleSheet, parent_style: &StyleData, spine_dir: &PathBuf, markers: &mut Vec<usize>, inlines: &mut Vec<InlineMaterial>, float_contents: bool) {
         match node.data() {
             NodeData::Element(ElementData { offset, name, attributes, .. }) => {
                 let mut style = StyleData::default();
@@ -602,11 +866,8 @@ impl Engine {
                 style.font_style = parent_style.font_style;
                 style.line_height = parent_style.line_height;
                 style.text_indent = parent_style.text_indent;
-                style.retain_whitespace = parent_style.retain_whitespace
-                                          || props.get("white-space")
-                                                  .map(String::as_str)
-                                                  .and_then(|value| Some(matches!(value, "pre" | "pre-wrap")))
-                                                  .unwrap_or(false);
+                style.retain_whitespace = props.get("white-space").map(|v| matches!(v.as_str(), "pre" | "pre-wrap"))
+                    .unwrap_or(parent_style.retain_whitespace);
                 style.language = parent_style.language.clone();
                 style.uri = parent_style.uri.clone();
 
@@ -620,17 +881,21 @@ impl Engine {
                     return;
                 }
 
+                let root_font_size = if parent_style.root_font_size > 0.0 { parent_style.root_font_size } else { self.font_size };
+                style.root_font_size = root_font_size;
                 style.font_size = props.get("font-size")
-                                       .and_then(|value| parse_font_size(value, parent_style.font_size, self.font_size))
+                                       .and_then(|value| parse_font_size(value, parent_style.font_size, root_font_size))
                                        .unwrap_or(parent_style.font_size);
 
                 style.width = props.get("width")
-                                   .and_then(|value| parse_width(value, style.font_size, self.font_size, parent_style.width, self.dpi))
+                                   .and_then(|value| parse_width(value, style.font_size, root_font_size, parent_style.width, self.dpi))
                                    .unwrap_or(0);
 
-                style.height = props.get("height")
-                                    .and_then(|value| parse_height(value, style.font_size, self.font_size, parent_style.width, self.dpi))
-                                    .unwrap_or(0);
+                style.definite_height = props.get("height")
+                    .and_then(|value| parse_height(value, style.font_size, root_font_size, parent_style.definite_height, self.dpi));
+                style.height = style.definite_height.unwrap_or(0);
+
+                self.box_constraints(&props, &mut style, parent_style);
 
                 style.font_kind = props.get("font-family")
                                        .and_then(|value| parse_font_kind(value))
@@ -640,17 +905,16 @@ impl Engine {
                                    .and_then(|value| parse_color(value))
                                    .unwrap_or(parent_style.color);
 
+                style.background = props.get("background-color")
+                    .map(|value| parse_color(value)).unwrap_or(parent_style.background);
+
                 style.letter_spacing = props.get("letter-spacing")
-                                            .and_then(|value| parse_letter_spacing(value, style.font_size, self.font_size, self.dpi))
+                                            .and_then(|value| parse_letter_spacing(value, style.font_size, root_font_size, self.dpi))
                                             .unwrap_or(parent_style.letter_spacing);
 
                 style.word_spacing = props.get("word-spacing")
-                                            .and_then(|value| parse_word_spacing(value, style.font_size, self.font_size, self.dpi))
+                                            .and_then(|value| parse_word_spacing(value, style.font_size, root_font_size, self.dpi))
                                             .unwrap_or(parent_style.word_spacing);
-
-                style.vertical_align = props.get("vertical-align")
-                                            .and_then(|value| parse_vertical_align(value, style.font_size, self.font_size, style.line_height, self.dpi))
-                                            .unwrap_or(parent_style.vertical_align);
 
                 style.font_style = props.get("font-style")
                                         .and_then(|value| parse_font_style(value))
@@ -671,6 +935,48 @@ impl Engine {
                     }
                 }
 
+                self.resolve_line_height(props.get("line-height"), &mut style, parent_style);
+                style.vertical_align = props.get("vertical-align")
+                                            .and_then(|value| parse_vertical_align(value, style.font_size, root_font_size, style.line_height, self.dpi))
+                                            .unwrap_or(0);
+
+                style.text_align = props.get("text-align").and_then(|value| parse_text_align(value))
+                                        .unwrap_or(parent_style.text_align);
+                style.float = props.get("float").and_then(|value| parse_float(value));
+                if !float_contents && style.float.is_some() {
+                    style.margin = parse_edge(props.get("margin-top").map(String::as_str),
+                                              props.get("margin-right").map(String::as_str),
+                                              props.get("margin-bottom").map(String::as_str),
+                                              props.get("margin-left").map(String::as_str),
+                                              style.font_size, root_font_size, parent_style.width, self.dpi);
+                    style.padding = parse_padding(props.get("padding-top").map(String::as_str),
+                                               props.get("padding-right").map(String::as_str),
+                                               props.get("padding-bottom").map(String::as_str),
+                                               props.get("padding-left").map(String::as_str),
+                                               style.font_size, root_font_size, parent_style.width, self.dpi);
+                    self.box_style(&props, &mut style);
+                    style.padding.top += style.borders[0].width;
+                    style.padding.right += style.borders[1].width;
+                    style.padding.bottom += style.borders[2].width;
+                    style.padding.left += style.borders[3].width;
+                    let mut contents = Vec::new();
+                    self.gather_inline_material_inner(node, stylesheet, parent_style, spine_dir, markers, &mut contents, true);
+                    inlines.push(InlineMaterial::Float(FloatMaterial {
+                        offset: *offset,
+                        inlines: contents,
+                        style,
+                    }));
+                    return;
+                }
+                // A float establishes its own box; its children are not floats
+                // unless they explicitly request one themselves.
+                style.float = None;
+                if props.get("position").map(String::as_str) == Some("relative") {
+                    style.relative_offset = pt!(
+                        props.get("left").and_then(|v| parse_length(v, style.font_size, root_font_size, self.dpi)).unwrap_or(0),
+                        props.get("top").and_then(|v| parse_length(v, style.font_size, root_font_size, self.dpi)).unwrap_or(0));
+                }
+
                 if node.id().is_some() {
                     markers.push(node.offset());
                 }
@@ -685,15 +991,18 @@ impl Engine {
                                                                   .decode_utf8_lossy()
                                                                   .into_owned())
                         }).unwrap_or_default();
-                        style.float = props.get("float").and_then(|value| parse_float(value));
-
+                        if float_contents {
+                            style.display = Display::Block;
+                        }
                         let is_block = style.display == Display::Block;
-                        if is_block || style.float.is_some() {
+                        style.auto_margins = [props.get("margin-left").map(String::as_str) == Some("auto"),
+                                              props.get("margin-right").map(String::as_str) == Some("auto")];
+                        if !float_contents {
                             style.margin = parse_edge(props.get("margin-top").map(String::as_str),
                                                       props.get("margin-right").map(String::as_str),
                                                       props.get("margin-bottom").map(String::as_str),
                                                       props.get("margin-left").map(String::as_str),
-                                                      style.font_size, self.font_size, parent_style.width, self.dpi);
+                                                      style.font_size, root_font_size, parent_style.width, self.dpi);
                         }
                         if is_block {
                             inlines.push(InlineMaterial::LineBreak);
@@ -721,16 +1030,28 @@ impl Engine {
                 }
 
                 if let Some(mut v) = props.get("-plato-insert-before")
-                                          .map(|value| parse_inline_material(value, style.font_size, self.font_size, self.dpi)) {
+                                          .map(|value| parse_inline_material(value, style.font_size, root_font_size, self.dpi)) {
                     inlines.append(&mut v);
                 }
+
+                if !float_contents || style.width == 0 { style.width = parent_style.width; }
+                if !float_contents { style.definite_height = parent_style.definite_height; }
+                let inline_margin = parse_edge(None, props.get("margin-right").map(String::as_str), None,
+                    props.get("margin-left").map(String::as_str), style.font_size, root_font_size, parent_style.width, self.dpi);
+                let inline_padding = parse_padding(None, props.get("padding-right").map(String::as_str), None,
+                    props.get("padding-left").map(String::as_str), style.font_size, root_font_size, parent_style.width, self.dpi);
+                let left = inline_margin.left + inline_padding.left;
+                let right = inline_margin.right + inline_padding.right;
+                if !float_contents && left != 0 { inlines.push(InlineMaterial::Box(left)); }
 
                 for child in node.children() {
                     self.gather_inline_material(child, stylesheet, &style, spine_dir, markers, inlines);
                 }
 
+                if !float_contents && right != 0 { inlines.push(InlineMaterial::Box(right)); }
+
                 if let Some(mut v) = props.get("-plato-insert-after")
-                                          .map(|value| parse_inline_material(value, style.font_size, self.font_size, self.dpi)) {
+                                          .map(|value| parse_inline_material(value, style.font_size, root_font_size, self.dpi)) {
                     inlines.append(&mut v);
                 }
             },
@@ -752,7 +1073,7 @@ impl Engine {
         }
     }
 
-    fn make_paragraph_items(&mut self, inlines: &[InlineMaterial], parent_style: &StyleData, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> (Vec<ParagraphItem<ParagraphElement>>, Vec<ImageElement>) {
+    fn make_paragraph_items(&mut self, inlines: &[InlineMaterial], parent_style: &StyleData, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> (Vec<ParagraphItem<ParagraphElement>>, Vec<FloatElement>) {
         let mut items = Vec::new();
         let mut floats = Vec::new();
         let big_stretch = 3 * {
@@ -772,6 +1093,9 @@ impl Engine {
 
         for (index, mater) in inlines.iter().enumerate() {
             match mater {
+                InlineMaterial::Float(material) => {
+                    floats.push(self.layout_float(material, line_width, resource_fetcher));
+                },
                 InlineMaterial::Image(ImageMaterial { offset, path, style }) => {
                     let (mut width, mut height) = (style.width, style.height);
                     let mut scale = 1.0;
@@ -788,31 +1112,47 @@ impl Engine {
                                 } else if height != 0 {
                                     width = (height as f32 * w / h).round() as i32;
                                 }
+                                // Constrain replaced images without losing their aspect ratio.
+                                let shrink = (style.max_width.unwrap_or(i32::MAX) as f32 / width.max(1) as f32)
+                                    .min(style.max_height.unwrap_or(i32::MAX) as f32 / height.max(1) as f32).min(1.0);
+                                width = (width as f32 * shrink).round() as i32;
+                                height = (height as f32 * shrink).round() as i32;
+                                let grow = (style.min_width as f32 / width.max(1) as f32)
+                                    .max(style.min_height as f32 / height.max(1) as f32).max(1.0);
+                                width = (width as f32 * grow).round() as i32;
+                                height = (height as f32 * grow).round() as i32;
                                 scale = width as f32 / w;
                             }
                         }
 
-                        if width * height > 0 {
+                        if width > 0 && height > 0 {
+                            let mut margin = style.margin;
+                            if style.display == Display::Block {
+                                let remaining = (line_width - width - margin.left - margin.right).max(0);
+                                match style.auto_margins {
+                                    [true, true] => { margin.left = remaining / 2; margin.right = remaining - remaining / 2; },
+                                    [true, false] => margin.left = remaining,
+                                    [false, true] => margin.right = remaining,
+                                    _ => (),
+                                }
+                            }
                             let element = ImageElement {
                                     offset: *offset,
                                     width,
                                     height,
                                     scale,
                                     vertical_align: style.vertical_align,
+                                    relative_offset: style.relative_offset,
                                     display: style.display,
-                                    margin: style.margin,
+                                    margin,
                                     float: style.float,
                                     path: path.clone(),
                                     uri: style.uri.clone(),
                             };
-                            if style.float.is_none() {
-                                items.push(ParagraphItem::Box {
-                                    width,
-                                    data: ParagraphElement::Image(element),
-                                });
-                            } else {
-                                floats.push(element);
-                            }
+                            items.push(ParagraphItem::Box {
+                                width,
+                                data: ParagraphElement::Image(element),
+                            });
                         }
                     }
                 },
@@ -820,9 +1160,9 @@ impl Engine {
                     let font_size = (style.font_size * 64.0) as u32;
                     let space_plan = {
                         let font = self.fonts.as_mut().unwrap()
-                                       .get_mut(parent_style.font_kind,
-                                                parent_style.font_style,
-                                                parent_style.font_weight);
+                                       .get_mut(style.font_kind,
+                                                style.font_style,
+                                                style.font_weight);
                         font.set_size(font_size, self.dpi);
                         font.plan(" 0.", None, None)
                     };
@@ -859,6 +1199,7 @@ impl Engine {
                                             letter_spacing: style.letter_spacing,
                                             font_size,
                                             color: style.color,
+                                            background: style.background,
                                             float: style.float,
                                             margin: style.margin,
                                             uri: style.uri.clone(),
@@ -866,7 +1207,7 @@ impl Engine {
                                     });
                                 }
                                 if c.is_whitespace() {
-                                    if c == '\n' && parent_style.retain_whitespace {
+                                    if c == '\n' && style.retain_whitespace {
                                         let stretch = if parent_style.text_align == TextAlign::Center { big_stretch } else { line_width };
 
                                         items.push(ParagraphItem::Penalty { penalty: INFINITE_PENALTY, width: 0, flagged: false });
@@ -895,13 +1236,13 @@ impl Engine {
                                                    inlines[index+1..].iter().any(|m| m.text().map_or(false,
                                                                                       |text| text.chars().any(|c| !c.is_xml_whitespace())));
 
-                                    if !parent_style.retain_whitespace && c.is_xml_whitespace() &&
+                                    if !style.retain_whitespace && c.is_xml_whitespace() &&
                                         (last_c.map(|c| c.is_xml_whitespace()) != Some(false) || !has_more) {
                                             start_index += chunk.len();
                                             continue;
                                     }
 
-                                    let mut width = if !parent_style.retain_whitespace {
+                                    let mut width = if !style.retain_whitespace && c.is_xml_whitespace() {
                                         space_plan.glyph_advance(0)
                                     } else if let Some(index) = FONT_SPACES.chars().position(|x| x == c) {
                                         space_plan.glyph_advance(index)
@@ -921,7 +1262,7 @@ impl Engine {
 
                                     let is_unbreakable = c == '\u{00A0}' || c == '\u{202F}' || c == '\u{2007}';
 
-                                    if (is_unbreakable || (parent_style.retain_whitespace && c.is_xml_whitespace())) &&
+                                    if (is_unbreakable || (style.retain_whitespace && c.is_xml_whitespace())) &&
                                        (last_c == Some('\n') || last_c.is_none()) {
                                         items.push(ParagraphItem::Box { width: 0, data: ParagraphElement::Nothing });
                                     }
@@ -1014,21 +1355,112 @@ impl Engine {
         (items, floats)
     }
 
+    // Lay out a float in its own formatting context before reserving space in
+    // the surrounding paragraph. Keeping its contents together is essential
+    // for spans that contain an image or several styled parts of a drop cap.
+    fn layout_float(&mut self, material: &FloatMaterial, line_width: i32, resource_fetcher: &mut dyn ResourceFetcher) -> FloatElement {
+        let mut style = material.style.clone();
+        let side = style.float.unwrap();
+        let margin = style.margin;
+        let padding = style.padding;
+        let max_width = (line_width - margin.left - margin.right - padding.left - padding.right)
+            .min(style.max_width.unwrap_or(i32::MAX)).max(style.min_width).max(1);
+        let mut inlines = material.inlines.as_slice();
+        let is_blank = |inline: &InlineMaterial| match inline {
+            InlineMaterial::LineBreak => true,
+            InlineMaterial::Text(text) => text.text.trim().is_empty(),
+            _ => false,
+        };
+        while inlines.first().map_or(false, &is_blank) {
+            inlines = &inlines[1..];
+        }
+        while inlines.last().map_or(false, &is_blank) {
+            inlines = &inlines[..inlines.len()-1];
+        }
+        let mut image_contents;
+        if inlines.len() == 1 && matches!(inlines[0], InlineMaterial::Image(_)) {
+            image_contents = inlines.to_vec();
+            if let InlineMaterial::Image(image) = &mut image_contents[0] {
+                image.style.display = Display::Block;
+            }
+            inlines = &image_contents;
+        }
+        // Inline children can carry the font size (for example a bold letter
+        // inside a floated span). Their line box determines the natural size.
+        for inline in inlines {
+            if let InlineMaterial::Text(text) = inline {
+                if !text.text.trim().is_empty() {
+                    style.line_height = style.line_height.max(text.style.line_height);
+                    if text.style.font_size > style.font_size {
+                        style.font_size = text.style.font_size;
+                        style.font_kind = text.style.font_kind;
+                        style.font_style = text.style.font_style;
+                        style.font_weight = text.style.font_weight;
+                    }
+                }
+            }
+        }
+        let (items, _) = self.make_paragraph_items(inlines, &style, max_width, resource_fetcher);
+        let mut preferred_width = 0;
+        let mut current_width = 0;
+        for item in items {
+            match item {
+                ParagraphItem::Box { width, .. } | ParagraphItem::Glue { width, .. } => current_width += width,
+                ParagraphItem::Penalty { penalty, .. } if penalty == -INFINITE_PENALTY => {
+                    preferred_width = preferred_width.max(current_width);
+                    current_width = 0;
+                },
+                _ => (),
+            }
+        }
+        preferred_width = preferred_width.max(current_width);
+        let width = if style.width > 0 { style.width } else { preferred_width }.clamp(1, max_width);
+        let explicit_height = style.height.max(style.min_height);
+        style.width = width;
+        style.start_x = 0;
+        style.end_x = width;
+        style.float = None;
+        style.margin = Edge::default();
+        style.padding = Edge::default();
+        style.text_indent = 0;
+        // A zero line-height is useful for positioning drop caps, but line
+        // breaking must still have a positive step.
+        style.line_height = style.line_height.max(1);
+        let root = RootData {
+            start_offset: 0,
+            spine_dir: PathBuf::new(),
+            rect: rect![0, 0, width, (self.dims.1 as i32 * 16).max(explicit_height)],
+        };
+        let mut state = DrawState::default();
+        let mut pages = vec![Vec::new()];
+        let mut rects = vec![None];
+        self.place_paragraphs(inlines, &style, &root, &[], resource_fetcher, &mut state, &mut rects, &mut pages);
+        let height = if explicit_height > 0 { explicit_height } else { state.position.y.max(0) };
+        let width = width + padding.left + padding.right;
+        let height = height + padding.top + padding.bottom;
+        let mut commands = vec![DrawCommand::Marker(material.offset)];
+        commands.extend(box_commands(&style, rect![0, 0, width, height], material.offset, true, true));
+        for mut command in pages.into_iter().flatten() {
+            command.translate(pt!(padding.left, padding.top));
+            commands.push(command);
+        }
+        FloatElement { width, height, margin, side, commands }
+    }
+
     fn place_paragraphs(&mut self, inlines: &[InlineMaterial], style: &StyleData, root_data: &RootData, markers: &[usize], resource_fetcher: &mut dyn ResourceFetcher, draw_state: &mut DrawState, rects: &mut Vec<Option<Rectangle>>, display_list: &mut Vec<Page>) {
         let line_width = style.end_x - style.start_x;
         let (mut items, floats) = self.make_paragraph_items(inlines, style, line_width, resource_fetcher);
+        if !floats.is_empty() && !items.iter().any(|item| matches!(item, ParagraphItem::Box { width, .. } if *width > 0)) {
+            items.clear();
+        }
 
-        if items.is_empty() {
+        if items.is_empty() && floats.is_empty() {
             return;
         }
 
         let position = &mut draw_state.position;
 
-        let text_indent = if style.text_align == TextAlign::Center {
-            0
-        } else {
-            style.text_indent
-        };
+        let text_indent = style.text_indent;
 
         let (ascender, descender) = {
             let fonts = self.fonts.as_mut().unwrap();
@@ -1037,15 +1469,19 @@ impl Engine {
             (font.ascender(), font.descender())
         };
 
-        let ratio = ascender as f32 / (ascender - descender) as f32;
-        let space_top = (style.line_height as f32 * ratio) as i32;
+        let leading = style.line_height - (ascender - descender);
+        let space_top = ascender + leading / 2;
         let space_bottom = style.line_height - space_top;
 
         position.y += style.margin.top + space_top;
 
         let mut page = display_list.pop().unwrap();
         let mut page_rect = rects.pop().unwrap();
-        if position.y > root_data.rect.max.y - space_bottom {
+        let float_height = floats.iter().map(|element| element.height + element.margin.top + element.margin.bottom).max().unwrap_or(0);
+        let float_needs_page = float_height <= root_data.rect.max.y - root_data.rect.min.y &&
+                               position.y - space_top > root_data.rect.min.y &&
+                               position.y - space_top + float_height > root_data.rect.max.y;
+        if position.y > root_data.rect.max.y - space_bottom || float_needs_page {
             rects.push(page_rect.take());
             display_list.push(page);
             position.y = root_data.rect.min.y + space_top;
@@ -1054,66 +1490,55 @@ impl Engine {
 
         let page_index = display_list.len();
 
-        for mut element in floats.into_iter() {
+        for element in floats {
             let horiz_margin = element.margin.left + element.margin.right;
             let vert_margin = element.margin.top + element.margin.bottom;
-            let mut width = element.width;
-            let mut height = element.height;
-
-            let max_width = line_width / 3;
-            if width + horiz_margin > max_width {
-                let ratio = (max_width - horiz_margin) as f32 / width as f32;
-                element.scale *= ratio;
-                width = max_width - horiz_margin;
-                height = (ratio * height as f32).round() as i32;
-            }
-
             let mut y_min = position.y - space_top;
-            let side = if element.float == Some(Float::Left) { 0 } else { 1 };
-
-            if let Some(ref mut floating_rects) = draw_state.floats.get_mut(&page_index) {
-                if let Some(orect) = floating_rects.iter().rev()
-                                                   .find(|orect| orect.max.y > y_min &&
-                                                                 (orect.min.x - style.start_x).signum() == side) {
-                    y_min = orect.max.y;
+            if let Some(floating_rects) = draw_state.floats.get(&page_index) {
+                for rect in floating_rects {
+                    let same_side = (element.side == Float::Left && rect.min.x <= style.start_x) ||
+                                    (element.side == Float::Right && rect.max.x >= style.end_x);
+                    let too_wide = rect.width() as i32 + element.width + horiz_margin > line_width;
+                    if rect.max.y > y_min && (same_side || too_wide) {
+                        y_min = rect.max.y;
+                    }
                 }
             }
-
-            let max_height = 2 * (root_data.rect.max.y - space_bottom - y_min) / 3;
-            if height + vert_margin > max_height {
-                let ratio = (max_height - vert_margin) as f32 / height as f32;
-                element.scale *= ratio;
-                height = max_height - vert_margin;
-                width = (ratio * width as f32).round() as i32;
-            }
-
-            if width > 0 && height > 0 {
-                let mut rect = if element.float == Some(Float::Left) {
-                    rect![style.start_x, y_min,
-                          style.start_x + width + horiz_margin,
-                          y_min + height + vert_margin]
-                } else {
-                    rect![style.end_x - width - horiz_margin, y_min,
-                          style.end_x, y_min + height + vert_margin]
-                };
-
-                let floating_rects = draw_state.floats.entry(page_index).or_default();
-                floating_rects.push(rect);
-
-                rect.shrink(&element.margin);
-                page.push(DrawCommand::Image(ImageCommand {
-                    offset: element.offset + root_data.start_offset,
-                    position: rect.min,
-                    rect,
-                    scale: element.scale,
-                    path: element.path,
-                    uri: element.uri,
-                }));
+            let x_min = if element.side == Float::Left {
+                style.start_x
+            } else {
+                style.end_x - element.width - horiz_margin
+            };
+            let exclusion = rect![x_min, y_min,
+                                  x_min + (element.width + horiz_margin).max(0),
+                                  y_min + (element.height + vert_margin).max(0)];
+            draw_state.floats.entry(page_index).or_default().push(exclusion);
+            let origin = pt!(x_min + element.margin.left, y_min + element.margin.top);
+            for mut command in element.commands {
+                command.translate(origin);
+                command.add_offset(root_data.start_offset);
+                if let Some(rect) = command.rect() {
+                    if let Some(pr) = page_rect.as_mut() {
+                        pr.absorb(&rect);
+                    } else {
+                        page_rect = Some(rect);
+                    }
+                }
+                page.push(command);
             }
         }
 
-        let para_shape = if let Some(floating_rects) = draw_state.floats.get(&page_index) {
-            let max_lines = (root_data.rect.max.y - position.y + space_top) / style.line_height;
+        if items.is_empty() {
+            // Floats do not advance the normal flow. The next paragraph can
+            // occupy the space alongside a float-only paragraph.
+            position.y -= space_top;
+            rects.push(page_rect);
+            display_list.push(page);
+            return;
+        }
+
+        let mut para_shape = if let Some(floating_rects) = draw_state.floats.get(&page_index) {
+            let max_lines = (root_data.rect.max.y - position.y + space_top) / style.line_height.max(1);
             let mut para_shape = Vec::new();
             for index in 0..max_lines {
                 let y_min = position.y - space_top + index * style.line_height;
@@ -1136,6 +1561,21 @@ impl Engine {
             vec![(style.start_x, style.end_x); 2]
         };
 
+        // A full-width float leaves no line beside it. Start the paragraph
+        // below it instead of cropping words to a zero-width line.
+        let skipped_lines = para_shape.iter().take_while(|(a, b)| b <= a).count();
+        if skipped_lines > 0 {
+            position.y += skipped_lines as i32 * style.line_height;
+            para_shape.drain(..skipped_lines);
+            if position.y > root_data.rect.max.y - space_bottom {
+                rects.push(page_rect.take());
+                display_list.push(page);
+                page = Vec::new();
+                position.y = root_data.rect.min.y + space_top;
+                para_shape = vec![(style.start_x, style.end_x); 2];
+            }
+        }
+
         let mut line_lengths: Vec<i32> = para_shape.iter().map(|(a, b)| b - a).collect();
         line_lengths[0] -= text_indent;
 
@@ -1154,6 +1594,26 @@ impl Engine {
 
         if bps.is_empty() {
             bps = standard_fit(&items, &line_lengths, self.stretch_tolerance);
+        }
+
+        if bps.is_empty() {
+            if let Some(last_narrow_line) = para_shape.iter().rposition(|(a, b)| b - a < line_width) {
+                // An unbreakable word may not fit beside a wide float. Move
+                // the text below the float before considering glyph cropping.
+                position.y += (last_narrow_line + 1) as i32 * style.line_height;
+                if position.y > root_data.rect.max.y - space_bottom {
+                    rects.push(page_rect.take());
+                    display_list.push(page);
+                    page = Vec::new();
+                    position.y = root_data.rect.min.y + space_top;
+                }
+                para_shape = vec![(style.start_x, style.end_x); 2];
+                line_lengths = vec![line_width - text_indent, line_width];
+                bps = total_fit(&items, &line_lengths, self.stretch_tolerance, 0);
+                if bps.is_empty() {
+                    bps = standard_fit(&items, &line_lengths, self.stretch_tolerance);
+                }
+            }
         }
 
         if bps.is_empty() {
@@ -1238,7 +1698,7 @@ impl Engine {
             let current_text_indent = if is_first_line { text_indent } else { 0 };
 
             match style.text_align {
-                TextAlign::Right => position.x = end_x - width - current_text_indent,
+                TextAlign::Right => position.x = end_x - width,
                 _ => position.x = start_x + current_text_indent,
             }
 
@@ -1270,6 +1730,22 @@ impl Engine {
                                         markers_index += 1;
                                     } else {
                                         break;
+                                    }
+                                }
+                                if let Some(color) = element.background {
+                                    // Join adjacent words on this line, including their spaces.
+                                    let previous_text_end = page.last().and_then(|command| match command { DrawCommand::Text(text) => Some(text.rect.max.x), _ => None });
+                                    let previous = page.iter_mut().rev().find(|command| !matches!(command, DrawCommand::Text(_) | DrawCommand::Marker(_)));
+                                    let joined = if let Some(DrawCommand::Background(background)) = previous {
+                                        if previous_text_end == Some(background.rect.max.x) && background.color == color && background.rect.min.y == rect.min.y && background.rect.max.y == rect.max.y && background.rect.max.x <= rect.min.x {
+                                            background.rect.max.x = rect.max.x;
+                                            true
+                                        } else { false }
+                                    } else { false };
+                                    if !joined {
+                                        page.push(DrawCommand::Background(BackgroundCommand {
+                                            offset: element.offset + root_data.start_offset, position: rect.min, rect, color,
+                                        }));
                                     }
                                 }
                                 page.push(DrawCommand::Text(TextCommand {
@@ -1380,6 +1856,7 @@ impl Engine {
                                     (element.width, element.height, pt, element.scale)
                                 };
 
+                                let pt = pt + element.relative_offset;
                                 let rect = rect![pt, pt + pt!(w, h)];
 
                                 if let Some(pr) = page_rect.as_mut() {
@@ -1504,6 +1981,7 @@ impl Engine {
                 vertical_align: element.vertical_align,
                 letter_spacing: element.letter_spacing,
                 color: element.color,
+                background: element.background,
                 float: element.float,
                 margin: element.margin,
                 uri: element.uri.clone(),
@@ -1710,6 +2188,11 @@ impl Engine {
                     font.set_size(font_size, self.dpi);
                     font.render(&mut fb, *color, &plan, position);
                 },
+                DrawCommand::Background(BackgroundCommand { position, rect, color, .. }) => {
+                    let min = Point::from(scale_factor * Vec2::from(*position));
+                    let max = Point::from(scale_factor * Vec2::from(*position + pt!(rect.width() as i32, rect.height() as i32)));
+                    fb.draw_rectangle(&rect![min, max], *color);
+                },
                 DrawCommand::Image(ImageCommand { position, path, scale, .. }) => {
                     if let Ok(buf) = resource_fetcher.fetch(path) {
                         if let Some((pixmap, _)) = PdfOpener::new().and_then(|opener| {
@@ -1756,58 +2239,535 @@ fn format_list_prefix(kind: ListStyleType, index: usize) -> Option<String> {
     }
 }
 
-fn default_fonts() -> Result<Fonts, Error> {
+fn default_fonts(directory: &Path) -> Result<Fonts, Error> {
     let opener = FontOpener::new()?;
     let mut fonts = Fonts {
-        serif: if Path::new("fonts/book-serif-Regular.ttf").exists() {
+        serif: if directory.join("book-serif-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-serif-Regular.ttf")?,
-                italic: opener.open("fonts/book-serif-Italic.ttf")?,
-                bold: opener.open("fonts/book-serif-Bold.ttf")?,
-                bold_italic: opener.open("fonts/book-serif-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("book-serif-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-serif-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-serif-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("book-serif-BoldItalic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/LibertinusSerif-Regular.otf")?,
-                italic: opener.open("fonts/LibertinusSerif-Italic.otf")?,
-                bold: opener.open("fonts/LibertinusSerif-Bold.otf")?,
-                bold_italic: opener.open("fonts/LibertinusSerif-BoldItalic.otf")?,
+                regular: opener.open(directory.join("LibertinusSerif-Regular.otf"))?,
+                italic: opener.open(directory.join("LibertinusSerif-Italic.otf"))?,
+                bold: opener.open(directory.join("LibertinusSerif-Bold.otf"))?,
+                bold_italic: opener.open(directory.join("LibertinusSerif-BoldItalic.otf"))?,
             }
         },
-        sans_serif: if Path::new("fonts/book-sans-Regular.ttf").exists() {
+        sans_serif: if directory.join("book-sans-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-sans-Regular.ttf")?,
-                italic: opener.open("fonts/book-sans-Italic.ttf")?,
-                bold: opener.open("fonts/book-sans-Bold.ttf")?,
-                bold_italic: opener.open("fonts/book-sans-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("book-sans-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-sans-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-sans-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("book-sans-BoldItalic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/NotoSans-Regular.ttf")?,
-                italic: opener.open("fonts/NotoSans-Italic.ttf")?,
-                bold: opener.open("fonts/NotoSans-Bold.ttf")?,
-                bold_italic: opener.open("fonts/NotoSans-BoldItalic.ttf")?,
+                regular: opener.open(directory.join("NotoSans-Regular.ttf"))?,
+                italic: opener.open(directory.join("NotoSans-Italic.ttf"))?,
+                bold: opener.open(directory.join("NotoSans-Bold.ttf"))?,
+                bold_italic: opener.open(directory.join("NotoSans-BoldItalic.ttf"))?,
             }
         },
-        monospace: if Path::new("fonts/book-monospace-Regular.ttf").exists() {
+        monospace: if directory.join("book-monospace-Regular.ttf").exists() {
             FontFamily {
-                regular: opener.open("fonts/book-monospace-Regular.ttf")?,
-                italic: opener.open("fonts/book-monospace-Italic.ttf")?,
-                bold: opener.open("fonts/book-monospace-Regular.ttf")?,
-                bold_italic: opener.open("fonts/book-monospace-Italic.ttf")?,
+                regular: opener.open(directory.join("book-monospace-Regular.ttf"))?,
+                italic: opener.open(directory.join("book-monospace-Italic.ttf"))?,
+                bold: opener.open(directory.join("book-monospace-Regular.ttf"))?,
+                bold_italic: opener.open(directory.join("book-monospace-Italic.ttf"))?,
             }
         } else {
             FontFamily {
-                regular: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
-                bold: opener.open("fonts/SourceCodeVariable-Roman.otf")?,
-                bold_italic: opener.open("fonts/SourceCodeVariable-Italic.otf")?,
+                regular: opener.open(directory.join("SourceCodeVariable-Roman.otf"))?,
+                italic: opener.open(directory.join("SourceCodeVariable-Italic.otf"))?,
+                bold: opener.open(directory.join("SourceCodeVariable-Roman.otf"))?,
+                bold_italic: opener.open(directory.join("SourceCodeVariable-Italic.otf"))?,
             }
         },
-        cursive: opener.open("fonts/Parisienne-Regular.ttf")?,
-        fantasy: opener.open("fonts/Delius-Regular.ttf")?,
+        cursive: opener.open(directory.join("Parisienne-Regular.ttf"))?,
+        fantasy: opener.open(directory.join("Delius-Regular.ttf"))?,
     };
     fonts.monospace.bold.set_variations(&["wght=600"]);
     fonts.monospace.bold_italic.set_variations(&["wght=600"]);
     Ok(fonts)
+}
+
+// Paint backgrounds before contents; fragmented boxes keep their side borders.
+fn box_commands(style: &StyleData, rect: Rectangle, offset: usize, first: bool, last: bool) -> Vec<DrawCommand> {
+    let mut commands = Vec::new();
+    if rect.max.x <= rect.min.x || rect.max.y <= rect.min.y { return commands; }
+    let mut fill = |rect: Rectangle, color| {
+        commands.push(DrawCommand::Background(BackgroundCommand { offset, position: rect.min, rect, color }));
+    };
+    if let Some(color) = style.background { fill(rect, color); }
+    for (side, border) in style.borders.iter().enumerate() {
+        if border.width <= 0 || (side == 0 && !first) || (side == 2 && !last) { continue; }
+        let color = match border.color { Some(color) => color, None => continue };
+        let horizontal = side % 2 == 0;
+        let thickness = border.width.min(if horizontal { rect.height() } else { rect.width() } as i32);
+        let length = if horizontal { rect.width() } else { rect.height() } as i32;
+        let segment = match border.pattern { 1 => thickness, 2 => 3 * thickness, _ => length };
+        let mut start = 0;
+        while start < length {
+            let end = (start + segment).min(length);
+            let strip = match side {
+                0 => rect![rect.min.x + start, rect.min.y, rect.min.x + end, rect.min.y + thickness],
+                1 => rect![rect.max.x - thickness, rect.min.y + start, rect.max.x, rect.min.y + end],
+                2 => rect![rect.min.x + start, rect.max.y - thickness, rect.min.x + end, rect.max.y],
+                _ => rect![rect.min.x, rect.min.y + start, rect.min.x + thickness, rect.min.y + end],
+            };
+            fill(strip, color);
+            start += segment + thickness;
+        }
+    }
+    commands
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::css::CssParser;
+    use super::super::xml::XmlParser;
+
+    struct TestImages;
+
+    impl ResourceFetcher for TestImages {
+        fn fetch(&mut self, name: &str) -> Result<Vec<u8>, Error> {
+            assert_eq!(name, "cap.svg");
+            Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="black"/></svg>"#.to_vec())
+        }
+    }
+
+    fn layout(markup: &str, css: &str, height: i32, y: i32) -> (Engine, Vec<Page>) {
+        let mut engine = Engine::new();
+        engine.layout(240, height as u32, 12.0, 72);
+        engine.fonts = Some(default_fonts(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts")).unwrap());
+        let mut tree = XmlParser::new(markup).parse();
+        tree.wrap_lost_inlines();
+        let mut stylesheet = CssParser::new(css).parse();
+        stylesheet.sort();
+        let root = RootData { start_offset: 1000, spine_dir: PathBuf::new(), rect: rect![0, 0, 240, height] };
+        let style = StyleData {
+            font_size: 12.0, line_height: 16, start_x: 0, end_x: 240, width: 240,
+            text_align: TextAlign::Left, ..StyleData::default()
+        };
+        let mut state = DrawState { position: pt!(0, y), ..DrawState::default() };
+        let mut pages = vec![Vec::new()];
+        engine.build_display_list(tree.root(), &style, &LoopContext::default(), &stylesheet, &root, &mut TestImages, &mut state, &mut pages);
+        (engine, pages)
+    }
+
+    fn texts(pages: &[Page]) -> Vec<&TextCommand> {
+        pages.iter().flatten().filter_map(|command| match command {
+            DrawCommand::Text(text) => Some(text), _ => None,
+        }).collect()
+    }
+
+    #[test]
+    fn percentage_image_width_uses_the_floats_content_width() {
+        let (_, pages) = layout("<div class='cap'><img src='cap.svg'/></div><p>Text</p>",
+            ".cap {float:left; width:40px;} img {width:100%;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 30);
+        assert_eq!(image.rect.height(), 30);
+    }
+
+    #[test]
+    fn image_auto_margins_and_empty_fixed_height_do_not_consume_margin() {
+        let (_, pages) = layout("<p><img src='cap.svg'/></p>", "img {display:block; width:80px; margin:0 auto;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.min.x, 90);
+        let (_, pages) = layout("<div/>", "div {height:40px; margin-top:20px; background:#ddd;}", 200, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.min.y == 15 && b.rect.height() == 30));
+    }
+
+    #[test]
+    fn inline_pre_and_unicode_spaces_preserve_their_width() {
+        let (_, normal) = layout("<p>X Y</p>", "", 200, 0);
+        let (_, em) = layout("<p>X&#x2003;Y</p>", "", 200, 0);
+        let gap = |pages: &[Page]| { let text = texts(pages); text[1].rect.min.x - text[0].rect.max.x };
+        assert_eq!(gap(&em), 12);
+        assert!(gap(&em) > gap(&normal));
+        let (_, preserved) = layout("<p><span>X   Y</span></p>", "span {white-space:pre;}", 200, 0);
+        assert_eq!(gap(&preserved), 3 * gap(&normal));
+        let (_, reset) = layout("<p><span>X   Y</span></p>", "p {white-space:pre;} span {white-space:normal;}", 200, 0);
+        assert_eq!(gap(&reset), gap(&normal));
+    }
+
+    #[test]
+    fn adjoining_margin_groups_preserve_positive_and_negative_extrema() {
+        let (_, pages) = layout("<div><p>A</p><div class='empty'/><p class='last'>B</p></div>",
+            "p {margin-bottom:20px;} .empty {margin-top:-8px;} .last {margin-top:16px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15 - 6);
+        let (_, pages) = layout("<div><p>A</p><div style='display:none'/><p>B</p></div>", "p {margin-bottom:20px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15);
+    }
+
+    #[test]
+    fn inherited_percentage_indent_resolves_against_child_containing_block() {
+        let (_, pages) = layout("<div><section><p>X</p></section></div>", "div {text-indent:10%;} section {width:100px;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 8);
+    }
+
+    #[test]
+    fn min_max_widths_and_image_size_constraints() {
+        let (_, pages) = layout("<div><p>X</p></div>", "div {max-width:100px; margin:0 auto; background:#ddd;}", 200, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.width() == 75 && b.rect.min.x == 82));
+        let (_, pages) = layout("<p><img src='cap.svg'/></p>", "img {max-width:20%;}", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 48);
+        assert_eq!(image.rect.height(), 48);
+    }
+
+    #[test]
+    fn floated_image_preserves_previous_margin_and_starts_at_box_top() {
+        let markup = "<div><p class='quote'>Quote</p><div class='cap'><img src='cap.svg'/></div><p>Opening</p></div>";
+        let css = ".quote {margin-bottom:20px;} .cap {float:left; width:30px;} .cap img {width:30px;}";
+        let (_, pages) = layout(markup, css, 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 15);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.min.y, 16 + 15);
+        let (_, without_float) = layout("<div><p class='quote'>Quote</p><p>Opening</p></div>", css, 200, 0);
+        assert_eq!(text[1].position.y, texts(&without_float)[1].position.y);
+    }
+
+    #[test]
+    fn padding_and_borders_stop_parent_child_margin_collapse() {
+        let (_, plain) = layout("<p>X</p>", "", 200, 0);
+        let baseline = texts(&plain)[0].position.y;
+        for barrier in ["padding-top:4px", "border-top:4px solid"] {
+            let css = format!("div {{margin-top:10px;{};}} p {{margin-top:8px;}}", barrier);
+            let (_, pages) = layout("<div><p>X</p></div>", &css, 200, 0);
+            assert_eq!(texts(&pages)[0].position.y - baseline, 8 + 3 + 6);
+        }
+        let (_, pages) = layout("<section><div><p>X</p></div><p>Y</p></section>", "div {padding-bottom:4px;} div p {margin-bottom:8px;}", 200, 0);
+        let text = texts(&pages);
+        assert_eq!(text[1].position.y - text[0].position.y, 16 + 6 + 3);
+    }
+
+    #[test]
+    fn block_width_auto_margins_and_negative_margins() {
+        let (_, pages) = layout("<div><p>X</p></div>", "div {width:100px; margin:0 auto; padding:4px; background:#ddd;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 82);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.width() == 81));
+        let (_, pages) = layout("<p>X</p>", "p {margin:0 auto;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 0);
+        let (_, pages) = layout("<p>X</p>", "p {margin-left:-8px; padding-left:4px;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, -3);
+    }
+
+    #[test]
+    fn em_margins_and_indent_use_the_elements_font_size() {
+        let (_, pages) = layout("<p>X</p>", "p {font-size:150%; margin:0 3em; text-indent:1.5em;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 54 + 27);
+    }
+
+    #[test]
+    fn rem_tracks_computed_html_font_size() {
+        let (_, pages) = layout("<html><body><p>X</p></body></html>", "html {font-size:200%;} p {font-size:50%; margin-left:1rem; text-indent:1em;}", 200, 0);
+        assert_eq!(texts(&pages)[0].rect.min.x, 24 + 12);
+    }
+
+    #[test]
+    fn line_height_inherits_numbers_as_ratios_and_lengths_as_lengths() {
+        for (value, expected) in [("2", 48), ("24px", 18), ("150%", 18)] {
+            let css = format!("div {{line-height:{};}} p {{font-size:200%;}}", value);
+            let (_, pages) = layout("<div><p>one<br/>two</p></div>", &css, 200, 0);
+            let text = texts(&pages);
+            assert_eq!(text[1].position.y - text[0].position.y, expected, "{}", value);
+        }
+    }
+
+    #[test]
+    fn inline_spacing_and_percentage_width_survive_inline_ancestors() {
+        let (_, a) = layout("<p>X<span>Y</span>Z</p>", "", 200, 0);
+        let (_, b) = layout("<p>X<span>Y</span>Z</p>", "span {margin-left:-4px; padding-right:8px;}", 200, 0);
+        assert_eq!(texts(&b)[1].rect.min.x - texts(&a)[1].rect.min.x, -3);
+        assert_eq!(texts(&b)[2].rect.min.x - texts(&a)[2].rect.min.x, 3);
+        let (_, pages) = layout("<p><span><img src='cap.svg' style='width:25%'/></span></p>", "", 200, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.rect.width(), 60);
+    }
+
+    #[test]
+    fn percentage_height_uses_definite_height_and_fixed_height_uses_line_boxes() {
+        let (_, pages) = layout("<div><p/></div>", "div {height:200px;} p {height:50%; background:#ddd;}", 300, 0);
+        assert!(matches!(&pages[0][0], DrawCommand::Background(b) if b.rect.height() == 75));
+        let (_, plain) = layout("<p>X</p>", "", 200, 0);
+        let (_, pages) = layout("<div><p>one<br/>two</p></div><p>X</p>", "div {height:40px;}", 200, 0);
+        assert_eq!(texts(&pages)[2].position.y - texts(&plain)[0].position.y, 32);
+    }
+
+    #[test]
+    fn table_cells_fill_the_row_including_empty_cells() {
+        let (_, pages) = layout("<table><tr><th>Header</th><td>one<br/>two<br/>three</td><td/></tr></table>",
+            "table {margin-top:10px; border:2px solid; background:#eee;} td,th {padding:4px; border:2px dotted; background:#bbb;} th {background:#888;}", 200, 0);
+        let fills: Vec<_> = pages[0].iter().filter_map(|c| match c {
+            DrawCommand::Background(b) if b.color == parse_color("#bbb").unwrap() || b.color == parse_color("#888").unwrap() => Some(b.rect), _ => None,
+        }).collect();
+        assert_eq!(fills.len(), 3);
+        assert!(fills[0].height() > 40);
+        assert!(fills.iter().all(|rect| rect.min.y == fills[0].min.y && rect.max.y == fills[0].max.y));
+        assert_eq!(fills[0].max.x, fills[1].min.x);
+        assert_eq!(fills[1].max.x, fills[2].min.x);
+        assert!(fills[2].width() > 0);
+        assert!(matches!(pages[0][0], DrawCommand::Background(ref b) if b.color == parse_color("#eee").unwrap()));
+        if let DrawCommand::Background(table) = &pages[0][0] {
+            assert_eq!(fills[0].min.y, table.rect.min.y + 2);
+            assert_eq!(fills[0].max.y, table.rect.max.y - 2);
+        }
+    }
+
+    #[test]
+    fn table_short_cell_background_continues_across_pages() {
+        let (_, pages) = layout("<table><tr><td>short</td><td>one<br/>two<br/>three<br/>four<br/>five<br/>six<br/>seven</td></tr></table>",
+            "td {border:2px solid; padding:2px; background:#ddd;}", 50, 0);
+        assert!(pages.len() >= 3);
+        for page in &pages {
+            let fills: Vec<_> = page.iter().filter_map(|c| match c {
+                DrawCommand::Background(b) if b.color == parse_color("#ddd").unwrap() => Some(b.rect), _ => None,
+            }).collect();
+            assert_eq!(fills.len(), 2);
+            assert_eq!(fills[0].min.y, fills[1].min.y);
+            assert_eq!(fills[0].max.y, fills[1].max.y);
+            assert!(fills[0].max.y <= 50);
+        }
+        for pair in pages.windows(2) { assert!(pair[0][0].offset() < pair[1][0].offset()); }
+        assert_eq!(texts(&pages).len(), 8);
+    }
+
+    #[test]
+    fn table_colspan_and_empty_cells_keep_borders() {
+        let (_, pages) = layout("<table><tr><th colspan='2'>Title</th></tr><tr><td/><td/></tr></table>",
+            "table {width:200px; border:2px solid;} td,th {padding:4px; background:#ddd; border:2px solid;}", 200, 0);
+        let fills: Vec<_> = pages[0].iter().filter_map(|c| match c {
+            DrawCommand::Background(b) if b.color == parse_color("#ddd").unwrap() => Some(b.rect), _ => None,
+        }).collect();
+        assert_eq!(fills.len(), 3);
+        assert_eq!(fills[0].min.x, fills[1].min.x);
+        assert_eq!(fills[0].max.x, fills[2].max.x);
+        assert_eq!(fills[1].max.x, fills[2].min.x);
+        assert_eq!(fills[0].max.y, fills[1].min.y);
+    }
+
+    #[test]
+    fn horizontal_rules_honor_legacy_dimensions_and_alignment() {
+        let (_, pages) = layout("<div><hr align='left' width='50%' size='4'/><hr align='right' width='80' size='8'/><hr width='40%'/></div>", "", 180, 0);
+        let boxes: Vec<_> = pages.iter().flatten().filter_map(|c| match c { DrawCommand::Background(b) => Some(b.rect), _ => None }).collect();
+        assert_eq!(boxes.len(), 3);
+        assert_eq!(boxes[0], rect![0, 0, 120, 3]);
+        assert_eq!(boxes[1], rect![180, 3, 240, 9]);
+        assert_eq!(boxes[2].min.x, 72);
+        assert_eq!(boxes[2].width(), 96);
+    }
+
+    #[test]
+    fn horizontal_rule_moves_to_next_page() {
+        let (_, pages) = layout("<hr size='16'/>", "", 100, 95);
+        assert_eq!(pages.len(), 2);
+        assert!(pages[0].is_empty());
+        assert!(matches!(&pages[1][0], DrawCommand::Background(b) if b.rect.min.y == 0 && b.rect.height() == 12));
+    }
+
+    #[test]
+    fn block_background_and_borders_precede_text_and_reserve_space() {
+        let (_, pages) = layout("<p>Hello</p>", "p { padding:4px; background:#ddd; border:4px solid; border-left-width:8px; }", 180, 0);
+        let boxes: Vec<_> = pages[0].iter().filter_map(|c| match c { DrawCommand::Background(b) => Some(b.rect), _ => None }).collect();
+        assert_eq!(boxes.len(), 5);
+        assert_eq!(boxes[0].min, pt!(0, 0));
+        assert_eq!(boxes[0].width(), 240);
+        assert_eq!(boxes[4].width(), 6);
+        assert_eq!(texts(&pages)[0].rect.min.x, 9);
+        assert!(matches!(pages[0][0], DrawCommand::Background(_)));
+    }
+
+    #[test]
+    fn fragmented_background_stays_behind_text_on_every_page() {
+        let (_, pages) = layout("<div><p>one<br/>two<br/>three<br/>four<br/>five<br/>six</p></div>", "div {background:#ddd; border:2px solid;} p {background:#eee;}", 50, 0);
+        assert!(pages.len() > 1);
+        for pair in pages.windows(2) {
+            assert!(pair[0][0].offset() < pair[1][0].offset());
+        }
+        for page in &pages {
+            assert!(matches!(page.first(), Some(DrawCommand::Background(_))));
+            for command in page {
+                if let DrawCommand::Background(b) = command { assert!(b.rect.min.y >= 0 && b.rect.max.y <= 50); }
+            }
+        }
+        assert_eq!(texts(&pages).iter().map(|text| text.text.as_str()).collect::<Vec<_>>(), ["one", "two", "three", "four", "five", "six"]);
+    }
+
+    #[test]
+    fn inline_background_covers_spaces_without_coloring_following_text() {
+        let (_, pages) = layout("<p><span style='background:#ddd'>one two</span> plain</p>", "", 180, 0);
+        let boxes: Vec<_> = pages[0].iter().filter_map(|c| match c { DrawCommand::Background(b) => Some(b), _ => None }).collect();
+        assert_eq!(boxes.len(), 1);
+        let text = texts(&pages);
+        assert_eq!(boxes[0].rect.min.x, text[0].rect.min.x);
+        assert_eq!(boxes[0].rect.max.x, text[1].rect.max.x);
+        assert!(boxes[0].rect.max.x < text[2].rect.min.x);
+    }
+
+    #[test]
+    fn dotted_dashed_and_fallback_borders() {
+        let mut style = StyleData::default();
+        let sheet = CssParser::new("p {border:2px dotted; border-right-style:dashed; border-bottom-style:double; border-left-style:none;}").parse();
+        let tree = XmlParser::new("<p/>").parse();
+        let props = specified_values(tree.root().first_child().unwrap(), &sheet);
+        let mut engine = Engine::new();
+        engine.dpi = 96;
+        engine.box_style(&props, &mut style);
+        assert_eq!(style.borders[0].width, 2);
+        assert_eq!(style.borders[1].pattern, 2);
+        assert_eq!(style.borders[2].pattern, 0);
+        assert_eq!(style.borders[3].width, 0);
+        let commands = box_commands(&style, rect![0, 0, 20, 20], 0, true, true);
+        assert_eq!(commands.len(), 9); // five dots, three dashes, one solid edge
+    }
+
+    const LINES: &str = "one<br/>two<br/>three<br/>four<br/>five";
+
+    #[test]
+    fn text_dropcap_wraps_then_returns_to_full_width() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap { float:left; font-size:3em; line-height:1; padding:2px; margin-right:4px; background:gray; }", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two", "three", "four", "five"]);
+        assert_eq!(words[0].font_size, 36 * 64);
+        assert_eq!(words[1].font_size, 12 * 64);
+        assert!(words[1..4].iter().all(|t| t.position.x > 0));
+        assert_eq!(words[4].position.x, 0);
+        assert!(words[0].offset >= 1000);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Background(..))));
+    }
+
+    #[test]
+    fn image_wrapper_preserves_padding_height_and_margin() {
+        let markup = format!("<p><span class='cap'><img src='cap.svg' style='width:100%; display:block'/></span>{LINES}</p>");
+        let (mut engine, pages) = layout(&markup, ".cap {float:left; width:3em; height:3em; padding:4px; margin-right:4px; background:gray}", 180, 0);
+        let image = pages[0].iter().find_map(|c| match c { DrawCommand::Image(i) => Some(i), _ => None }).unwrap();
+        assert_eq!(image.position, pt!(3, 3)); // CSS pixels are 0.75pt.
+        assert_eq!((image.rect.width(), image.rect.height()), (36, 36));
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 45); // 36 + 6 padding + 3 margin.
+        assert_eq!(words[3].position.x, 0);
+        let pixmap = engine.render_page(&pages[0], 1.0, 1, &mut TestImages).unwrap();
+        assert!(pixmap.data.iter().any(|&sample| sample == 0));
+    }
+
+    #[test]
+    fn right_float_and_negative_bottom_margin() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:right; width:3em; height:3em; font-size:1em; margin-bottom:-1em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 204);
+        assert!(words[1..].iter().all(|t| t.position.x == 0));
+        assert!(words[1..3].iter().all(|t| t.rect.max.x <= 204));
+    }
+
+    #[test]
+    fn dropcap_and_opening_lines_move_to_next_page_together() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>one<br/>two</p>", ".cap {float:left; font-size:3em; line-height:1}", 100, 80);
+        assert_eq!(pages.len(), 2);
+        assert!(pages[0].is_empty());
+        assert_eq!(texts(&pages[1..]).iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two"]);
+        assert!(texts(&pages[1..])[1].position.x > 0);
+    }
+
+    #[test]
+    fn float_only_paragraph_wraps_following_paragraph() {
+        let (_, pages) = layout("<p><span class='cap'>B</span></p><p>one<br/>two<br/>three<br/>four</p>", ".cap {float:left; width:3em; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].position.x, 36);
+        assert_eq!(words[4].position.x, 0);
+    }
+
+    #[test]
+    fn full_width_float_does_not_erase_following_text() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>one<br/>two</p>", ".cap {float:left; width:100%; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["B", "one", "two"]);
+        assert!(words[1].position.y >= 36);
+        assert_eq!(words[1].position.x, 0);
+    }
+
+    #[test]
+    fn direct_floated_image_still_wraps_text() {
+        let (_, pages) = layout("<p><img src='cap.svg' style='float:left; height:3em; margin-right:4px'/>one<br/>two<br/>three<br/>four</p>", "", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 39);
+        assert_eq!(words[3].position.x, 0);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Image(..))));
+    }
+    #[test]
+    fn narrow_space_beside_float_preserves_unbreakable_word() {
+        let (_, pages) = layout("<p><span class='cap'>B</span>abcdefghijk</p>", ".cap {float:left; width:19em; height:3em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].text, "abcdefghijk");
+        assert!(words[1].rect.width() > 12);
+        assert_eq!(words[1].position.x, 0);
+        assert!(words[1].position.y >= 36);
+    }
+
+    #[test]
+    fn negative_bottom_margin_releases_lines_early() {
+        let markup = format!("<p><span class='cap'>B</span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:left; width:3em; height:3em; margin-bottom:-1em}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[1].position.x, 36);
+        assert_eq!(words[2].position.x, 36);
+        assert_eq!(words[3].position.x, 0);
+    }
+
+    #[test]
+    fn nested_styled_letter_sets_float_natural_height() {
+        let markup = format!("<p><span class='cap'><b>B</b></span>{LINES}</p>");
+        let (_, pages) = layout(&markup, ".cap {float:left} b {font-size:3em; line-height:1}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].font_size, 36 * 64);
+        assert!(words[1..4].iter().all(|text| text.position.x > 0));
+        assert_eq!(words[4].position.x, 0);
+        assert!(words[0].position.y > words[1].position.y);
+    }
+
+    #[test]
+    fn first_letter_float_styles_only_the_initial() {
+        for selector in ["p::first-letter", "p:first-letter"] {
+            let css = format!("{selector} {{float:left; font-size:3em; line-height:1; margin-right:4px}}");
+            let (_, pages) = layout("<p>Behind the walls<br/>two<br/>three<br/>four</p>", &css, 180, 0);
+            let words = texts(&pages);
+            assert_eq!(words[0].text, "B");
+            assert_eq!(words[0].font_size, 36 * 64);
+            assert_eq!(words[1].text, "ehind");
+            assert_eq!(words[1].font_size, 12 * 64);
+            assert!(words[1].position.x > 0);
+            assert_eq!(words.last().unwrap().position.x, 0);
+            assert_eq!(words[1].offset, words[0].offset + 1);
+        }
+    }
+
+    #[test]
+    fn first_letter_includes_quotes_and_combining_accents() {
+        let (_, pages) = layout("<p>“E\u{301}lan” continued</p>", "p::first-letter {float:left; font-size:3em; line-height:1}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].text, "“E\u{301}");
+        assert_eq!(words[1].text, "lan”");
+        assert_eq!(words[1].offset, words[0].offset + "“E\u{301}".len());
+    }
+
+    #[test]
+    fn block_float_wraps_following_paragraph() {
+        let (_, pages) = layout("<div class='cap'><img src='cap.svg' style='width:3em; display:block'/></div><p>one<br/>two<br/>three<br/>four</p>", ".cap {float:left; width:3em; height:3em; margin-right:4px}", 180, 0);
+        let words = texts(&pages);
+        assert_eq!(words[0].position.x, 39);
+        assert_eq!(words[3].position.x, 0);
+        assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Image(..))));
+    }
+
 }
