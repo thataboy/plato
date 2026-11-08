@@ -59,7 +59,7 @@ pub enum FzGridInfo {}
 pub enum FzPoolArray {}
 pub enum FzImage {}
 
-#[link(name="mupdf")]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="mupdf"))]
 #[link(name="mupdf_wrapper", kind="static")]
 
 extern "C" {

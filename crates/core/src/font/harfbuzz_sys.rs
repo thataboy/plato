@@ -19,7 +19,7 @@ pub enum HbLanguage {}
 pub enum HbBuffer {}
 pub enum HbFont {}
 
-#[link(name="harfbuzz")]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="harfbuzz"))]
 extern "C" {
     pub fn hb_ft_font_create(face: *mut FtFace, destroy: *const libc::c_void) -> *mut HbFont;
     pub fn hb_ft_font_changed(font: *mut HbFont);

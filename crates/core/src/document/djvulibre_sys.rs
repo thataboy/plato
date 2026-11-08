@@ -41,7 +41,7 @@ pub type MessageTag = libc::c_uint;
 pub type RenderMode = libc::c_uint;
 pub type FormatStyle = libc::c_uint;
 
-#[link(name="djvulibre")]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="djvulibre"))]
 extern "C" {
     pub fn ddjvu_context_create(name: *const libc::c_char) -> *mut ExoContext;
     pub fn ddjvu_context_release(ctx: *mut ExoContext);

@@ -3,6 +3,19 @@ use std::env;
 fn main() {
     let target = env::var("TARGET").unwrap();
 
+    if target == "armv7-unknown-linux-musleabihf" {
+        println!("cargo:rerun-if-env-changed=PLATO_KINDLE_NATIVE");
+        let native = env::var("PLATO_KINDLE_NATIVE")
+            .expect("set PLATO_KINDLE_NATIVE to the static archive directory");
+        println!("cargo:rustc-link-search=native={native}");
+        for lib in ["mupdf", "mupdf-third", "harfbuzz", "djvulibre", "c++", "c++abi"] {
+            println!("cargo:rerun-if-changed={native}/lib{lib}.a");
+            println!("cargo:rustc-link-lib=static={lib}");
+        }
+        println!("cargo:rerun-if-changed={native}/libmupdf_wrapper.a");
+        return;
+    }
+
     // Cross-compiling for Kobo.
     if target == "arm-unknown-linux-gnueabihf" {
         println!("cargo:rustc-env=PKG_CONFIG_ALLOW_CROSS=1");

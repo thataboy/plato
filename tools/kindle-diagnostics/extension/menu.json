@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "name": "Plato Diagnostics",
+      "items": [
+        {
+          "name": "Save read-only device inventory",
+          "action": "sh ./bin/inventory.sh",
+          "exitmenu": false,
+          "status": false,
+          "internal": "status Saving report to plato-diagnostics; allow up to 90 seconds"
+        },
+        {
+          "name": "Run ARM probe and capture input",
+          "action": "sh ./bin/run-arm-probe.sh",
+          "exitmenu": false,
+          "status": false,
+          "internal": "status For 20 seconds tap blank space, swipe, and press both PagePress sides"
+        },
+        {
+          "name": "Test top-screen restoration",
+          "action": "sh ./bin/run-display-probe.sh",
+          "exitmenu": false,
+          "status": false,
+          "internal": "status Watch for gray bars near the top, then check that the original text returns"
+        }
+      ]
+    }
+  ]
+}

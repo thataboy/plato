@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "name": "Plato Voyage Alpha",
+      "items": [
+        {
+          "name": "Start reader with stock sleep",
+          "action": "sh ./bin/start.sh stock",
+          "exitmenu": false,
+          "status": false
+        },
+        {
+          "name": "Start bounded reader (fallback)",
+          "action": "sh ./bin/start.sh bounded",
+          "exitmenu": false,
+          "status": false
+        }
+      ]
+    }
+  ]
+}

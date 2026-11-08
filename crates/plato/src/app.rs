@@ -8,7 +8,9 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use plato_core::anyhow::{Error, Context as ResultExt, format_err};
 use plato_core::chrono::Local;
-use plato_core::framebuffer::{Framebuffer, KoboFramebuffer1, KoboFramebuffer2, UpdateMode};
+use plato_core::framebuffer::{Framebuffer, UpdateMode};
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+use plato_core::framebuffer::{KoboFramebuffer1, KoboFramebuffer2};
 use plato_core::view::{View, Event, EntryId, EntryKind, ViewId, AppCmd, RenderData, RenderQueue, UpdateData};
 use plato_core::view::{handle_event, process_render_queue, wait_for_all};
 use plato_core::view::common::{locate, locate_by_id, transfer_notifications, overlapping_rectangle};
@@ -22,13 +24,17 @@ use plato_core::view::touch_events::TouchEvents;
 use plato_core::view::rotation_values::RotationValues;
 use plato_core::document::sys_info_as_html;
 use plato_core::input::{DeviceEvent, PowerSource, ButtonCode, ButtonStatus, VAL_RELEASE, VAL_PRESS};
-use plato_core::input::{raw_events, device_events, usb_events, display_rotate_event, button_scheme_event};
+use plato_core::input::{usb_events, display_rotate_event, button_scheme_event};
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+use plato_core::input::{raw_events, device_events};
 use plato_core::gesture::{GestureEvent, gesture_events};
 use plato_core::helpers::{load_toml, save_toml};
 use plato_core::settings::{ButtonScheme, Settings, SETTINGS_PATH, RotationLock, IntermKind};
 use plato_core::frontlight::{Frontlight, StandardFrontlight, NaturalFrontlight, PremixedFrontlight};
 use plato_core::lightsensor::{LightSensor, KoboLightSensor};
-use plato_core::battery::{Battery, KoboBattery};
+use plato_core::battery::Battery;
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+use plato_core::battery::KoboBattery;
 use plato_core::geom::{Rectangle, DiagDir, Region};
 use plato_core::view::home::Home;
 use plato_core::view::reader::Reader;
@@ -43,18 +49,26 @@ use plato_core::context::Context;
 use plato_core::view::translate::Translate;
 use plato_core::view::wikipedia::Wiki;
 
+#[cfg(all(target_arch = "arm", target_env = "musl"))]
+use plato_core::framebuffer::voyage::VoyageFramebuffer;
+
+const VOYAGE: bool = cfg!(all(target_arch = "arm", target_env = "musl"));
 pub const APP_NAME: &str = "Plato";
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 const FB_DEVICE: &str = "/dev/fb0";
 const RTC_DEVICE: &str = "/dev/rtc0";
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 const TOUCH_INPUTS: [&str; 5] = ["/dev/input/by-path/platform-2-0010-event",
                                  "/dev/input/by-path/platform-1-0038-event",
                                  "/dev/input/by-path/platform-1-0010-event",
                                  "/dev/input/by-path/platform-0-0010-event",
                                  "/dev/input/event1"];
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 const BUTTON_INPUTS: [&str; 4] = ["/dev/input/by-path/platform-gpio-keys-event",
                                   "/dev/input/by-path/platform-ntx_event0-event",
                                   "/dev/input/by-path/platform-mxckpd-event",
                                   "/dev/input/event0"];
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 const POWER_INPUTS: [&str; 3] = ["/dev/input/by-path/platform-bd71828-pwrkey.6.auto-event",
                                  "/dev/input/by-path/platform-bd71828-pwrkey.4.auto-event",
                                  "/dev/input/by-path/platform-bd71828-pwrkey-event"];
@@ -86,16 +100,19 @@ struct HistoryItem {
     dithered: bool,
 }
 
-fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
-    let rtc = Rtc::new(RTC_DEVICE)
+fn build_context(fb: Box<dyn Framebuffer>, stock_power: bool) -> Result<Context, Error> {
+    let rtc = if VOYAGE { None } else { Rtc::new(RTC_DEVICE)
                   .map_err(|e| eprintln!("Can't open RTC device: {:#}.", e))
-                  .ok();
+                  .ok() };
     let path = Path::new(SETTINGS_PATH);
     let mut settings = if path.exists() {
         load_toml::<Settings, _>(path).context("can't load settings")?
     } else {
         Default::default()
     };
+
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    crate::kindle::prepare_settings(&mut settings);
 
     if settings.libraries.is_empty() {
         return Err(format_err!("no libraries found"));
@@ -110,6 +127,9 @@ fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
 
     let fonts = Fonts::load().context("can't load fonts")?;
 
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let battery: Box<dyn Battery> = Box::new(crate::kindle::VoyageBattery);
+    #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
     let battery = Box::new(KoboBattery::new().context("can't create battery")?) as Box<dyn Battery>;
 
     let lightsensor = if CURRENT_DEVICE.has_lightsensor() {
@@ -119,14 +139,29 @@ fn build_context(fb: Box<dyn Framebuffer>) -> Result<Context, Error> {
     };
 
     let levels = settings.frontlight_levels;
-    let frontlight = match CURRENT_DEVICE.frontlight_kind() {
+    let frontlight = if VOYAGE {
+        Box::new(levels) as Box<dyn Frontlight>
+    } else { match CURRENT_DEVICE.frontlight_kind() {
         FrontlightKind::Standard => Box::new(StandardFrontlight::new(levels.intensity)
                                         .context("can't create standard frontlight")?) as Box<dyn Frontlight>,
         FrontlightKind::Natural => Box::new(NaturalFrontlight::new(levels.intensity, levels.warmth)
                                         .context("can't create natural frontlight")?) as Box<dyn Frontlight>,
         FrontlightKind::Premixed => Box::new(PremixedFrontlight::new(levels.intensity, levels.warmth)
                                         .context("can't create premixed frontlight")?) as Box<dyn Frontlight>,
-    };
+    } };
+
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let frontlight = if stock_power {
+            let frontlight: Box<dyn Frontlight> = Box::new(crate::kindle::VoyageFrontlight::read()?);
+            let levels = frontlight.levels();
+            settings.frontlight = levels.intensity > 0.0;
+            if settings.frontlight {
+                settings.frontlight_levels = levels;
+            }
+            frontlight
+    } else { frontlight };
+    #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+    let _ = stock_power;
 
     Ok(Context::new(fb, rtc, library, settings,
                     fonts, battery, frontlight, lightsensor))
@@ -183,7 +218,11 @@ fn power_off(view: &mut dyn View, history: &mut Vec<HistoryItem>, updating: &mut
     context.fb.update(interm.rect(), UpdateMode::Full).ok();
 }
 
-fn set_wifi(enable: bool, context: &mut Context) {
+fn set_wifi(enable: bool, context: &mut Context, voyage_wifi: Option<&Sender<bool>>) {
+    if let Some(wifi) = voyage_wifi {
+        wifi.send(enable).ok();
+        return;
+    }
     if context.settings.wifi == enable {
         return;
     }
@@ -200,9 +239,23 @@ fn set_wifi(enable: bool, context: &mut Context) {
     }
 }
 
+fn ask_voyage_usb(view: &mut dyn View, rq: &mut RenderQueue, context: &mut Context, reopen: bool) {
+    if locate_by_id(view, ViewId::ShareDialog).is_none() {
+        let dialog = Dialog::new(
+            ViewId::ShareDialog,
+            Some(Event::VoyageConnectUsb { reopen }),
+            "Connect to USB storage?".into(),
+            context,
+        );
+        rq.add(RenderData::new(dialog.id(), *dialog.rect(), UpdateMode::Gui));
+        view.children_mut().push(Box::new(dialog));
+    }
+}
+
 #[derive(PartialEq)]
 enum ExitStatus {
     Quit,
+    VoyageUsbReconnect,
     Reboot,
     PowerOff,
 }
@@ -211,6 +264,13 @@ pub fn run() -> Result<(), Error> {
     let mut inactive_since = Instant::now();
     let mut exit_status = ExitStatus::Quit;
 
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let (mut fb, voyage_rotation) = {
+        let framebuffer = VoyageFramebuffer::open()?;
+        let rotation = framebuffer.rotation_handle();
+        (Box::new(framebuffer) as Box<dyn Framebuffer>, rotation)
+    };
+    #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
     let mut fb: Box<dyn Framebuffer> = if CURRENT_DEVICE.mark() != 8 {
         Box::new(KoboFramebuffer1::new(FB_DEVICE).context("can't create framebuffer")?)
     } else {
@@ -223,7 +283,8 @@ pub fn run() -> Result<(), Error> {
         fb.set_rotation(startup_rotation).ok();
     }
 
-    let mut context = build_context(fb).context("can't build context")?;
+    let stock_power = VOYAGE && env::var("PLATO_VOYAGE_POWER").as_deref() == Ok("stock");
+    let mut context = build_context(fb, stock_power).context("can't build context")?;
 
     context.plugged = context.battery.status().is_ok_and(|v| v[0].is_wired());
 
@@ -233,31 +294,64 @@ pub fn run() -> Result<(), Error> {
     context.load_dictionaries();
     context.load_keyboard_layouts();
 
-    let mut paths = Vec::new();
-    for ti in &TOUCH_INPUTS {
-        if Path::new(ti).exists() {
-            paths.push(ti.to_string());
-            break;
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let voyage_buttons = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        context.settings.button_scheme == ButtonScheme::Inverted,
+    ));
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let (raw_sender, touch_screen) = (
+        None::<Sender<plato_core::input::InputEvent>>,
+        gesture_events(plato_core::input::voyage::events(voyage_buttons.clone(), voyage_rotation, !stock_power)?),
+    );
+    #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+    let (raw_sender, touch_screen) = {
+        let mut paths = Vec::new();
+        for ti in &TOUCH_INPUTS {
+            if Path::new(ti).exists() {
+                paths.push(ti.to_string());
+                break;
+            }
         }
-    }
-    for bi in &BUTTON_INPUTS {
-        if Path::new(bi).exists() {
-            paths.push(bi.to_string());
-            break;
+        for bi in &BUTTON_INPUTS {
+            if Path::new(bi).exists() {
+                paths.push(bi.to_string());
+                break;
+            }
         }
-    }
-    for pi in &POWER_INPUTS {
-        if Path::new(pi).exists() {
-            paths.push(pi.to_string());
-            break;
+        for pi in &POWER_INPUTS {
+            if Path::new(pi).exists() {
+                paths.push(pi.to_string());
+                break;
+            }
         }
-    }
 
-    let (raw_sender, raw_receiver) = raw_events(paths);
-    let touch_screen = gesture_events(device_events(raw_receiver, context.display, context.settings.button_scheme));
-    let usb_port = usb_events();
+        let (sender, raw_receiver) = raw_events(paths);
+        (Some(sender), gesture_events(device_events(raw_receiver, context.display, context.settings.button_scheme)))
+
+    };
 
     let (tx, rx) = mpsc::channel();
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let voyage_wifi = Some(crate::kindle::wifi_worker(tx.clone()));
+    #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
+    let voyage_wifi = None::<Sender<bool>>;
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let mut voyage_usb_seen = stock_power
+        && plato_core::input::voyage::cable_present().unwrap_or(context.plugged);
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let mut voyage_usb_pending = false;
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let _stock_events = if stock_power {
+        let (stock_tx, stock_rx) = mpsc::channel();
+        let listeners = plato_core::input::voyage::StockEvents::listen(stock_tx)?;
+        let events = tx.clone();
+        thread::spawn(move || {
+            for event in stock_rx {
+                if events.send(Event::Device(event)).is_err() { break; }
+            }
+        });
+        Some(listeners)
+    } else { None };
     let tx2 = tx.clone();
 
     thread::spawn(move || {
@@ -266,12 +360,21 @@ pub fn run() -> Result<(), Error> {
         }
     });
 
-    let tx3 = tx.clone();
-    thread::spawn(move || {
-        while let Ok(evt) = usb_port.recv() {
-            tx3.send(Event::Device(evt)).ok();
-        }
-    });
+    if !VOYAGE {
+        let usb_port = usb_events();
+        let tx3 = tx.clone();
+        thread::spawn(move || {
+            while let Ok(evt) = usb_port.recv() {
+                tx3.send(Event::Device(evt)).ok();
+            }
+        });
+    } else if !stock_power {
+        let timeout = tx.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(180));
+            timeout.send(Event::Select(EntryId::Quit)).ok();
+        });
+    }
 
     let tx4 = tx.clone();
     thread::spawn(move || {
@@ -301,19 +404,20 @@ pub fn run() -> Result<(), Error> {
 
     context.fb.set_inverted(context.settings.inverted);
 
-    if context.settings.wifi {
-        Command::new("scripts/wifi-enable.sh").status().ok();
-    } else {
-        Command::new("scripts/wifi-disable.sh").status().ok();
+    if !VOYAGE {
+        let script = if context.settings.wifi { "scripts/wifi-enable.sh" } else { "scripts/wifi-disable.sh" };
+        Command::new(script).status().ok();
     }
 
-    if context.settings.frontlight {
-        let levels = context.settings.frontlight_levels;
-        context.frontlight.set_warmth(levels.warmth);
-        context.frontlight.set_intensity(levels.intensity);
-    } else {
-        context.frontlight.set_intensity(0.0);
-        context.frontlight.set_warmth(0.0);
+    if !stock_power {
+        if context.settings.frontlight {
+            let levels = context.settings.frontlight_levels;
+            context.frontlight.set_warmth(levels.warmth);
+            context.frontlight.set_intensity(levels.intensity);
+        } else {
+            context.frontlight.set_intensity(0.0);
+            context.frontlight.set_warmth(0.0);
+        }
     }
 
     let mut tasks: Vec<Task> = Vec::new();
@@ -325,7 +429,7 @@ pub fn run() -> Result<(), Error> {
     let mut updating = Vec::new();
     let current_dir = env::current_dir()?;
 
-    println!("\n\n{} is running on a Kobo {}.", APP_NAME,
+    println!("\n\n{} is running on {}.", APP_NAME,
                                             CURRENT_DEVICE.model);
     println!("The framebuffer resolution is {} by {}.", context.fb.rect().width(),
                                                         context.fb.rect().height());
@@ -336,7 +440,163 @@ pub fn run() -> Result<(), Error> {
                   BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
     tx.send(Event::WakeUp).ok();
 
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let (mut stock_asleep, mut wake_generation) = (false, 0u32);
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let mut last_stock_activity: Option<Instant> = None;
+    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+    let mut stock_suspend_baseline = None;
     while let Ok(evt) = rx.recv() {
+        if let Event::Device(DeviceEvent::VoyageWifi { enabled, online }) = evt {
+            let became_online = online && !context.online;
+            context.settings.wifi = enabled;
+            context.online = online;
+            if became_online {
+                tx.send(Event::Device(DeviceEvent::NetUp)).ok();
+            }
+            continue;
+        }
+        #[cfg(all(target_arch = "arm", target_env = "musl"))]
+        if stock_power {
+            match evt {
+                Event::Device(DeviceEvent::VoyageSleep) => {
+                    wake_generation = wake_generation.wrapping_add(1);
+                    if !stock_asleep {
+                        stock_asleep = true;
+                        stock_suspend_baseline = plato_core::input::voyage::suspended_seconds();
+                        view.handle_event(&Event::Suspend, &tx, &mut bus, &mut rq, &mut context);
+                        context.library.flush();
+                        if let Err(error) = save_toml(&context.settings, Path::new(SETTINGS_PATH)) {
+                            eprintln!("Voyage sleep settings save failed: {error:#}");
+                        }
+                        rq = RenderQueue::new();
+                        bus.clear();
+                        plato_core::input::voyage::set_stock_window_manager(true)?;
+                        eprintln!("Voyage reader paused for stock screensaver.");
+                    }
+                    continue;
+                }
+                Event::Device(DeviceEvent::VoyageWake) => {
+                    if stock_asleep {
+                        wake_generation = wake_generation.wrapping_add(1);
+                        let generation = wake_generation;
+                        let events = tx.clone();
+                        thread::spawn(move || {
+                            thread::sleep(Duration::from_millis(850));
+                            events.send(Event::Device(DeviceEvent::VoyageWakeSettled(generation))).ok();
+                        });
+                    }
+                    continue;
+                }
+                Event::Device(DeviceEvent::VoyageWakeSettled(generation)) => {
+                    if stock_asleep && generation == wake_generation {
+                        plato_core::input::voyage::set_stock_window_manager(false)?;
+                        stock_asleep = false;
+                        if let (Some(before), Some(after)) = (
+                            stock_suspend_baseline.take(),
+                            plato_core::input::voyage::suspended_seconds(),
+                        ) {
+                            eprintln!("Voyage kernel suspend time: {:.2}s", (after - before).max(0.0));
+                        }
+                        let level = if context.settings.frontlight { context.frontlight.levels().intensity } else { 0.0 };
+                        context.frontlight.set_intensity(level);
+                        rq.add(RenderData::new(view.id(), context.fb.rect(), UpdateMode::Full));
+                        process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
+                        tx.send(Event::ClockTick).ok();
+                        tx.send(Event::BatteryTick).ok();
+                        eprintln!("Voyage reader redrawn after stock wake.");
+                        if std::mem::take(&mut voyage_usb_pending) {
+                            ask_voyage_usb(view.as_mut(), &mut rq, &mut context, false);
+                            process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
+                        }
+                    }
+                    continue;
+                }
+                Event::Device(DeviceEvent::Plug(PowerSource::Host)) => {
+                    if !voyage_usb_seen && plato_core::input::voyage::cable_present() != Some(false) {
+                        voyage_usb_seen = true;
+                        eprintln!("Voyage USB connection detected. Waiting for confirmation.");
+                        if stock_asleep {
+                            voyage_usb_pending = true;
+                        } else {
+                            ask_voyage_usb(view.as_mut(), &mut rq, &mut context, false);
+                            process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
+                        }
+                    }
+                    continue;
+                }
+                Event::Device(DeviceEvent::Unplug(source)) => {
+                    context.plugged = false;
+                    if source == PowerSource::Host || plato_core::input::voyage::cable_present() == Some(false) {
+                        voyage_usb_seen = false;
+                        voyage_usb_pending = false;
+                        if let Some(index) = locate_by_id(view.as_ref(), ViewId::ShareDialog) {
+                            let rect = *view.child(index).rect();
+                            view.children_mut().remove(index);
+                            if !stock_asleep {
+                                rq.add(RenderData::expose(rect, UpdateMode::Gui));
+                                process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
+                            }
+                        }
+                    }
+                    tx.send(Event::BatteryTick).ok();
+                    continue;
+                }
+                Event::Device(DeviceEvent::Plug(PowerSource::Wall)) => {
+                    context.plugged = true;
+                    tx.send(Event::BatteryTick).ok();
+                    continue;
+                }
+                Event::Device(DeviceEvent::VoyageMonitorLost) => {
+                    eprintln!("Voyage system event listener stopped. Returning to stock.");
+                    tx.send(Event::Select(EntryId::Quit)).ok();
+                    continue;
+                }
+                Event::Select(EntryId::Quit) => {}
+                _ if stock_asleep => continue,
+                Event::Device(DeviceEvent::Finger { status: plato_core::input::FingerStatus::Down, .. })
+                | Event::Device(DeviceEvent::Button { status: ButtonStatus::Pressed, .. }) => {
+                    if last_stock_activity.is_none_or(|when| when.elapsed() >= Duration::from_secs(60)) {
+                        last_stock_activity = Some(Instant::now());
+                        thread::spawn(crate::kindle::note_activity);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if VOYAGE {
+            match evt {
+                Event::Device(DeviceEvent::Button { code: ButtonCode::Power, status: ButtonStatus::Released, .. })
+                | Event::Select(EntryId::Quit)
+                | Event::VoyageConnectUsb { .. } => {
+                    #[cfg(all(target_arch = "arm", target_env = "musl"))]
+                    if let Event::VoyageConnectUsb { reopen } = evt {
+                        if plato_core::input::voyage::cable_present() == Some(false)
+                            || (reopen && !plato_core::input::voyage::usb_host_present())
+                        {
+                            tx.send(Event::Notify("Connect the Kindle to your computer first.".into())).ok();
+                            continue;
+                        }
+                        if reopen {
+                            exit_status = ExitStatus::VoyageUsbReconnect;
+                        }
+                        eprintln!("Voyage USB handoff confirmed.");
+                    }
+                    // Reader handles Back by persisting its reading position.
+                    view.handle_event(&Event::Back, &tx, &mut bus, &mut rq, &mut context);
+                    for item in &mut history {
+                        item.view.handle_event(&Event::Back, &tx, &mut bus, &mut rq, &mut context);
+                    }
+                    break;
+                }
+                Event::Device(DeviceEvent::Button { code: ButtonCode::Power, .. })
+                | Event::Gesture(GestureEvent::HoldButtonLong(ButtonCode::Power))
+                | Event::Device(DeviceEvent::CoverOn | DeviceEvent::CoverOff | DeviceEvent::Plug(_) | DeviceEvent::Unplug(_))
+                | Event::PrepareSuspend | Event::Suspend | Event::MightSuspend
+                | Event::PrepareShare | Event::Share | Event::Select(EntryId::Reboot) => continue,
+                _ => {}
+            }
+        }
         match evt {
             Event::Device(de) => {
                 match de {
@@ -403,13 +663,18 @@ pub fn run() -> Result<(), Error> {
                                                    task.id == TaskId::Suspend) {
                             continue;
                         }
-                        let ip = Command::new("scripts/ip.sh").output()
-                                         .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
-                                         .unwrap_or_default();
-                        let essid = Command::new("scripts/essid.sh").output()
-                                            .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
-                                            .unwrap_or_default();
-                        let notif = Notification::new(format!("Network is up ({}, {}).", ip, essid),
+                        let message = if VOYAGE {
+                            "Connected to Wi-Fi.".to_string()
+                        } else {
+                            let ip = Command::new("scripts/ip.sh").output()
+                                             .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
+                                             .unwrap_or_default();
+                            let essid = Command::new("scripts/essid.sh").output()
+                                                .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
+                                                .unwrap_or_default();
+                            format!("Network is up ({}, {}).", ip, essid)
+                        };
+                        let notif = Notification::new(message,
                                                       &tx, &mut rq, &mut context);
                         context.online = true;
                         view.children_mut().push(Box::new(notif) as Box<dyn View>);
@@ -552,7 +817,7 @@ pub fn run() -> Result<(), Error> {
                     continue;
                 }
                 if let Ok(v) = context.battery.capacity().map(|v| v[0]) {
-                    if v < context.settings.battery.power_off {
+                    if !VOYAGE && v < context.settings.battery.power_off {
                         power_off(view.as_mut(), &mut history, &mut updating, &mut context);
                         exit_status = ExitStatus::PowerOff;
                         break;
@@ -642,7 +907,7 @@ pub fn run() -> Result<(), Error> {
                     if item.rotation != context.display.rotation {
                         wait_for_all(&mut updating, &mut context);
                         if let Ok(dims) = context.fb.set_rotation(item.rotation) {
-                            raw_sender.send(display_rotate_event(item.rotation)).ok();
+                            if let Some(sender) = &raw_sender { sender.send(display_rotate_event(item.rotation)).ok(); }
                             context.display.rotation = item.rotation;
                             context.display.dims = dims;
                         }
@@ -721,10 +986,10 @@ pub fn run() -> Result<(), Error> {
                 let dithered = context.fb.dithered();
                 if let Some(reader_info) = info.reader.as_ref() {
                     if let Some(n) = reader_info.rotation.map(|n| CURRENT_DEVICE.from_canonical(n)) {
-                        if CURRENT_DEVICE.orientation(n) != CURRENT_DEVICE.orientation(rotation) {
+                        if if VOYAGE { n != rotation } else { CURRENT_DEVICE.orientation(n) != CURRENT_DEVICE.orientation(rotation) } {
                             wait_for_all(&mut updating, &mut context);
                             if let Ok(dims) = context.fb.set_rotation(n) {
-                                raw_sender.send(display_rotate_event(n)).ok();
+                                if let Some(sender) = &raw_sender { sender.send(display_rotate_event(n)).ok(); }
                                 context.display.rotation = n;
                                 context.display.dims = dims;
                             }
@@ -748,7 +1013,7 @@ pub fn run() -> Result<(), Error> {
                 } else {
                     if context.display.rotation != rotation {
                         if let Ok(dims) = context.fb.set_rotation(rotation) {
-                            raw_sender.send(display_rotate_event(rotation)).ok();
+                            if let Some(sender) = &raw_sender { sender.send(display_rotate_event(rotation)).ok(); }
                             context.display.rotation = rotation;
                             context.display.dims = dims;
                         }
@@ -838,7 +1103,7 @@ pub fn run() -> Result<(), Error> {
                     if CURRENT_DEVICE.orientation(item.rotation) != CURRENT_DEVICE.orientation(context.display.rotation) {
                         wait_for_all(&mut updating, &mut context);
                         if let Ok(dims) = context.fb.set_rotation(item.rotation) {
-                            raw_sender.send(display_rotate_event(item.rotation)).ok();
+                            if let Some(sender) = &raw_sender { sender.send(display_rotate_event(item.rotation)).ok(); }
                             context.display.rotation = item.rotation;
                             context.display.dims = dims;
                         }
@@ -903,7 +1168,7 @@ pub fn run() -> Result<(), Error> {
             Event::Select(EntryId::Rotate(n)) if n != context.display.rotation && view.might_rotate() => {
                 wait_for_all(&mut updating, &mut context);
                 if let Ok(dims) = context.fb.set_rotation(n) {
-                    raw_sender.send(display_rotate_event(n)).ok();
+                    if let Some(sender) = &raw_sender { sender.send(display_rotate_event(n)).ok(); }
                     context.display.rotation = n;
                     let fb_rect = Rectangle::from(dims);
                     if context.display.dims != dims {
@@ -920,22 +1185,24 @@ pub fn run() -> Result<(), Error> {
             },
             Event::Select(EntryId::SetButtonScheme(button_scheme)) => {
                 context.settings.button_scheme = button_scheme;
+                #[cfg(all(target_arch = "arm", target_env = "musl"))]
+                voyage_buttons.store(button_scheme == ButtonScheme::Inverted, std::sync::atomic::Ordering::Relaxed);
 
                 // Sending a pseudo event into the raw_events channel toggles the inversion in the device_events channel
                 match button_scheme {
                     ButtonScheme::Natural => {
-                        raw_sender.send(button_scheme_event(VAL_RELEASE)).ok();
+                        if let Some(sender) = &raw_sender { sender.send(button_scheme_event(VAL_RELEASE)).ok(); }
                     },
                     ButtonScheme::Inverted => {
-                        raw_sender.send(button_scheme_event(VAL_PRESS)).ok();
+                        if let Some(sender) = &raw_sender { sender.send(button_scheme_event(VAL_PRESS)).ok(); }
                     }
                 }
             },
             Event::SetWifi(enable) => {
-                set_wifi(enable, &mut context);
+                set_wifi(enable, &mut context, voyage_wifi.as_ref());
             },
             Event::Select(EntryId::ToggleWifi) => {
-                set_wifi(!context.settings.wifi, &mut context);
+                set_wifi(!context.settings.wifi, &mut context, voyage_wifi.as_ref());
             },
             Event::Select(EntryId::TakeScreenshot) => {
                 let name = Local::now().format("screenshot-%Y%m%d_%H%M%S.png");
@@ -958,6 +1225,9 @@ pub fn run() -> Result<(), Error> {
             Event::Notify(msg) => {
                 let notif = Notification::new(msg, &tx, &mut rq, &mut context);
                 view.children_mut().push(Box::new(notif) as Box<dyn View>);
+            },
+            Event::Select(EntryId::ConnectUsb) if VOYAGE => {
+                ask_voyage_usb(view.as_mut(), &mut rq, &mut context, true);
             },
             Event::Select(EntryId::Reboot) => {
                 exit_status = ExitStatus::Reboot;
@@ -1004,12 +1274,20 @@ pub fn run() -> Result<(), Error> {
         }
     }
 
+    if VOYAGE {
+        wait_for_all(&mut updating, &mut context);
+    }
     context.library.flush();
 
     let path = Path::new(SETTINGS_PATH);
     save_toml(&context.settings, path).context("can't save settings")?;
 
     match exit_status {
+        ExitStatus::VoyageUsbReconnect => {
+            let path = env::var_os("PLATO_VOYAGE_USB_REQUEST")
+                .context("Voyage launcher cannot request USB storage")?;
+            File::create(path).context("requesting stock USB storage")?;
+        },
         ExitStatus::Reboot => {
             File::create("/tmp/reboot").ok();
         },

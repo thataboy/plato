@@ -1,3 +1,5 @@
+#[cfg(all(target_arch = "arm", target_env = "musl"))]
+pub mod voyage;
 mod linuxfb_sys;
 mod ion_sys;
 mod mxcfb_sys;

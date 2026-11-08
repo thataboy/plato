@@ -35,7 +35,7 @@ pub enum FtDriver {}
 pub enum FtMemory {}
 pub enum FtStream {}
 
-#[link(name="freetype")]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="freetype"))]
 extern "C" {
     pub fn FT_Init_FreeType(lib: *mut *mut FtLibrary) -> FtError;
     pub fn FT_Done_FreeType(lib: *mut FtLibrary) -> FtError;

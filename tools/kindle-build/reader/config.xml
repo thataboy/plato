@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension>
+  <information>
+    <name>Plato Voyage Alpha</name>
+    <version>0.3.1</version>
+    <author>Plato contributors</author>
+    <id>plato-voyage</id>
+  </information>
+  <menus>
+    <menu type="json" dynamic="true">menu.json</menu>
+  </menus>
+</extension>

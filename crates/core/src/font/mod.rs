@@ -117,8 +117,8 @@ pub const MD_AUTHOR_SMALL: Style = Style {
     size: FONT_SIZES[0],
 };
 
-#[cfg(any(not(target_os = "linux"), target_arch = "arm"))]
-#[link(name="mupdf")]
+#[cfg(any(not(target_os = "linux"), all(target_arch = "arm", not(target_env = "musl"))))]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="mupdf"))]
 extern "C" {
     // Based on the outputs of:
     // arm-linux-gnueabihf-readelf -Ws ./libs/libmupdf.so | grep '\b_binary_' | \
@@ -284,8 +284,8 @@ extern "C" {
     pub static _binary_NotoSerifYezidi_Regular_otf: [libc::c_uchar; 8664];
 }
 
-#[cfg(all(target_os = "linux", not(target_arch = "arm")))]
-#[link(name="mupdf")]
+#[cfg(all(target_os = "linux", any(not(target_arch = "arm"), target_env = "musl")))]
+#[cfg_attr(not(all(target_arch = "arm", target_env = "musl")), link(name="mupdf"))]
 extern "C" {
     pub static _binary_resources_fonts_droid_DroidSansFallback_ttf_start: [libc::c_uchar; 3556308];
     pub static _binary_resources_fonts_noto_NotoEmoji_Regular_ttf_start: [libc::c_uchar; 418804];
@@ -670,7 +670,7 @@ pub fn font_from_style<'a>(fonts: &'a mut Fonts, style: &Style, dpi: u16) -> &'a
 #[inline]
 unsafe fn font_data_from_script(script: HbScript) -> &'static [libc::c_uchar] {
     // Extracted from mupdf in source/fitz/noto.c
-    #[cfg(any(not(target_os = "linux"), target_arch = "arm"))]
+    #[cfg(any(not(target_os = "linux"), all(target_arch = "arm", not(target_env = "musl"))))]
     match script {
         HB_SCRIPT_HANGUL |
         HB_SCRIPT_HIRAGANA |
@@ -840,7 +840,7 @@ unsafe fn font_data_from_script(script: HbScript) -> &'static [libc::c_uchar] {
         _ => &_binary_DroidSansFallback_ttf,
     }
 
-    #[cfg(all(target_os = "linux", not(target_arch = "arm")))]
+    #[cfg(all(target_os = "linux", any(not(target_arch = "arm"), target_env = "musl")))]
     match script {
         HB_SCRIPT_HANGUL |
         HB_SCRIPT_HIRAGANA |

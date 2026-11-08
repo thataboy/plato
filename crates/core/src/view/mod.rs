@@ -388,6 +388,7 @@ pub enum Event {
     Suspend,
     Share,
     PrepareShare,
+    VoyageConnectUsb { reopen: bool },
     Validate,
     Cancel,
     Reseed,
@@ -645,6 +646,7 @@ pub enum EntryId {
     New,
     Refresh,
     TakeScreenshot,
+    ConnectUsb,
     Reboot,
     Quit,
 }
