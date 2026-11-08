@@ -92,6 +92,7 @@ struct Touch {
     slot: Option<usize>,
     slots: [Contact; 3],
     reported: [Contact; 3],
+    last_motion: [f64; 3],
     desynced: bool,
 }
 
@@ -101,6 +102,7 @@ impl Default for Touch {
             slot: Some(0),
             slots: [Contact::default(); 3],
             reported: [Contact::default(); 3],
+            last_motion: [0.0; 3],
             desynced: false,
         }
     }
@@ -139,7 +141,12 @@ impl Touch {
                 }
             }
             (0, 3) => {
-                self.slots = [Contact::default(); 3];
+                for (slot, reported) in self.slots.iter_mut().zip(&self.reported) {
+                    *slot = Contact {
+                        id: None,
+                        position: reported.position,
+                    };
+                }
                 self.report(time, rotation, tx);
                 self.desynced = true;
             }
@@ -149,7 +156,7 @@ impl Touch {
     }
 
     fn report(&mut self, time: f64, rotation: i8, tx: &Sender<DeviceEvent>) {
-        for (old, new) in self.reported.iter().zip(&self.slots) {
+        for (slot, (old, new)) in self.reported.iter_mut().zip(&self.slots).enumerate() {
             let send = |id, status, position| {
                 let _ = tx.send(DeviceEvent::Finger {
                     id,
@@ -160,18 +167,30 @@ impl Touch {
             };
             if old.id != new.id {
                 if let Some(id) = old.id {
-                    send(id, FingerStatus::Up, old.position);
+                    let position = if new.id.is_none() {
+                        new.position
+                    } else {
+                        old.position
+                    };
+                    if position != old.position {
+                        send(id, FingerStatus::Motion, position);
+                    }
+                    send(id, FingerStatus::Up, position);
                 }
                 if let Some(id) = new.id {
                     send(id, FingerStatus::Down, new.position);
                 }
+                *old = *new;
+                self.last_motion[slot] = time;
             } else if let Some(id) = new.id {
-                if old.position != new.position {
+                let elapsed = time - self.last_motion[slot];
+                if old.position != new.position && !(0.0..0.04).contains(&elapsed) {
                     send(id, FingerStatus::Motion, new.position);
+                    *old = *new;
+                    self.last_motion[slot] = time;
                 }
             }
         }
-        self.reported = self.slots;
     }
 }
 

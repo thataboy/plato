@@ -1,6 +1,21 @@
-# Kindle Voyage port: investigation and implementation plan
+# Kindle Voyage port
 
-Prepared 2026-11-03. This is a source-level plan, not a claim of device compatibility. No Kindle was connected or tested during this investigation.
+## Current status
+
+Plato Voyage 0.4.1 is installed on the jailbroken Voyage running firmware
+5.10.3. The Kindle branch incorporates local `master` through merge
+`a6fe284`. The user verified reading and saved progress, touch and PagePress,
+manual rotation, stock sleep and wake, brightness, wall charging, both USB
+prompt flows, and improved drag responsiveness. The Voyage reported Wi-Fi
+connected on a saved network.
+
+Version 0.4.1 preserves the configured libraries and reader font path.
+The installed settings use `Books` as the library name and `bookfonts` as
+the font directory. Device checks remaining include retention across relaunch,
+frontlight restoration after USB Cancel, and an online lookup over Wi-Fi.
+
+The original investigation began on 2026-11-03. The sections below preserve
+the plan and record subsequent device milestones.
 
 ## Recommendation
 
@@ -298,3 +313,36 @@ resuming volumd. This uses the sequence reported on
 Mocked launcher checks verified event ordering and suppression on ordinary
 or failed exits. Confirm cancellation, replug, and manual USB re-entry on
 the Voyage before merging master.
+
+## Master merge and drag tuning
+
+The user confirmed both USB flows in 0.3.1. Local master was merged into
+the Kindle branch as `a6fe284`. Kobo keeps its own USB supervisor and
+restart actions. Kindle keeps the stock USB handoff. Version 0.4.0 adds
+frontlight restoration when canceling or unplugging during the USB prompt.
+
+The Voyage input backend limits motion samples to one per 40 ms per
+finger and keeps the final position on release. The app discards queued
+intermediate motion for the same finger or slider, preserving other
+events. Preview updates use DU, GUI updates use GC16 Fast, and page
+updates keep GC16. The preview mapping follows
+[KOReader's Kindle display backend](https://github.com/koreader/koreader-base/blob/master/ffi/framebuffer_mxcfb.lua).
+The user reported noticeably better dragging on the Voyage. The touch replay
+check verified delivery of the final position. The Kindle and Kobo ARM builds
+and the desktop compile check passed. Frontlight restoration after USB Cancel
+still awaits explicit device confirmation.
+
+## Settings persistence
+
+Before 0.4.1, Voyage startup replaced the loaded library list, selected
+library, and font path with test settings. Plato then wrote those values
+back to `Settings.toml`. The test library and bundled `fonts` path now live
+in the Voyage defaults. Saved values take precedence, including the selected
+library. Relative library and font paths resolve from the KUAL extension
+directory.
+
+The static ARM build and desktop compile check passed, and the ZIP passed
+its integrity check. Version 0.4.1 was installed in place. Comparing the
+parsed settings before and after installation confirmed that only the
+library display name and font path changed. The library still uses its
+existing `books` directory and metadata.

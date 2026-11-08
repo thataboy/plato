@@ -2,9 +2,9 @@
 use plato_core::anyhow::{bail, Error};
 use plato_core::battery::{Battery, Status};
 use plato_core::framebuffer::voyage::VoyageFramebuffer;
-use plato_core::settings::{LibrarySettings, Settings};
+use plato_core::settings::Settings;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn screen_command() -> Result<bool, Error> {
     let mut args = std::env::args_os().skip(1);
@@ -30,14 +30,7 @@ pub fn screen_command() -> Result<bool, Error> {
 }
 
 pub fn prepare_settings(settings: &mut Settings) {
-    settings.libraries = vec![LibrarySettings {
-        name: "Voyage test books".into(),
-        path: PathBuf::from("books"),
-        ..Default::default()
-    }];
-    settings.selected_library = 0;
     settings.import.startup_trigger = true;
-    settings.reader.font_path = "fonts".into();
     settings.auto_suspend = 0.0;
     settings.auto_power_off = 0.0;
     settings.wifi = false;
@@ -100,6 +93,7 @@ fn run_lipc(program: &str, args: &[&str]) -> Result<String, Error> {
 pub struct VoyageFrontlight {
     // Zero means physically off. The other 25 steps map to stock levels 0–24.
     step: u8,
+    hardware: Option<u32>,
 }
 
 impl VoyageFrontlight {
@@ -113,6 +107,7 @@ impl VoyageFrontlight {
         let hardware: u32 = fs::read_to_string(BRIGHTNESS)?.trim().parse()?;
         Ok(Self {
             step: if hardware == 0 { 0 } else { native + 1 },
+            hardware: Some(hardware),
         })
     }
 
@@ -130,12 +125,36 @@ impl VoyageFrontlight {
 impl plato_core::frontlight::Frontlight for VoyageFrontlight {
     fn set_intensity(&mut self, value: f32) {
         let step = (value.clamp(0.0, 100.0) * (f32::from(STOCK_MAX) + 1.0) / 100.0).round() as u8;
+        if step == self.step {
+            return;
+        }
         match Self::apply(step) {
             Ok(()) => {
                 self.step = step;
+                self.hardware = fs::read_to_string(BRIGHTNESS)
+                    .ok()
+                    .and_then(|value| value.trim().parse().ok());
                 eprintln!("Voyage frontlight step: {step}/25");
             }
             Err(error) => eprintln!("Voyage frontlight update failed: {error:#}"),
+        }
+    }
+
+    fn restore(&mut self) {
+        let result = Self::apply(self.step).and_then(|()| {
+            if let Some(brightness) = self.hardware {
+                let current: u32 = fs::read_to_string(BRIGHTNESS)?.trim().parse()?;
+                if current != brightness {
+                    // Stock can dim the hardware while retaining the same
+                    // LIPC level, so setting that level may be a no-op.
+                    fs::write(BRIGHTNESS, format!("{brightness}\n"))?;
+                }
+            }
+            Ok(())
+        });
+        match result {
+            Ok(()) => eprintln!("Voyage frontlight restored: {}/25", self.step),
+            Err(error) => eprintln!("Voyage frontlight restore failed: {error:#}"),
         }
     }
 

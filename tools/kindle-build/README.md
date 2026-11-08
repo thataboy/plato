@@ -79,3 +79,21 @@ Use **Menu → Rotate** to choose 0°, 90°, 180°, or 270°. The touch targets
 and PagePress orientation follow the display. The Kindle framebuffer
 stays in its stock mode during the session so the launcher can restore
 the stock screen on exit.
+
+## Drag and USB cancellation
+
+Version 0.4.0 includes local master. On Voyage, touch motion is sampled at
+40 ms intervals, and the reader skips obsolete moves when a refresh falls
+behind. Release delivers the final finger position. Drag and selection
+previews use the Kindle DU waveform, while regular page refreshes keep
+grayscale. Canceling a USB prompt reapplies the saved frontlight setting.
+Confirming USB exits the reader so stock can mount the drive after Plato
+closes its files.
+
+## Library and font settings
+
+Starting with 0.4.1, you can quit Plato and edit
+`extensions/plato-voyage/Settings.toml` on the Kindle drive. Set `name` in
+the appropriate `[[libraries]]` entry to change the display name. Set
+`font-path` under `[reader]` to point at your custom fonts. Relative paths
+such as `books` and `bookfonts` are relative to `extensions/plato-voyage/`.

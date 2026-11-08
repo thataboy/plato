@@ -23,7 +23,7 @@ use plato_core::view::sketch::Sketch;
 use plato_core::view::touch_events::TouchEvents;
 use plato_core::view::rotation_values::RotationValues;
 use plato_core::document::sys_info_as_html;
-use plato_core::input::{DeviceEvent, PowerSource, ButtonCode, ButtonStatus, VAL_RELEASE, VAL_PRESS};
+use plato_core::input::{DeviceEvent, FingerStatus, PowerSource, ButtonCode, ButtonStatus, VAL_RELEASE, VAL_PRESS};
 use plato_core::input::{usb_events, display_rotate_event, button_scheme_event};
 #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 use plato_core::input::{raw_events, device_events};
@@ -235,6 +235,21 @@ fn set_wifi(enable: bool, context: &mut Context, voyage_wifi: Option<&Sender<boo
                 .status()
                 .ok();
         context.online = false;
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum VoyageMotion {
+    Finger(i32),
+    Slider(plato_core::view::SliderId),
+}
+
+fn voyage_motion(event: &Event) -> Option<VoyageMotion> {
+    match *event {
+        Event::Device(DeviceEvent::Finger { id, status: FingerStatus::Motion, .. }) =>
+            Some(VoyageMotion::Finger(id)),
+        Event::Slider(id, _, FingerStatus::Motion) => Some(VoyageMotion::Slider(id)),
+        _ => None,
     }
 }
 
@@ -455,7 +470,23 @@ pub fn run() -> Result<(), Error> {
     let mut last_stock_activity: Option<Instant> = None;
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
     let mut stock_suspend_baseline = None;
-    while let Ok(evt) = rx.recv() {
+    let mut next_event = None;
+    while let Some(mut evt) = next_event.take().or_else(|| rx.recv().ok()) {
+        if VOYAGE {
+            if let Some(motion) = voyage_motion(&evt) {
+                // If a refresh fell behind, skip obsolete intermediate moves.
+                // Keep release, presses, and other fingers in their original order.
+                for _ in 0..64 {
+                    let Ok(next) = rx.try_recv() else { break };
+                    if voyage_motion(&next).as_ref() == Some(&motion) {
+                        evt = next;
+                    } else {
+                        next_event = Some(next);
+                        break;
+                    }
+                }
+            }
+        }
         if let Event::Device(DeviceEvent::VoyageWifi { enabled, online }) = evt {
             let became_online = online && !context.online;
             context.settings.wifi = enabled;
@@ -507,8 +538,7 @@ pub fn run() -> Result<(), Error> {
                         ) {
                             eprintln!("Voyage kernel suspend time: {:.2}s", (after - before).max(0.0));
                         }
-                        let level = if context.settings.frontlight { context.frontlight.levels().intensity } else { 0.0 };
-                        context.frontlight.set_intensity(level);
+                        context.frontlight.restore();
                         rq.add(RenderData::new(view.id(), context.fb.rect(), UpdateMode::Full));
                         process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
                         tx.send(Event::ClockTick).ok();
@@ -543,6 +573,7 @@ pub fn run() -> Result<(), Error> {
                             let rect = *view.child(index).rect();
                             view.children_mut().remove(index);
                             if !stock_asleep {
+                                context.frontlight.restore();
                                 rq.add(RenderData::expose(rect, UpdateMode::Gui));
                                 process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
                             }
@@ -1117,6 +1148,9 @@ pub fn run() -> Result<(), Error> {
             },
             Event::Close(id) => {
                 if let Some(index) = locate_by_id(view.as_ref(), id) {
+                    if stock_power && id == ViewId::ShareDialog {
+                        context.frontlight.restore();
+                    }
                     let rect = overlapping_rectangle(view.child(index));
                     rq.add(RenderData::expose(rect, UpdateMode::Gui));
                     view.children_mut().remove(index);

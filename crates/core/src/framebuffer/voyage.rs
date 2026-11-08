@@ -86,7 +86,10 @@ fn panel_rect(rect: Rectangle, turns: i8) -> Rectangle {
 // Voyage uses the older 72-byte Kindle EPDC update ABI.
 const SEND_UPDATE: libc::c_int = 0x4048_462e;
 const WAIT_FOR_UPDATE: libc::c_int = 0xc008_462f_u32 as libc::c_int;
+const DU: u32 = 1;
 const GC16: u32 = 2;
+const GC16_FAST: u32 = 3;
+const FORCE_MONOCHROME: u32 = 2;
 
 #[repr(C)]
 struct Update {
@@ -194,25 +197,30 @@ impl VoyageFramebuffer {
     fn refresh(&mut self, rect: &Rectangle, mode: UpdateMode) -> Result<u32, Error> {
         self.serial = self.serial.wrapping_add(1);
         let marker = 0x5000_0000 | ((std::process::id() & 0xffff) << 8) | u32::from(self.serial);
+        let waveform = match mode {
+            UpdateMode::Fast | UpdateMode::FastMono => DU,
+            UpdateMode::Gui => GC16_FAST,
+            UpdateMode::Full | UpdateMode::Partial => GC16,
+        };
         let update = Update {
             top: rect.min.y as u32,
             left: rect.min.x as u32,
             width: rect.width() as u32,
             height: rect.height() as u32,
-            waveform: GC16,
+            waveform,
             mode: u32::from(mode == UpdateMode::Full),
             marker,
-            hist_bw_waveform: 1,
-            hist_gray_waveform: GC16,
+            hist_bw_waveform: DU,
+            hist_gray_waveform: if waveform == GC16 { GC16 } else { GC16_FAST },
             temperature: 0x1000,
-            flags: 0,
+            flags: if waveform == DU { FORCE_MONOCHROME } else { 0 },
             alt_buffer: [0; 7],
         };
         if unsafe { libc::ioctl(self.file.as_raw_fd(), SEND_UPDATE, &update) } < 0 {
             return Err(io::Error::last_os_error()).context("submitting Voyage refresh");
         }
         // Wait here so the shadow image can be copied again without racing
-        // the panel driver. The alpha uses conservative GC16 for all modes.
+        // the panel driver. DU keeps drag and selection previews fast.
         let mut completion = [marker, 0];
         if unsafe {
             libc::ioctl(
