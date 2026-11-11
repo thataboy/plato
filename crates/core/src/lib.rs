@@ -21,6 +21,8 @@ pub mod settings;
 pub mod font;
 pub mod context;
 pub mod gesture;
+#[cfg(feature = "page-profiling")]
+pub mod tap_profile;
 
 pub use anyhow;
 pub use fxhash;

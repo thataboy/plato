@@ -270,8 +270,12 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
             }
         }
 
+        #[cfg(feature = "page-profiling")]
+        let drawing = crate::tap_profile::stage("view drawing");
         render(view, wait, &ids, &mut rects, &mut bgs,
                context.fb.as_mut(), &mut context.fonts, updating);
+        #[cfg(feature = "page-profiling")]
+        drop(drawing);
 
         for rect in rects {
             let normal_update = if mode == UpdateMode::Full
@@ -283,15 +287,35 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
             } else {
                 true
             };
-            match context.fb.update(&rect, mode) {
+            #[cfg(feature = "page-profiling")]
+            if crate::tap_profile::is_page_turn() {
+                crate::tap_profile::point(match mode {
+                    UpdateMode::Partial => "partial panel submit start",
+                    UpdateMode::Full => "full panel submit start",
+                    _ => "GUI panel submit start",
+                });
+            }
+            let submitted = context.fb.update(&rect, mode);
+            #[cfg(feature = "page-profiling")]
+            if submitted.is_ok() && crate::tap_profile::is_page_turn() {
+                crate::tap_profile::point(match mode {
+                    UpdateMode::Partial => "partial panel submitted",
+                    UpdateMode::Full => "full panel submitted",
+                    _ => "GUI panel submitted",
+                });
+            }
+            match submitted {
                 Ok(token) =>
                     if normal_update {
                         updating.push(UpdateData { token, rect, time: Instant::now()});
                     } else {
-                        context.fb.wait(token)
-                                  .map_err(|e| eprintln!("process_render_queue {}, {}: {:#}",
-                                                         token, rect, e))
-                                  .ok();
+                        match context.fb.wait(token) {
+                            #[cfg(feature = "page-profiling")]
+                            Ok(_) if crate::tap_profile::is_page_turn() =>
+                                crate::tap_profile::point("full display complete"),
+                            Ok(_) => (),
+                            Err(error) => eprintln!("process_render_queue {token}, {rect}: {error:#}"),
+                        }
                         context.set_frontlight(true);
                     },
                 Err(err) => { eprintln!("Can't update {}: {:#}.", rect, err); },
@@ -317,6 +341,8 @@ pub fn wait_for_all(updating: &mut Vec<UpdateData>, context: &mut Context) {
 pub enum Event {
     Device(DeviceEvent),
     Gesture(GestureEvent),
+    #[cfg(feature = "page-profiling")]
+    ProfileTap(crate::geom::Point, Instant),
     Keyboard(KeyboardEvent),
     Key(KeyKind),
     Open(Box<Info>),

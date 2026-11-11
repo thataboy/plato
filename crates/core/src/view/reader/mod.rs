@@ -529,6 +529,10 @@ impl Reader {
     }
 
     fn load_pixmap(&mut self, location: usize) {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("reader pixmap lookup");
+        #[cfg(feature = "page-profiling")]
+        eprintln!("Kobo profile pixmap location={location} cached={}", self.cache.contains_key(&location));
         if self.cache.contains_key(&location) {
             return;
         }
@@ -557,6 +561,8 @@ impl Reader {
     }
 
     fn load_text(&mut self, location: usize) {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("reader text lookup");
         if self.text.contains_key(&location) {
             return;
         }
@@ -570,12 +576,22 @@ impl Reader {
     }
 
     fn chapter(&self) -> Ref<Chapter> {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("reader chapter progress");
         {
             let mut ch = self.chapter.borrow_mut();
             if self.current_page != ch.page {
                 ch.page = self.current_page;
+                #[cfg(feature = "page-profiling")]
+                let lock_profile = crate::tap_profile::stage("chapter document lock");
                 let mut doc = self.doc.lock().unwrap();
+                #[cfg(feature = "page-profiling")]
+                drop(lock_profile);
+                #[cfg(feature = "page-profiling")]
+                let toc_profile = crate::tap_profile::stage("reader TOC construction");
                 let rtoc = self.toc().or_else(|| doc.toc());
+                #[cfg(feature = "page-profiling")]
+                drop(toc_profile);
                 let chapter = rtoc.as_ref().and_then(|toc| doc.chapter(self.current_page, toc));
                 ch.title = chapter.map(|(c, _, _)| c.title.clone()).unwrap_or_default();
                 ch.progress = chapter.map(|(_, p, _)| p).unwrap_or_default();
@@ -826,6 +842,8 @@ impl Reader {
     }
 
     fn go_to_neighbor(&mut self, dir: CycleDir, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("reader navigation");
         if self.chunks.is_empty() {
             return;
         }
@@ -946,6 +964,8 @@ impl Reader {
         };
         match loc {
             Some(location) if location != current_page || self.view_port.page_offset != page_offset => {
+                #[cfg(feature = "page-profiling")]
+                crate::tap_profile::page_turn();
                 if let Some(ref mut s) = self.search {
                     s.current_page = s.highlights.range(..=location).count().saturating_sub(1);
                 }
@@ -1293,6 +1313,8 @@ impl Reader {
             let hub2 = hub.clone();
             thread::spawn(move || {
                 let mut doc = doc2.lock().unwrap();
+                #[cfg(feature = "page-profiling")]
+                let _profile = crate::tap_profile::stage("prefetch next location");
                 if let Some(next_location) = doc.resolve_location(Location::Next(last_location)) {
                     hub2.send(Event::LoadPixmap(next_location)).ok();
                 }
@@ -1301,6 +1323,8 @@ impl Reader {
             let hub3 = hub.clone();
             thread::spawn(move || {
                 let mut doc = doc3.lock().unwrap();
+                #[cfg(feature = "page-profiling")]
+                let _profile = crate::tap_profile::stage("prefetch previous location");
                 if let Some(previous_location) = doc.resolve_location(Location::Previous(first_location)) {
                     hub3.send(Event::LoadPixmap(previous_location)).ok();
                 }
@@ -3897,6 +3921,8 @@ impl View for Reader {
                     return true;
                 }
 
+                #[cfg(feature = "page-profiling")]
+                let link_profile = crate::tap_profile::stage("reader link hit test");
                 let mut nearest_link = None;
                 let mut dmin = u32::MAX;
                 let dmax = (scale_by_dpi(RECT_DIST_JITTER, CURRENT_DEVICE.dpi) as i32).pow(2) as u32;
@@ -3915,6 +3941,8 @@ impl View for Reader {
                     }
                 }
 
+                #[cfg(feature = "page-profiling")]
+                drop(link_profile);
                 if let Some(link) = nearest_link.take() {
                     let pdf_page = Regex::new(r"^#page=(\d+).*$").unwrap();
                     let djvu_page = Regex::new(r"^#([+-])?(\d+)$").unwrap();
@@ -4174,6 +4202,8 @@ impl View for Reader {
                 true
             },
             Event::LoadPixmap(location) => {
+                #[cfg(feature = "page-profiling")]
+                let _profile = crate::tap_profile::stage("prefetch LoadPixmap event");
                 self.load_pixmap(location);
                 true
             },

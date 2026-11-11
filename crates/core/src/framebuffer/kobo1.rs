@@ -7,9 +7,9 @@ use std::os::unix::io::AsRawFd;
 use std::ops::Drop;
 use anyhow::{Error, Context};
 use crate::color::Color;
-use crate::geom::Rectangle;
+use crate::geom::{Point, Rectangle};
 use crate::device::{CURRENT_DEVICE, Model};
-use super::{UpdateMode, Framebuffer};
+use super::{UpdateMode, Framebuffer, Pixmap};
 use super::linuxfb_sys::*;
 use super::mxcfb_sys::*;
 use super::transform::*;
@@ -105,6 +105,31 @@ impl KoboFramebuffer1 {
         }
     }
 
+    fn gray_rows(&mut self, rect: Rectangle) -> Option<impl Iterator<Item = &mut [u8]>> {
+        if self.bytes_per_pixel != 1 || (self.dithered && CURRENT_DEVICE.mark() < 7) {
+            return None;
+        }
+        let stride = self.fix_info.line_length as usize;
+        let left = self.var_info.xoffset as usize + rect.min.x as usize;
+        let right = left + rect.width() as usize;
+        let top = self.var_info.yoffset as usize + rect.min.y as usize;
+        let bottom = top + rect.height() as usize;
+        let end = bottom.checked_mul(stride)?;
+        if right > stride || end > self.fix_info.smem_len as usize {
+            return None;
+        }
+
+        // The caller clips to the visible area. Include the framebuffer's
+        // viewport offsets and keep row padding outside the returned slices.
+        let rows = unsafe {
+            slice::from_raw_parts_mut(
+                self.frame.cast::<u8>().add(top * stride),
+                end - top * stride,
+            )
+        };
+        Some(rows.chunks_exact_mut(stride).map(move |row| &mut row[left..right]))
+    }
+
     fn as_bytes(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.frame as *const u8, self.frame_size) }
     }
@@ -125,6 +150,49 @@ impl Framebuffer for KoboFramebuffer1 {
         let interp = background.lerp(color, alpha);
         let c = (self.transform)(x, y, interp);
         (self.set_pixel_rgb)(self, x, y, c.rgb());
+    }
+
+    fn draw_rectangle(&mut self, rect: &Rectangle, color: Color) {
+        let Some(rect) = rect.intersection(&self.rect()) else {
+            return;
+        };
+        if let Some(rows) = self.gray_rows(rect) {
+            let value = color.rgb()[0];
+            for row in rows {
+                row.fill(value);
+            }
+            return;
+        }
+        for y in rect.min.y as u32..rect.max.y as u32 {
+            for x in rect.min.x as u32..rect.max.x as u32 {
+                self.set_pixel(x, y, color);
+            }
+        }
+    }
+
+    fn draw_framed_pixmap(&mut self, pixmap: &Pixmap, rect: &Rectangle, pt: Point) {
+        let offset = pt - rect.min;
+        let Some(source) = rect.intersection(&pixmap.rect())
+            .and_then(|source| source.intersection(&(self.rect() - offset))) else {
+            return;
+        };
+        let dest = source + offset;
+        if pixmap.samples == 1 {
+            if let Some(rows) = self.gray_rows(dest) {
+                let width = source.width() as usize;
+                for (row, y) in rows.zip(source.min.y as usize..source.max.y as usize) {
+                    let start = y * pixmap.width as usize + source.min.x as usize;
+                    row.copy_from_slice(&pixmap.data()[start..start + width]);
+                }
+                return;
+            }
+        }
+        for y in source.min.y..source.max.y {
+            for x in source.min.x..source.max.x {
+                self.set_pixel((x + offset.x) as u32, (y + offset.y) as u32,
+                               pixmap.get_pixel(x as u32, y as u32));
+            }
+        }
     }
 
     fn invert_region(&mut self, rect: &Rectangle) {

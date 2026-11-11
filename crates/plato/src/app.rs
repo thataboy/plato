@@ -345,7 +345,18 @@ pub fn run() -> Result<(), Error> {
         tx.send(Event::Notify("Could not start USB sharing. See info.log.".to_string())).ok();
     }
 
+    #[cfg(feature = "page-profiling")]
+    eprintln!("Kobo profile build from cede853 with framebuffer row copies");
     while let Ok(evt) = rx.recv() {
+        #[cfg(feature = "page-profiling")]
+        let mut evt = evt;
+        #[cfg(feature = "page-profiling")]
+        let _tap = if let Event::ProfileTap(point, released) = evt {
+            evt = Event::Gesture(GestureEvent::Tap(point));
+            Some(plato_core::tap_profile::Tap::begin(released))
+        } else {
+            None
+        };
         match evt {
             Event::Device(de) => {
                 match de {
@@ -963,6 +974,8 @@ pub fn run() -> Result<(), Error> {
             },
         }
 
+        #[cfg(feature = "page-profiling")]
+        plato_core::tap_profile::point("event handled");
         process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
 
         while let Some(ce) = bus.pop_front() {

@@ -94,7 +94,7 @@ export LD_LIBRARY_PATH="libs:${LD_LIBRARY_PATH}"
 
 if [ "$PLATO_SET_FRAMEBUFFER_DEPTH" ] ; then
 	case "${PRODUCT}:${MODEL_NUMBER}" in
-		kraken:*|pixie:*|dragon:*|phoenix:*|dahlia:*|alyssum:*|pika:*|daylight:*|star:375|snow:374)
+		kraken:*|pixie:*|dragon:*|phoenix:*|dahlia:*|alyssum:*|pika:*|daylight:*|star:375|snow:374|io:388)
 			ORIG_BPP=$(./bin/utils/fbdepth -g)
 			;;
 		*)

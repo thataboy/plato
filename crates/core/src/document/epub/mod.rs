@@ -332,6 +332,8 @@ impl EpubDocument {
     }
 
     fn build_display_list(&mut self, index: usize, start_offset: usize) -> Vec<Page> {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("EPUB spine layout");
         let mut text = String::new();
         let mut spine_dir = PathBuf::default();
 
@@ -433,6 +435,8 @@ impl EpubDocument {
 
             display_list.push(Vec::new());
 
+            #[cfg(feature = "page-profiling")]
+            let _profile = crate::tap_profile::stage("EPUB page layout engine");
             self.engine.build_display_list(body, &style, &loop_context, &stylesheet, &root_data, &mut self.archive, &mut draw_state, &mut display_list);
 
             display_list.retain(|page| !page.is_empty());
@@ -647,6 +651,8 @@ impl Document for EpubDocument {
     }
 
     fn toc(&mut self) -> Option<Vec<TocEntry>> {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("EPUB TOC parse and resolution");
         let name = self.info.root().find("spine").and_then(|spine| {
             spine.attribute("toc")
         }).and_then(|toc_id| {
@@ -692,6 +698,8 @@ impl Document for EpubDocument {
     }
 
     fn chapter<'a>(&mut self, offset: usize, toc: &'a [TocEntry]) -> Option<(&'a TocEntry, f32, f32)> {
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("EPUB chapter lookup");
         let next_offset = self.resolve_location(Location::Next(offset))
                               .unwrap_or(usize::MAX);
         let (index, start_offset) = self.vertebra_coordinates(offset)?;
@@ -702,9 +710,13 @@ impl Document for EpubDocument {
         let mut offset_before = 0;
         let mut offset_after = usize::MAX;
 
+        #[cfg(feature = "page-profiling")]
+        let anchors = crate::tap_profile::stage("EPUB chapter anchor lookup");
         self.chapter_aux(toc, offset, next_offset, &path, &mut end_offset,
                          &mut chap_before, &mut offset_before,
                          &mut chap_after, &mut offset_after);
+        #[cfg(feature = "page-profiling")]
+        drop(anchors);
 
         if chap_after.is_none() && chap_before.is_none() {
             for i in (0..index).rev() {
@@ -901,6 +913,8 @@ impl Document for EpubDocument {
         let page_index = self.page_index(offset, index, start_offset)?;
         let page = self.cache.get(&index)?.get(page_index)?.clone();
 
+        #[cfg(feature = "page-profiling")]
+        let _profile = crate::tap_profile::stage("EPUB page rasterization");
         let pixmap = self.engine.render_page(&page, scale, samples, &mut self.archive)?;
 
         Some((pixmap, offset))
