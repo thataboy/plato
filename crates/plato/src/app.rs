@@ -472,6 +472,13 @@ pub fn run() -> Result<(), Error> {
     let mut stock_suspend_baseline = None;
     let mut next_event = None;
     while let Some(mut evt) = next_event.take().or_else(|| rx.recv().ok()) {
+        #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+        let _tap = if let Event::VoyageProfileTap(point, released) = evt {
+            evt = Event::Gesture(GestureEvent::Tap(point));
+            Some(plato_core::voyage_profile::Tap::begin(released))
+        } else {
+            None
+        };
         if VOYAGE {
             if let Some(motion) = voyage_motion(&evt) {
                 // If a refresh fell behind, skip obsolete intermediate moves.
@@ -1267,6 +1274,8 @@ pub fn run() -> Result<(), Error> {
             },
         }
 
+        #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+        plato_core::voyage_profile::point("event handled");
         process_render_queue(view.as_ref(), &mut rq, &mut context, &mut updating);
 
         while let Some(ce) = bus.pop_front() {

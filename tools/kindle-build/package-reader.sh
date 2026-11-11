@@ -14,7 +14,7 @@ cp -R "$repo/fonts" "$repo/css" "$repo/icons" "$repo/keyboard-layouts" "$repo/ar
 cp "$resources/blue_noise-128.png" "$extension/resources/"
 cp "$build/cargo/armv7-unknown-linux-musleabihf/release-lto/plato" "$extension/bin/"
 python3 "$here/make-fixtures.py" "$extension/books" --reader
-archive="$build/plato-voyage-alpha-0.4.1.zip"
+archive="$build/plato-voyage-alpha-0.5.8.zip"
 rm -f "$archive"
 (cd "$stage" && zip -qr "$archive" extensions -x '*.DS_Store' '*-user.css')
 printf '%s\n' "$archive"

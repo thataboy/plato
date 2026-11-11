@@ -8,5 +8,8 @@ edition = "2021"
 name = "plato"
 path = "src/main.rs"
 
+[features]
+page-profiling = ["plato-core/page-profiling"]
+
 [dependencies]
 plato-core = { path = "../core" }

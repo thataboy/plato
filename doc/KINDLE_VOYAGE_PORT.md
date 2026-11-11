@@ -2,8 +2,8 @@
 
 ## Current status
 
-Plato Voyage 0.4.1 is installed on the jailbroken Voyage running firmware
-5.10.3. The Kindle branch incorporates local `master` through merge
+Plato Voyage 0.5.8 is the current build for the jailbroken Voyage
+running firmware 5.10.3. The Kindle branch incorporates local `master` through merge
 `a6fe284`. The user verified reading and saved progress, touch and PagePress,
 manual rotation, stock sleep and wake, brightness, wall charging, both USB
 prompt flows, and improved drag responsiveness. The Voyage reported Wi-Fi
@@ -346,3 +346,124 @@ its integrity check. Version 0.4.1 was installed in place. Comparing the
 parsed settings before and after installation confirmed that only the
 library display name and font path changed. The library still uses its
 existing `books` directory and metadata.
+
+## Refresh performance test
+
+Version 0.5.0 uses REAGL for ordinary light-mode pages, GL16_INV for
+ordinary dark-mode pages, GC16_FAST for GUI updates, and DU for fast
+feedback. Explicit full refreshes keep GC16 and the existing frontlight
+suppression in inverted mode.
+
+GUI and DU submissions return before panel completion. Before mapped
+framebuffer memory is reused, the backend waits for the previous update's
+submission, falling back to completion if that ioctl fails. Full/page
+refreshes drain pending updates. Full and REAGL updates wait for completion.
+Shadow-buffer drawing can proceed independently of panel completion.
+Pending markers are tracked for explicit waits and exit cleanup.
+
+Diagnostic logs report drawing time and region count, framebuffer copying,
+submission fences, refresh submission, and completion waits. Device validation
+should compare menus, keyboard typing, selection, light/dark page turns,
+ghosting, rotation, sleep/wake, and the protected full-refresh brightness cycle.
+
+The waveform and wait choices follow koreader-base revision
+`b153a4a252f6e4295af7a569bcfdd59ffa688fa6`. The typography override is
+preserved on `codex/voyage-line-height-override`. This build uses CSS tweaks
+and the earlier fallback behavior for line spacing.
+
+The 0.5.0 device test improved text selection and showed no visible ghosting
+or UI artifacts. Across 24 dark-mode partial updates, median drawing time
+was 72 ms and median framebuffer copy time was 28 ms. Some partial updates
+waited over 600 ms for queued refreshes. Draining 64 tracked markers also
+caused several stalls. Protected full refreshes took about 712 ms at the
+panel.
+
+Version 0.5.1 uses row fills and grayscale blits for drawing, and inverts
+portrait framebuffer rows without a per-pixel coordinate transform. Dark
+partial updates use the submission fence. At the pending-marker limit the
+backend waits for the oldest marker and retains the rest for later waits.
+The 0.5.1 test showed no UI artifacts in either mode. The dark partial
+median fell from 72 to 11 ms for drawing and from 28 to 8 ms for copying.
+All 25 dark partial updates waited at most 0.01 ms at the submission fence
+in that run. Light-mode REAGL updates still blocked for a median of 753 ms.
+
+Version 0.5.2 tests GL16_FAST for ordinary light-mode page updates, with
+GC16_FAST as a fallback if the driver rejects it. Full refreshes still use
+synchronous GC16 and retain inverted-mode frontlight suppression. Device
+verification of light-mode latency and ghosting is pending.
+
+The 0.5.2 device test showed noticeably faster light-mode page turns and
+no artifacts. Logging the waveform field after the submission ioctl showed
+the driver reporting GC16_FAST for light partial updates and GC16 for dark
+partial updates. The preceding releases logged the requested waveform.
+
+Version 0.5.3 requests GC16_FAST for dark partial updates. The log records
+both the requested waveform and the value returned by the driver. Protected
+full refreshes finish waiting for older updates before turning the frontlight
+off. The light stays off through the full GC16 refresh and returns afterward.
+Dark-mode response and ghosting are pending device verification.
+
+The 0.5.3 run accepted GC16_FAST on all 65 dark partial updates. Median
+drawing and copying together took about 31 ms. The user saw no artifacts
+but still noticed a transition between pages compared with KOReader.
+
+Version 0.5.4 tests GL16_INV with EPDC hardware inversion for ordinary dark
+partial updates. This path passes normal grayscale pixels to the driver
+and uses KOReader's REAGL histogram hints. Rejected requests fall back to
+software inversion and GC16_FAST. Protected full refreshes still use
+software inversion and complete before restoring the frontlight.
+
+## Tap-to-display profiling
+
+Version 0.5.5 builds on the installed 0.5.4 display experiment. Tap traces
+start when the gesture thread receives finger release. A trace records
+gesture dispatch, link hit testing, reader navigation, EPUB spine layout,
+page rasterization, text lookup, view drawing, framebuffer preparation,
+and panel submission. Nested stage durations overlap. The elapsed values
+are measured from the same finger release.
+
+For ordinary page turns, the profiling build waits for the page update
+marker and records driver-reported completion. This wait can affect rapid
+paging. Use separate taps with enough time for each page to settle.
+Existing reader logs in `plato-diagnostics` contain the traces.
+
+Version 0.5.6 also logs stages outside a tap, labeled as background work
+with thread identifiers. This includes LoadPixmap prefetch events, adjacent
+location resolution, EPUB layout, and rasterization. Pixmap lookup logs
+the requested location and cache hit. Chapter-progress calculation, TOC
+construction, and chapter anchor lookup have separate timers to test the
+repeated-work hypothesis from the Programming Rust trace.
+
+The 0.5.6 device trace confirmed that EPUB chapter anchor lookup consumed
+roughly 0.9 seconds on the slow Programming Rust turns. The panel took
+roughly 713 ms in both books. Bertie's ordinary turns took about 782 ms
+from finger release to completion. Its adjacent page prefetches commonly
+spent 105–120 ms outside the tap.
+
+Version 0.5.7 keeps the source anchor offsets for the most recently used
+EPUB spine item. Lookups in that item share one parse, and the cache
+survives typography changes because it stores source offsets. Tap and
+prefetch profiling remain enabled for device comparison.
+
+## Handoff after profiling
+
+Version 0.5.7 reduced median Programming Rust chapter anchor lookup from
+909 ms to 0.25 ms and median tap-to-display completion from 1,707 ms to
+793 ms. Bertie's stayed near 783 ms. The confirming trace is
+`plato-diagnostics/reader-20261111T015944Z-16933.txt` on the Kindle.
+The initial layout of the Programming Rust section took about 3 seconds
+in an earlier run. It is a separate cost from repeated anchor lookup.
+
+Version 0.5.8 makes the profiler a compile-time feature. The standard build
+omits tap timestamps, profiling logs, and diagnostic completion waits.
+Use `--features page-profiling` when building the `plato` package with
+the same Kindle cross toolchain and native library paths. Profiling waits
+for the page marker on tapped page turns, which affects rapid paging.
+Tap-to-submit and driver completion are distinct measurements.
+
+The active Voyage work is on `codex/voyage-page-profiling`. The earlier
+stable branch is `codex/kindle-voyage`. The stash named “Voyage display
+experiments through 0.5.4” and the separate line-height override branch
+preserve the earlier experiments. The current dark partial path requests
+GL16_INV with hardware inversion, and the tested firmware reports GC16.
+Protected full refreshes finish before the frontlight comes back on.

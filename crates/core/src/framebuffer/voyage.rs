@@ -6,6 +6,9 @@ use crate::color::Color;
 use crate::geom::{Point, Rectangle};
 use anyhow::{bail, Context, Error};
 use std::fs::{self, File, OpenOptions};
+use std::cell::RefCell;
+#[cfg(feature = "page-profiling")]
+use std::time::Instant;
 use std::io;
 use std::os::fd::AsRawFd;
 use std::path::Path;
@@ -86,6 +89,11 @@ fn panel_rect(rect: Rectangle, turns: i8) -> Rectangle {
 // Voyage uses the older 72-byte Kindle EPDC update ABI.
 const SEND_UPDATE: libc::c_int = 0x4048_462e;
 const WAIT_FOR_UPDATE: libc::c_int = 0xc008_462f_u32 as libc::c_int;
+const WAIT_FOR_SUBMISSION: libc::c_int = 0x4004_4637;
+const GL16_FAST: u32 = 6;
+const REAGL: u32 = 8;
+const GL16_INV: u32 = 11;
+const ENABLE_INVERSION: u32 = 1;
 const DU: u32 = 1;
 const GC16: u32 = 2;
 const GC16_FAST: u32 = 3;
@@ -114,7 +122,8 @@ pub struct VoyageFramebuffer {
     pixels: NonNull<u8>,
     image: Pixmap,
     rotation: Arc<AtomicI8>,
-    serial: u8,
+    serial: u32,
+    pending: RefCell<Vec<u32>>,
     monochrome: bool,
     inverted: bool,
     dithered: bool,
@@ -156,6 +165,7 @@ impl VoyageFramebuffer {
             image: Pixmap::new(WIDTH, HEIGHT, 1),
             rotation: Arc::new(AtomicI8::new(ROTATION)),
             serial: 0,
+            pending: RefCell::new(Vec::new()),
             monochrome: false,
             inverted: false,
             dithered: false,
@@ -194,15 +204,59 @@ impl VoyageFramebuffer {
         Ok(())
     }
 
-    fn refresh(&mut self, rect: &Rectangle, mode: UpdateMode) -> Result<u32, Error> {
-        self.serial = self.serial.wrapping_add(1);
-        let marker = 0x5000_0000 | ((std::process::id() & 0xffff) << 8) | u32::from(self.serial);
+    fn copy_to_panel(&self, rect: &Rectangle, inverted: bool) {
+        let rotation = self.rotation();
+        let turns = quarter_turns(rotation);
+        let left = rect.min.x as usize;
+        let right = rect.max.x as usize;
+        let width = self.width() as usize;
+        for y in rect.min.y as usize..rect.max.y as usize {
+            let dst = unsafe { self.pixels.as_ptr().add(y * STRIDE + left) };
+            if turns == 0 && !self.monochrome && !self.dithered {
+                let start = y * width;
+                let row = &self.image.data()[start + left..start + right];
+                let destination = unsafe { std::slice::from_raw_parts_mut(dst, row.len()) };
+                if inverted {
+                    for (pixel, &gray) in destination.iter_mut().zip(row) {
+                        *pixel = !gray;
+                    }
+                } else {
+                    destination.copy_from_slice(row);
+                }
+                continue;
+            }
+            for x in left..right {
+                let source = panel_to_view(
+                    Point {
+                        x: x as i32,
+                        y: y as i32,
+                    },
+                    rotation,
+                );
+                let raw = self.image.data()[source.y as usize * width + source.x as usize];
+                let mut gray = if inverted { 255 - raw } else { raw };
+                if self.monochrome {
+                    gray = if gray < 128 { 0 } else { 255 };
+                } else if self.dithered {
+                    gray = transform_dither_g16(x as u32, y as u32, Color::Gray(gray)).gray();
+                }
+                unsafe { dst.add(x - left).write(gray) };
+            }
+        }
+    }
+
+    fn refresh(&mut self, rect: &Rectangle, mode: UpdateMode, hardware_inversion: bool) -> Result<u32, Error> {
+        self.serial = (self.serial + 1) & 0x0fff_ffff;
+        let marker = 0x5000_0000 | self.serial;
         let waveform = match mode {
             UpdateMode::Fast | UpdateMode::FastMono => DU,
             UpdateMode::Gui => GC16_FAST,
-            UpdateMode::Full | UpdateMode::Partial => GC16,
+            UpdateMode::Full => GC16,
+            UpdateMode::Partial if hardware_inversion => GL16_INV,
+            UpdateMode::Partial if self.inverted => GC16_FAST,
+            UpdateMode::Partial => GL16_FAST,
         };
-        let update = Update {
+        let mut update = Update {
             top: rect.min.y as u32,
             left: rect.min.x as u32,
             width: rect.width() as u32,
@@ -210,34 +264,69 @@ impl VoyageFramebuffer {
             waveform,
             mode: u32::from(mode == UpdateMode::Full),
             marker,
-            hist_bw_waveform: DU,
-            hist_gray_waveform: if waveform == GC16 { GC16 } else { GC16_FAST },
+            hist_bw_waveform: if hardware_inversion { REAGL } else { DU },
+            hist_gray_waveform: match waveform {
+                GL16_INV => REAGL,
+                GC16 => GC16,
+                _ => GC16_FAST,
+            },
             temperature: 0x1000,
-            flags: if waveform == DU { FORCE_MONOCHROME } else { 0 },
+            flags: match waveform {
+                GL16_INV => ENABLE_INVERSION,
+                DU => FORCE_MONOCHROME,
+                _ => 0,
+            },
             alt_buffer: [0; 7],
         };
-        if unsafe { libc::ioctl(self.file.as_raw_fd(), SEND_UPDATE, &update) } < 0 {
-            return Err(io::Error::last_os_error()).context("submitting Voyage refresh");
+        #[cfg(feature = "page-profiling")]
+        crate::voyage_profile::point("panel submit");
+        #[cfg(feature = "page-profiling")]
+        let started = Instant::now();
+        if unsafe { libc::ioctl(self.file.as_raw_fd(), SEND_UPDATE, &mut update) } < 0 {
+            let error = io::Error::last_os_error();
+            if !matches!(waveform, GL16_FAST | GL16_INV) || error.raw_os_error() != Some(libc::EINVAL) {
+                return Err(error).context("submitting Voyage refresh");
+            }
+            if hardware_inversion {
+                self.copy_to_panel(rect, true);
+                update.flags = 0;
+                update.hist_bw_waveform = DU;
+                update.hist_gray_waveform = GC16_FAST;
+            }
+            update.waveform = GC16_FAST;
+            if unsafe { libc::ioctl(self.file.as_raw_fd(), SEND_UPDATE, &mut update) } < 0 {
+                return Err(io::Error::last_os_error()).context("submitting fallback Voyage refresh");
+            }
         }
-        // Wait here so the shadow image can be copied again without racing
-        // the panel driver. DU keeps drag and selection previews fast.
-        let mut completion = [marker, 0];
-        if unsafe {
-            libc::ioctl(
-                self.file.as_raw_fd(),
-                WAIT_FOR_UPDATE,
-                completion.as_mut_ptr(),
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error()).context("waiting for Voyage refresh");
+        #[cfg(feature = "page-profiling")]
+        let submit_ms = started.elapsed().as_secs_f64() * 1000.0;
+        self.pending.borrow_mut().push(marker);
+        // Full updates must complete before the frontlight is restored.
+        #[cfg(feature = "page-profiling")]
+        let profile_page = crate::voyage_profile::is_page_turn()
+            && matches!(mode, UpdateMode::Partial | UpdateMode::Full);
+        #[cfg(not(feature = "page-profiling"))]
+        let profile_page = false;
+        if mode == UpdateMode::Full || update.mode == 1 || profile_page {
+            self.wait(marker)?;
+            #[cfg(feature = "page-profiling")]
+            if profile_page {
+                crate::voyage_profile::point("page display complete");
+            }
         }
+        #[cfg(feature = "page-profiling")]
+        eprintln!("Voyage refresh: marker={marker} mode={mode:?} waveform={} requested={waveform} panel_mode={} flags={} rect={rect:?} submit_ms={submit_ms:.2} total_ms={:.2}",
+                  update.waveform, update.mode, update.flags, started.elapsed().as_secs_f64() * 1000.0);
         Ok(marker)
     }
 }
 
 impl Drop for VoyageFramebuffer {
     fn drop(&mut self) {
+        let pending = self.pending.borrow().clone();
+        for marker in pending {
+            let _ = self.wait(marker);
+        }
         unsafe { libc::munmap(self.pixels.as_ptr().cast(), MAP_LEN) };
     }
 }
@@ -252,6 +341,43 @@ impl Framebuffer for VoyageFramebuffer {
     fn set_blended_pixel(&mut self, x: u32, y: u32, color: Color, alpha: f32) {
         if x < self.width() && y < self.height() {
             self.image.set_blended_pixel(x, y, color, alpha);
+        }
+    }
+
+    fn draw_rectangle(&mut self, rect: &Rectangle, color: Color) {
+        let Some(rect) = rect.intersection(&self.rect()) else {
+            return;
+        };
+        let stride = self.width() as usize;
+        let gray = color.gray();
+        for y in rect.min.y as usize..rect.max.y as usize {
+            let row = y * stride;
+            self.image.data_mut()[row + rect.min.x as usize..row + rect.max.x as usize].fill(gray);
+        }
+    }
+
+    fn draw_framed_pixmap(&mut self, pixmap: &Pixmap, rect: &Rectangle, pt: Point) {
+        let offset = pt - rect.min;
+        let Some(source) = rect.intersection(&pixmap.rect())
+            .and_then(|source| source.intersection(&(self.rect() - offset))) else {
+            return;
+        };
+        let dest = source + offset;
+        let width = source.width() as usize;
+        let stride = self.width() as usize;
+        for (src_y, dst_y) in (source.min.y as usize..source.max.y as usize)
+            .zip(dest.min.y as usize..dest.max.y as usize)
+        {
+            let src_start = src_y * pixmap.width as usize + source.min.x as usize;
+            let dst_start = dst_y * stride + dest.min.x as usize;
+            let row = &mut self.image.data_mut()[dst_start..dst_start + width];
+            if pixmap.samples == 1 {
+                row.copy_from_slice(&pixmap.data()[src_start..src_start + width]);
+            } else {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    *pixel = pixmap.get_pixel(source.min.x as u32 + x as u32, src_y as u32).gray();
+                }
+            }
         }
     }
 
@@ -271,43 +397,72 @@ impl Framebuffer for VoyageFramebuffer {
         let Some(rect) = rect.intersection(&self.rect()) else {
             return Ok(0);
         };
-        let rotation = self.rotation();
-        let turns = quarter_turns(rotation);
-        let rect = panel_rect(rect, turns);
-        let left = rect.min.x as usize;
-        let right = rect.max.x as usize;
-        let width = self.width() as usize;
-        for y in rect.min.y as usize..rect.max.y as usize {
-            let dst = unsafe { self.pixels.as_ptr().add(y * STRIDE + left) };
-            if turns == 0 && !self.inverted && !self.monochrome && !self.dithered {
-                let start = y * width;
-                let row = &self.image.data()[start + left..start + right];
-                unsafe { ptr::copy_nonoverlapping(row.as_ptr(), dst, row.len()) };
-                continue;
+        // The kernel must finish capturing the previous framebuffer contents
+        // before we overwrite the mapped memory. Panel completion is separate.
+        #[cfg(feature = "page-profiling")]
+        let profile = crate::voyage_profile::stage("framebuffer fence and copy");
+        #[cfg(feature = "page-profiling")]
+        let fence = Instant::now();
+        if mode == UpdateMode::Full {
+            self.wait_for_pending_updates()?;
+        } else {
+            let pending = self.pending.borrow().clone();
+            // Bound the queue without waiting on every recent update at once.
+            if pending.len() >= 64 {
+                self.wait(pending[0])?;
             }
-            for x in left..right {
-                let source = panel_to_view(
-                    Point {
-                        x: x as i32,
-                        y: y as i32,
-                    },
-                    rotation,
-                );
-                let raw = self.image.data()[source.y as usize * width + source.x as usize];
-                let mut gray = if self.inverted { 255 - raw } else { raw };
-                if self.monochrome {
-                    gray = if gray < 128 { 0 } else { 255 };
-                } else if self.dithered {
-                    gray = transform_dither_g16(x as u32, y as u32, Color::Gray(gray)).gray();
+            if let Some(&previous) = pending.last() {
+                let mut marker = previous;
+                if unsafe { libc::ioctl(self.file.as_raw_fd(), WAIT_FOR_SUBMISSION, &mut marker) } < 0 {
+                    // Fall back to completion if the firmware rejects submission waits.
+                    self.wait(previous)?;
                 }
-                unsafe { dst.add(x - left).write(gray) };
             }
         }
-        self.refresh(&rect, mode)
+        #[cfg(feature = "page-profiling")]
+        let fence_ms = fence.elapsed().as_secs_f64() * 1000.0;
+        #[cfg(feature = "page-profiling")]
+        let copy = Instant::now();
+        let rect = panel_rect(rect, quarter_turns(self.rotation()));
+        let hardware_inversion = mode == UpdateMode::Partial
+            && self.inverted && !self.monochrome && !self.dithered;
+        self.copy_to_panel(&rect, self.inverted && !hardware_inversion);
+        #[cfg(feature = "page-profiling")]
+        eprintln!("Voyage framebuffer: fence_ms={fence_ms:.2} copy_ms={:.2}", copy.elapsed().as_secs_f64() * 1000.0);
+        #[cfg(feature = "page-profiling")]
+        drop(profile);
+        self.refresh(&rect, mode, hardware_inversion)
     }
 
-    fn wait(&self, _: u32) -> Result<i32, Error> {
-        Ok(0)
+    fn wait_for_pending_updates(&self) -> Result<(), Error> {
+        let pending = self.pending.borrow().clone();
+        #[cfg(feature = "page-profiling")]
+        let started = Instant::now();
+        for marker in pending {
+            self.wait(marker)?;
+        }
+        #[cfg(feature = "page-profiling")]
+        eprintln!("Voyage pending drain: wait_ms={:.2}", started.elapsed().as_secs_f64() * 1000.0);
+        Ok(())
+    }
+
+    fn wait(&self, marker: u32) -> Result<i32, Error> {
+        if !self.pending.borrow().contains(&marker) {
+            return Ok(0);
+        }
+        #[cfg(feature = "page-profiling")]
+        let started = Instant::now();
+        let mut completion = [marker, 0];
+        let result = unsafe {
+            libc::ioctl(self.file.as_raw_fd(), WAIT_FOR_UPDATE, completion.as_mut_ptr())
+        };
+        if result < 0 {
+            return Err(io::Error::last_os_error()).context("waiting for Voyage refresh");
+        }
+        self.pending.borrow_mut().retain(|value| *value != marker);
+        #[cfg(feature = "page-profiling")]
+        eprintln!("Voyage completion: marker={marker} wait_ms={:.2}", started.elapsed().as_secs_f64() * 1000.0);
+        Ok(result)
     }
     fn save(&self, path: &str) -> Result<(), Error> {
         self.image.save(path)

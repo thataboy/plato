@@ -21,6 +21,8 @@ pub mod settings;
 pub mod font;
 pub mod context;
 pub mod gesture;
+#[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+pub mod voyage_profile;
 
 pub use anyhow;
 pub use fxhash;

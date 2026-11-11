@@ -40,6 +40,9 @@ pub trait Framebuffer {
     fn shift_region(&mut self, rect: &Rectangle, drift: u8);
     fn update(&mut self, rect: &Rectangle, mode: UpdateMode) -> Result<u32, Error>;
     fn wait(&self, token: u32) -> Result<i32, Error>;
+    fn wait_for_pending_updates(&self) -> Result<(), Error> {
+        Ok(())
+    }
     fn save(&self, path: &str) -> Result<(), Error>;
     fn set_rotation(&mut self, n: i8) -> Result<(u32, u32), Error>;
     fn set_monochrome(&mut self, enable: bool);

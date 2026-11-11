@@ -181,6 +181,8 @@ pub fn parse_gesture_events(rx: &Receiver<DeviceEvent>, ty: &Sender<Event>) {
                 }
             },
             DeviceEvent::Finger { status: FingerStatus::Up, position, id, .. } => {
+                #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+                let released = std::time::Instant::now();
                 let mut ct = contacts.lock().unwrap();
                 let mut sg = segments.lock().unwrap();
                 if let Some(mut ts) = ct.remove(&id) {
@@ -192,7 +194,13 @@ pub fn parse_gesture_events(rx: &Receiver<DeviceEvent>, ty: &Sender<Event>) {
                 if ct.is_empty() && !sg.is_empty() {
                     let len = sg.len();
                     if len == 1 {
-                        ty.send(Event::Gesture(interpret_segment(&sg.pop().unwrap(), tap_jitter))).ok();
+                        let gesture = interpret_segment(&sg.pop().unwrap(), tap_jitter);
+                        #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+                        if let GestureEvent::Tap(point) = gesture {
+                            ty.send(Event::VoyageProfileTap(point, released)).ok();
+                            continue;
+                        }
+                        ty.send(Event::Gesture(gesture)).ok();
                     } else if len == 2 {
                         let ge1 = interpret_segment(&sg.pop().unwrap(), tap_jitter);
                         let ge2 = interpret_segment(&sg.pop().unwrap(), tap_jitter);
