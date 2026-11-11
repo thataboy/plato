@@ -26,7 +26,7 @@ use crate::document::BYTES_PER_PAGE;
 const VIEWER_STYLESHEET: &str = "css/epub.css";
 const USER_STYLESHEET: &str = "css/epub-user.css";
 
-type UriCache = FxHashMap<String, usize>;
+type AnchorOffsets = FxHashMap<String, usize>;
 
 impl ResourceFetcher for ZipArchive<File> {
     fn fetch(&mut self, name: &str) -> Result<Vec<u8>, Error> {
@@ -44,6 +44,7 @@ pub struct EpubDocument {
     engine: Engine,
     spine: Vec<Chunk>,
     cache: FxHashMap<usize, Vec<Page>>,
+    chapter_anchors: Option<(usize, AnchorOffsets)>,
     ignore_document_css: bool,
     extra_css: Option<String>,
 }
@@ -126,6 +127,7 @@ impl EpubDocument {
             engine: Engine::new(),
             spine,
             cache: FxHashMap::default(),
+            chapter_anchors: None,
             ignore_document_css: false,
             extra_css: None,
         })
@@ -185,7 +187,7 @@ impl EpubDocument {
         rect![0, 0, width as i32, height as i32]
     }
 
-    fn walk_toc_ncx(&mut self, node: NodeRef, toc_dir: &Path, index: &mut usize, cache: &mut UriCache) -> Vec<TocEntry> {
+    fn walk_toc_ncx(&mut self, node: NodeRef, toc_dir: &Path, index: &mut usize) -> Vec<TocEntry> {
         let mut entries = Vec::new();
         // TODO: Take `playOrder` into account?
 
@@ -211,7 +213,7 @@ impl EpubDocument {
                 *index += 1;
 
                 let sub_entries = if child.children().count() > 2 {
-                    self.walk_toc_ncx(child, toc_dir, index, cache)
+                    self.walk_toc_ncx(child, toc_dir, index)
                 } else {
                     Vec::new()
                 };
@@ -230,7 +232,7 @@ impl EpubDocument {
         entries
     }
 
-    fn walk_toc_nav(&mut self, node: NodeRef, toc_dir: &Path, index: &mut usize, cache: &mut UriCache) -> Vec<TocEntry> {
+    fn walk_toc_nav(&mut self, node: NodeRef, toc_dir: &Path, index: &mut usize) -> Vec<TocEntry> {
         let mut entries = Vec::new();
 
         for child in node.children() {
@@ -254,7 +256,7 @@ impl EpubDocument {
                 *index += 1;
 
                 let sub_entries = if let Some(sub_list) = child.find("ol") {
-                    self.walk_toc_nav(sub_list, toc_dir, index, cache)
+                    self.walk_toc_nav(sub_list, toc_dir, index)
                 } else {
                     Vec::new()
                 };
@@ -296,38 +298,36 @@ impl EpubDocument {
         })
     }
 
-    fn resolve_link(&mut self, uri: &str, cache: &mut UriCache) -> Option<usize> {
-        let frag_index_opt = uri.find('#');
-        let name = &uri[..frag_index_opt.unwrap_or_else(|| uri.len())];
-
+    fn resolve_link(&mut self, uri: &str) -> Option<usize> {
+        let (name, fragment) = match uri.split_once('#') {
+            Some((name, fragment)) => (name, Some(fragment)),
+            None => (uri, None),
+        };
         let (index, start_offset) = self.vertebra_coordinates_from_name(name)?;
 
-        if frag_index_opt.is_some() {
-            let mut text = String::new();
-            {
-                let mut zf = self.archive.by_name(name).ok()?;
-                zf.read_to_string(&mut text).ok()?;
+        if let Some(fragment) = fragment {
+            if self.chapter_anchors.as_ref().map(|(cached, _)| *cached) != Some(index) {
+                let mut text = String::new();
+                self.archive.by_name(name).ok()?.read_to_string(&mut text).ok()?;
+                let root = XmlParser::new(&text).parse();
+                let mut anchors = AnchorOffsets::default();
+                Self::collect_anchors(root.root(), start_offset, &mut anchors);
+                // These are source offsets and remain valid when the book reflows.
+                self.chapter_anchors = Some((index, anchors));
             }
-            let root = XmlParser::new(&text).parse();
-            self.cache_uris(root.root(), name, start_offset, cache);
-            cache.get(uri).cloned()
+            self.chapter_anchors.as_ref()?.1.get(fragment).copied()
         } else {
             let page_index = self.page_index(start_offset, index, start_offset)?;
-            let offset = self.cache.get(&index)
-                             .and_then(|display_list| display_list[page_index].first())
-                             .map(DrawCommand::offset)?;
-            cache.insert(uri.to_string(), offset);
-            Some(offset)
+            self.cache.get(&index)?.get(page_index)?.first().map(DrawCommand::offset)
         }
     }
 
-    fn cache_uris(&mut self, node: NodeRef, name: &str, start_offset: usize, cache: &mut UriCache) {
+    fn collect_anchors(node: NodeRef, start_offset: usize, anchors: &mut AnchorOffsets) {
         if let Some(id) = node.attribute("id") {
-            let location = start_offset + node.offset();
-            cache.insert(format!("{}#{}", name, id), location);
+            anchors.insert(id.to_string(), start_offset + node.offset());
         }
         for child in node.children() {
-            self.cache_uris(child, name, start_offset, cache);
+            Self::collect_anchors(child, start_offset, anchors);
         }
     }
 
@@ -679,14 +679,14 @@ impl Document for EpubDocument {
 
         if name.ends_with(".ncx") {
             root.root().find("navMap").map(|map| {
-                self.walk_toc_ncx(map, toc_dir, &mut 0, &mut FxHashMap::default())
+                self.walk_toc_ncx(map, toc_dir, &mut 0)
             })
         } else {
             root.root().descendants()
                 .find(|desc| desc.tag_name() == Some("nav") &&
                              desc.attribute("epub:type") == Some("toc"))
                 .and_then(|map| map.find("ol")).map(|map| {
-                self.walk_toc_nav(map, toc_dir, &mut 0, &mut FxHashMap::default())
+                self.walk_toc_nav(map, toc_dir, &mut 0)
             })
         }
     }
@@ -798,7 +798,6 @@ impl Document for EpubDocument {
                 }
             },
             Location::LocalUri(offset, ref uri) => {
-                let mut cache = FxHashMap::default();
                 let normalized_uri: String = {
                     let (index, _) = self.vertebra_coordinates(offset)?;
                     let path = &self.spine[index].path;
@@ -811,12 +810,9 @@ impl Document for EpubDocument {
                               .to_string_lossy().into_owned()
                     }
                 };
-                self.resolve_link(&normalized_uri, &mut cache)
+                self.resolve_link(&normalized_uri)
             },
-            Location::Uri(ref uri) => {
-                let mut cache = FxHashMap::default();
-                self.resolve_link(uri, &mut cache)
-            },
+            Location::Uri(ref uri) => self.resolve_link(uri),
         }
     }
 
