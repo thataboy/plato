@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{ButtonCode, ButtonStatus, DeviceEvent, FingerStatus, PowerSource};
 use crate::device::CURRENT_DEVICE;
-use crate::framebuffer::voyage::panel_to_view;
+use crate::device::kindle::{self, KindleProfile, InputSource as Source};
 use crate::geom::Point;
 use anyhow::{bail, Context, Error};
 use std::fs::{self, File};
@@ -16,13 +16,6 @@ use std::thread;
 
 const EVIOCGNAME: libc::c_int = 0x8080_4506_u32 as libc::c_int;
 const EVIOCGRAB: libc::c_int = 0x4004_4590;
-
-#[derive(Clone, Copy)]
-enum Source {
-    Touch,
-    PagePress,
-    Power,
-}
 
 fn open_device(wanted: &[u8]) -> Result<File, Error> {
     for entry in fs::read_dir("/dev/input")? {
@@ -55,26 +48,23 @@ fn open_device(wanted: &[u8]) -> Result<File, Error> {
 }
 
 pub fn events(
+    profile: &'static KindleProfile,
     inverted: Arc<AtomicBool>,
     rotation: Arc<AtomicI8>,
     grab_power: bool,
 ) -> Result<Receiver<DeviceEvent>, Error> {
     // Open all required nodes before spawning any reader. If one grab fails,
     // dropping the files releases the earlier grabs before startup returns.
-    let mut devices = vec![
-        (Source::Touch, open_device(b"cyttsp4_mt")?),
-        (Source::PagePress, open_device(b"fsr_keypad")?),
-    ];
-    if grab_power {
-        devices.push((Source::Power, open_device(b"max77696-onkey")?));
-    }
+    let devices = profile.input.sources(grab_power)
+        .map(|(source, name)| open_device(name).map(|file| (source, file)))
+        .collect::<Result<Vec<_>, _>>()?;
     let (tx, rx) = mpsc::channel();
     for (source, file) in devices {
         let tx = tx.clone();
         let inverted = inverted.clone();
         let rotation = rotation.clone();
         thread::Builder::new().spawn(move || {
-            if let Err(err) = read_events(file, source, &inverted, &rotation, &tx) {
+            if let Err(err) = read_events(file, profile, source, &inverted, &rotation, &tx) {
                 eprintln!("Voyage evdev read failed: {err}");
             }
         })?;
@@ -89,6 +79,7 @@ struct Contact {
 }
 
 struct Touch {
+    profile: &'static KindleProfile,
     slot: Option<usize>,
     slots: [Contact; 3],
     reported: [Contact; 3],
@@ -96,9 +87,10 @@ struct Touch {
     desynced: bool,
 }
 
-impl Default for Touch {
-    fn default() -> Self {
+impl Touch {
+    fn new(profile: &'static KindleProfile) -> Self {
         Self {
+            profile,
             slot: Some(0),
             slots: [Contact::default(); 3],
             reported: [Contact::default(); 3],
@@ -134,8 +126,8 @@ impl Touch {
                 let Some(slot) = self.slot else { return };
                 let contact = &mut self.slots[slot];
                 match code {
-                    53 => contact.position.x = value.clamp(0, 1071),
-                    54 => contact.position.y = value.clamp(0, 1447),
+                    53 => contact.position.x = value.clamp(0, self.profile.display.width as i32 - 1),
+                    54 => contact.position.y = value.clamp(0, self.profile.display.height as i32 - 1),
                     57 => contact.id = (value >= 0).then_some(value),
                     _ => unreachable!(),
                 }
@@ -157,12 +149,14 @@ impl Touch {
 
     fn report(&mut self, time: f64, rotation: i8, tx: &Sender<DeviceEvent>) {
         for (slot, (old, new)) in self.reported.iter_mut().zip(&self.slots).enumerate() {
-            let send = |id, status, position| {
+            let display = self.profile.display;
+            let send = |id, status, position: Point| {
+                let (x, y) = display.panel_to_view((position.x, position.y), rotation);
                 let _ = tx.send(DeviceEvent::Finger {
                     id,
                     time,
                     status,
-                    position: panel_to_view(position, rotation),
+                    position: Point { x, y },
                 });
             };
             if old.id != new.id {
@@ -196,12 +190,13 @@ impl Touch {
 
 fn read_events(
     mut file: File,
+    profile: &'static KindleProfile,
     source: Source,
     inverted: &AtomicBool,
     rotation: &AtomicI8,
     tx: &Sender<DeviceEvent>,
 ) -> io::Result<()> {
-    let mut touch = Touch::default();
+    let mut touch = Touch::new(profile);
     // The kernel's ARM32 timeval is eight bytes, independent of musl's
     // time64 layout. Decode the verified 16-byte kernel records explicitly.
     let mut event = [0; 16];
@@ -217,8 +212,8 @@ fn read_events(
             Source::Touch => touch.feed(kind, code, value, time, orientation, tx),
             _ if kind == 1 => {
                 let button = match (source, code) {
-                    (Source::PagePress, 104 | 109) => {
-                        if (code == 109)
+                    (Source::PagePress, code) if profile.input.page_keys.is_some_and(|keys| code == keys.previous || code == keys.next) => {
+                        if profile.input.page_keys.is_some_and(|keys| code == keys.next)
                             ^ inverted.load(Ordering::Relaxed)
                             ^ CURRENT_DEVICE.should_invert_buttons(orientation)
                         {
@@ -227,7 +222,7 @@ fn read_events(
                             ButtonCode::Backward
                         }
                     }
-                    (Source::Power, 116) => ButtonCode::Power,
+                    (Source::Power, code) if code == profile.input.power_code => ButtonCode::Power,
                     _ => continue,
                 };
                 if let Some(status) = ButtonStatus::try_from_raw(value) {
@@ -248,18 +243,14 @@ fn read_events(
     }
 }
 
-const CHARGER_DRIVER: &str = "/sys/bus/platform/drivers/max77696-uic";
-
 fn charger_value(attribute: &str) -> Option<u8> {
-    for device in [
-        "/sys/bus/platform/devices/max77696-uic",
-        "/sys/class/power_supply/max77696-uic/device",
-    ] {
+    let profile = kindle::current().ok()?;
+    for device in profile.charger_devices {
         if let Ok(value) = fs::read_to_string(std::path::Path::new(device).join(attribute)) {
             return value.trim().parse().ok();
         }
     }
-    for entry in fs::read_dir(CHARGER_DRIVER).ok()?.flatten() {
+    for entry in fs::read_dir(profile.charger_driver).ok()?.flatten() {
         if let Ok(value) = fs::read_to_string(entry.path().join(attribute)) {
             return value.trim().parse().ok();
         }
@@ -279,7 +270,8 @@ pub fn usb_host_present() -> bool {
     }
     // The controller reports address/configured states even when the
     // storage medium has been ejected by the host.
-    fs::read_dir("/sys/bus/platform/drivers/fsl-usb2-udc")
+    let Ok(profile) = kindle::current() else { return false };
+    fs::read_dir(profile.usb_driver)
         .into_iter()
         .flatten()
         .flatten()

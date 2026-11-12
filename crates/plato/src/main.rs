@@ -11,7 +11,8 @@ fn main() -> Result<(), Error> {
         if std::env::var_os("PLATO_VOYAGE_SESSION").as_deref() != Some(std::ffi::OsStr::new("1")) {
             plato_core::anyhow::bail!("launch the Voyage alpha through its KUAL extension");
         }
-        if kindle::screen_command()? {
+        let profile = plato_core::device::kindle::current()?;
+        if kindle::screen_command(profile)? {
             return Ok(());
         }
     }

@@ -3,14 +3,20 @@ use plato_core::anyhow::{bail, Error};
 use plato_core::battery::{Battery, Status};
 use plato_core::framebuffer::voyage::VoyageFramebuffer;
 use plato_core::settings::Settings;
+use plato_core::device::kindle::{self, KindleProfile};
 use std::fs;
 use std::path::Path;
 
-pub fn screen_command() -> Result<bool, Error> {
+pub fn screen_command(profile: &KindleProfile) -> Result<bool, Error> {
     let mut args = std::env::args_os().skip(1);
     let Some(action) = args.next() else {
         return Ok(false);
     };
+    if action == "--check-device" {
+        if args.next().is_some() { bail!("unexpected device-check argument"); }
+        println!("Supported device: {} ({})", profile.name, profile.firmware);
+        return Ok(true);
+    }
     let Some(path) = args.next() else {
         bail!("missing screen backup path")
     };
@@ -19,10 +25,10 @@ pub fn screen_command() -> Result<bool, Error> {
     }
     match action.to_str() {
         Some("--save-stock-screen") => {
-            VoyageFramebuffer::open()?.save_stock_screen(Path::new(&path))?
+            VoyageFramebuffer::open(profile)?.save_stock_screen(Path::new(&path))?
         }
         Some("--restore-stock-screen") => {
-            VoyageFramebuffer::open()?.restore_stock_screen(Path::new(&path))?
+            VoyageFramebuffer::open(profile)?.restore_stock_screen(Path::new(&path))?
         }
         _ => bail!("unknown Voyage command"),
     }
@@ -37,19 +43,23 @@ pub fn prepare_settings(settings: &mut Settings) {
     settings.frontlight = false;
 }
 
-pub struct VoyageBattery;
+pub struct KindleBattery { profile: &'static KindleProfile }
 
-impl Battery for VoyageBattery {
+impl KindleBattery {
+    pub fn new() -> Result<Self, Error> { Ok(Self { profile: kindle::current()? }) }
+}
+
+impl Battery for KindleBattery {
     fn capacity(&mut self) -> Result<Vec<f32>, Error> {
         let level = fs::read_to_string(
-            "/sys/devices/system/wario_battery/wario_battery0/battery_capacity",
+            self.profile.battery_capacity,
         )?;
         Ok(vec![level.trim().parse()?])
     }
 
     fn status(&mut self) -> Result<Vec<Status>, Error> {
         let charging =
-            fs::read_to_string("/sys/devices/system/wario_charger/wario_charger0/charging")?;
+            fs::read_to_string(self.profile.battery_charging)?;
         Ok(vec![if charging.trim() == "1" {
             Status::Charging
         } else {
@@ -58,9 +68,7 @@ impl Battery for VoyageBattery {
     }
 }
 
-const BRIGHTNESS: &str = "/sys/class/backlight/max77696-bl/brightness";
 const POWERD: &str = "com.lab126.powerd";
-const STOCK_MAX: u8 = 24;
 
 fn run_lipc(program: &str, args: &[&str]) -> Result<String, Error> {
     use std::process::{Command, Stdio};
@@ -90,48 +98,51 @@ fn run_lipc(program: &str, args: &[&str]) -> Result<String, Error> {
     Ok(String::from_utf8(output.stdout)?)
 }
 
-pub struct VoyageFrontlight {
+pub struct KindleFrontlight {
+    profile: &'static KindleProfile,
     // Zero means physically off. The other 25 steps map to stock levels 0–24.
     step: u8,
     hardware: Option<u32>,
 }
 
-impl VoyageFrontlight {
+impl KindleFrontlight {
     pub fn read() -> Result<Self, Error> {
+        let profile = kindle::current()?;
         let native: u8 = run_lipc("lipc-get-prop", &[POWERD, "flIntensity"])?
             .trim()
             .parse()?;
-        if native > STOCK_MAX {
+        if native > profile.max_brightness {
             bail!("unexpected stock frontlight level {native}");
         }
-        let hardware: u32 = fs::read_to_string(BRIGHTNESS)?.trim().parse()?;
+        let hardware: u32 = fs::read_to_string(profile.brightness)?.trim().parse()?;
         Ok(Self {
+            profile,
             step: if hardware == 0 { 0 } else { native + 1 },
             hardware: Some(hardware),
         })
     }
 
-    fn apply(step: u8) -> Result<(), Error> {
+    fn apply(&self, step: u8) -> Result<(), Error> {
         let native = step.saturating_sub(1).to_string();
         run_lipc("lipc-set-prop", &["-i", POWERD, "flIntensity", &native])?;
         if step == 0 {
             // On Voyage, stock level 0 leaves a faint light.
-            fs::write(BRIGHTNESS, b"0\n")?;
+            fs::write(self.profile.brightness, b"0\n")?;
         }
         Ok(())
     }
 }
 
-impl plato_core::frontlight::Frontlight for VoyageFrontlight {
+impl plato_core::frontlight::Frontlight for KindleFrontlight {
     fn set_intensity(&mut self, value: f32) {
-        let step = (value.clamp(0.0, 100.0) * (f32::from(STOCK_MAX) + 1.0) / 100.0).round() as u8;
+        let step = (value.clamp(0.0, 100.0) * (f32::from(self.profile.max_brightness) + 1.0) / 100.0).round() as u8;
         if step == self.step {
             return;
         }
-        match Self::apply(step) {
+        match self.apply(step) {
             Ok(()) => {
                 self.step = step;
-                self.hardware = fs::read_to_string(BRIGHTNESS)
+                self.hardware = fs::read_to_string(self.profile.brightness)
                     .ok()
                     .and_then(|value| value.trim().parse().ok());
                 eprintln!("Voyage frontlight step: {step}/25");
@@ -141,13 +152,13 @@ impl plato_core::frontlight::Frontlight for VoyageFrontlight {
     }
 
     fn restore(&mut self) {
-        let result = Self::apply(self.step).and_then(|()| {
+        let result = self.apply(self.step).and_then(|()| {
             if let Some(brightness) = self.hardware {
-                let current: u32 = fs::read_to_string(BRIGHTNESS)?.trim().parse()?;
+                let current: u32 = fs::read_to_string(self.profile.brightness)?.trim().parse()?;
                 if current != brightness {
                     // Stock can dim the hardware while retaining the same
                     // LIPC level, so setting that level may be a no-op.
-                    fs::write(BRIGHTNESS, format!("{brightness}\n"))?;
+                    fs::write(self.profile.brightness, format!("{brightness}\n"))?;
                 }
             }
             Ok(())
@@ -162,7 +173,7 @@ impl plato_core::frontlight::Frontlight for VoyageFrontlight {
 
     fn levels(&self) -> plato_core::frontlight::LightLevels {
         plato_core::frontlight::LightLevels {
-            intensity: f32::from(self.step) * 100.0 / (f32::from(STOCK_MAX) + 1.0),
+            intensity: f32::from(self.step) * 100.0 / (f32::from(self.profile.max_brightness) + 1.0),
             warmth: 0.0,
         }
     }

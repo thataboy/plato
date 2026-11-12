@@ -3,6 +3,7 @@ use super::linuxfb_sys::{fix_screen_info, var_screen_info};
 use super::transform::transform_dither_g16;
 use super::{Framebuffer, Pixmap, UpdateMode};
 use crate::color::Color;
+use crate::device::kindle::{DisplayBackend, DisplayProfile, KindleProfile};
 use crate::geom::{Point, Rectangle};
 use anyhow::{bail, Context, Error};
 use std::fs::{self, File, OpenOptions};
@@ -16,73 +17,12 @@ use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicI8, Ordering};
 use std::sync::Arc;
 
-const WIDTH: u32 = 1072;
-const HEIGHT: u32 = 1448;
-const ROTATION: i8 = 3;
-const STRIDE: usize = 1088;
-const MAP_LEN: usize = STRIDE * HEIGHT as usize;
-
-// Use the existing Plato rotation IDs, with 3 corresponding to portrait.
-fn quarter_turns(rotation: i8) -> i8 {
-    (rotation - ROTATION).rem_euclid(4)
-}
-
-fn view_to_panel(p: Point, turns: i8) -> Point {
-    let (w, h) = (WIDTH as i32, HEIGHT as i32);
-    match turns {
-        1 => Point {
-            x: w - 1 - p.y,
-            y: p.x,
-        },
-        2 => Point {
-            x: w - 1 - p.x,
-            y: h - 1 - p.y,
-        },
-        3 => Point {
-            x: p.y,
-            y: h - 1 - p.x,
-        },
-        _ => p,
-    }
-}
-
-pub(crate) fn panel_to_view(p: Point, rotation: i8) -> Point {
-    let (w, h) = (WIDTH as i32, HEIGHT as i32);
-    match quarter_turns(rotation) {
-        1 => Point {
-            x: p.y,
-            y: w - 1 - p.x,
-        },
-        2 => Point {
-            x: w - 1 - p.x,
-            y: h - 1 - p.y,
-        },
-        3 => Point {
-            x: h - 1 - p.y,
-            y: p.x,
-        },
-        _ => p,
-    }
-}
-
-fn panel_rect(rect: Rectangle, turns: i8) -> Rectangle {
-    let a = view_to_panel(rect.min, turns);
-    let b = view_to_panel(
-        Point {
-            x: rect.max.x - 1,
-            y: rect.max.y - 1,
-        },
-        turns,
-    );
+fn panel_rect(rect: Rectangle, display: DisplayProfile, rotation: i8) -> Rectangle {
+    let a = display.view_to_panel((rect.min.x, rect.min.y), rotation);
+    let b = display.view_to_panel((rect.max.x - 1, rect.max.y - 1), rotation);
     Rectangle {
-        min: Point {
-            x: a.x.min(b.x),
-            y: a.y.min(b.y),
-        },
-        max: Point {
-            x: a.x.max(b.x) + 1,
-            y: a.y.max(b.y) + 1,
-        },
+        min: Point { x: a.0.min(b.0), y: a.1.min(b.1) },
+        max: Point { x: a.0.max(b.0) + 1, y: a.1.max(b.1) + 1 },
     }
 }
 
@@ -118,6 +58,7 @@ struct Update {
 const _: () = assert!(size_of::<Update>() == 72);
 
 pub struct VoyageFramebuffer {
+    display: DisplayProfile,
     file: File,
     pixels: NonNull<u8>,
     image: Pixmap,
@@ -130,16 +71,20 @@ pub struct VoyageFramebuffer {
 }
 
 impl VoyageFramebuffer {
-    pub fn open() -> Result<Self, Error> {
-        let file = OpenOptions::new().read(true).write(true).open("/dev/fb0")?;
+    pub fn open(profile: &KindleProfile) -> Result<Self, Error> {
+        let display = profile.display;
+        if display.backend != DisplayBackend::Voyage {
+            bail!("device requires a different Kindle framebuffer backend");
+        }
+        let file = OpenOptions::new().read(true).write(true).open(display.path)?;
         let var = var_screen_info(&file)?;
         let fix = fix_screen_info(&file)?;
-        if (var.xres, var.yres, var.xoffset, var.yoffset) != (WIDTH, HEIGHT, 0, 0)
-            || var.rotate != ROTATION as u32
+        if (var.xres, var.yres, var.xoffset, var.yoffset) != (display.width, display.height, 0, 0)
+            || var.rotate != display.rotation as u32
             || var.bits_per_pixel != 8
             || var.grayscale != 1
-            || fix.line_length as usize != STRIDE
-            || (fix.smem_len as usize) < MAP_LEN
+            || fix.line_length as usize != display.stride
+            || (fix.smem_len as usize) < display.map_len()
         {
             bail!("Voyage alpha requires the verified portrait grayscale framebuffer mode");
         }
@@ -148,7 +93,7 @@ impl VoyageFramebuffer {
         let mapping = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                MAP_LEN,
+                display.map_len(),
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_SHARED,
                 file.as_raw_fd(),
@@ -160,10 +105,11 @@ impl VoyageFramebuffer {
         }
         let pixels = NonNull::new(mapping.cast()).context("null framebuffer mapping")?;
         Ok(Self {
+            display,
             file,
             pixels,
-            image: Pixmap::new(WIDTH, HEIGHT, 1),
-            rotation: Arc::new(AtomicI8::new(ROTATION)),
+            image: Pixmap::new(display.width, display.height, 1),
+            rotation: Arc::new(AtomicI8::new(display.rotation)),
             serial: 0,
             pending: RefCell::new(Vec::new()),
             monochrome: false,
@@ -177,15 +123,15 @@ impl VoyageFramebuffer {
     }
 
     pub fn save_stock_screen(&self, path: &Path) -> Result<(), Error> {
-        let mut image = Pixmap::new(WIDTH, HEIGHT, 1);
+        let mut image = Pixmap::new(self.display.width, self.display.height, 1);
         for (row, dst) in image
             .data_mut()
-            .chunks_exact_mut(WIDTH as usize)
+            .chunks_exact_mut(self.display.width as usize)
             .enumerate()
         {
             unsafe {
                 ptr::copy_nonoverlapping(
-                    self.pixels.as_ptr().add(row * STRIDE),
+                    self.pixels.as_ptr().add(row * self.display.stride),
                     dst.as_mut_ptr(),
                     dst.len(),
                 );
@@ -206,12 +152,12 @@ impl VoyageFramebuffer {
 
     fn copy_to_panel(&self, rect: &Rectangle, inverted: bool) {
         let rotation = self.rotation();
-        let turns = quarter_turns(rotation);
+        let turns = self.display.quarter_turns(rotation);
         let left = rect.min.x as usize;
         let right = rect.max.x as usize;
         let width = self.width() as usize;
         for y in rect.min.y as usize..rect.max.y as usize {
-            let dst = unsafe { self.pixels.as_ptr().add(y * STRIDE + left) };
+            let dst = unsafe { self.pixels.as_ptr().add(y * self.display.stride + left) };
             if turns == 0 && !self.monochrome && !self.dithered {
                 let start = y * width;
                 let row = &self.image.data()[start + left..start + right];
@@ -226,14 +172,8 @@ impl VoyageFramebuffer {
                 continue;
             }
             for x in left..right {
-                let source = panel_to_view(
-                    Point {
-                        x: x as i32,
-                        y: y as i32,
-                    },
-                    rotation,
-                );
-                let raw = self.image.data()[source.y as usize * width + source.x as usize];
+                let (source_x, source_y) = self.display.panel_to_view((x as i32, y as i32), rotation);
+                let raw = self.image.data()[source_y as usize * width + source_x as usize];
                 let mut gray = if inverted { 255 - raw } else { raw };
                 if self.monochrome {
                     gray = if gray < 128 { 0 } else { 255 };
@@ -327,7 +267,7 @@ impl Drop for VoyageFramebuffer {
         for marker in pending {
             let _ = self.wait(marker);
         }
-        unsafe { libc::munmap(self.pixels.as_ptr().cast(), MAP_LEN) };
+        unsafe { libc::munmap(self.pixels.as_ptr().cast(), self.display.map_len()) };
     }
 }
 
@@ -423,7 +363,7 @@ impl Framebuffer for VoyageFramebuffer {
         let fence_ms = fence.elapsed().as_secs_f64() * 1000.0;
         #[cfg(feature = "page-profiling")]
         let copy = Instant::now();
-        let rect = panel_rect(rect, quarter_turns(self.rotation()));
+        let rect = panel_rect(rect, self.display, self.rotation());
         let hardware_inversion = mode == UpdateMode::Partial
             && self.inverted && !self.monochrome && !self.dithered;
         self.copy_to_panel(&rect, self.inverted && !hardware_inversion);
@@ -472,16 +412,12 @@ impl Framebuffer for VoyageFramebuffer {
             bail!("invalid Voyage rotation {rotation}");
         }
         if rotation != self.rotation() {
-            let (width, height) = if quarter_turns(rotation) % 2 == 0 {
-                (WIDTH, HEIGHT)
-            } else {
-                (HEIGHT, WIDTH)
-            };
+            let (width, height) = self.display.view_dims(rotation);
             self.image = Pixmap::new(width, height, 1);
             self.rotation.store(rotation, Ordering::Relaxed);
             eprintln!(
                 "Voyage rotation: {} degrees ({width}x{height}).",
-                i16::from(quarter_turns(rotation)) * 90
+                i16::from(self.display.quarter_turns(rotation)) * 90
             );
         }
         Ok(self.dims())

@@ -132,11 +132,8 @@ active_pid() {
 }
 
 echo "Plato Voyage portrait reader alpha. Power mode: $PLATO_VOYAGE_POWER."
-version=$(cat /etc/prettyversion.txt 2>/dev/null || :)
-case "$version" in
-    'Kindle 5.10.3'|'Kindle 5.10.3 '*) ;;
-    *) echo "Expected stock Kindle firmware 5.10.3, found: $version"; exit 1 ;;
-esac
+# Validate hardware identity and firmware before pausing any stock service.
+run_for 10 "$HERE/plato" --check-device
 
 awesome=$(active_pid awesome) || { echo 'Could not identify an active Kindle window manager.'; exit 1; }
 volumd=$(active_pid volumd) || { echo 'Could not identify the active USB storage service.'; exit 1; }

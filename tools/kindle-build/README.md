@@ -100,6 +100,24 @@ the appropriate `[[libraries]]` entry to change the display name. Set
 `font-path` under `[reader]` to point at your custom fonts. Relative paths
 such as `books` and `bookfonts` are relative to `extensions/plato-voyage/`.
 
+## Kindle device profiles
+
+The reader launcher checks the device and firmware before pausing stock
+services. The reader selects a profile using the model code in `/proc/usid`
+and reports the model name without printing the serial. The Voyage profile
+requires firmware 5.10.3.
+
+The profile in `crates/core/src/device/kindle.rs` supplies display geometry,
+input devices, key codes, and power paths. Page keys are optional per profile.
+Voyage still expects its PagePress node. A future profile without page keys
+can omit it. New driver interfaces require their own backend and hardware
+testing. The Voyage launcher and refresh protocol remain specific to Voyage.
+
+Upgrade the launcher and binary together using the reader ZIP. On Voyage,
+confirm that KUAL launches the reader, touch and both PagePress keys work in
+portrait and landscape, and quit returns to the stock screen. The reader log
+should report `Supported device: Kindle Voyage (Kindle 5.10.3)` at startup.
+
 ## Optional page profiling
 
 The default build omits profiling. To build with tap and rendering traces:

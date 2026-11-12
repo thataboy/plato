@@ -1,3 +1,5 @@
+pub mod kindle;
+
 use std::env;
 use std::fmt;
 use lazy_static::lazy_static;
@@ -99,8 +101,8 @@ impl Device {
             "kindle-voyage" => Device {
                 model: Model::KindleVoyage,
                 proto: TouchProto::MultiC,
-                dims: (1072, 1448),
-                dpi: 300,
+                dims: (kindle::VOYAGE.display.width, kindle::VOYAGE.display.height),
+                dpi: kindle::VOYAGE.display.dpi,
             },
             "kraken" => Device {
                 model: Model::Glo,
@@ -287,8 +289,11 @@ impl Device {
     }
 
     pub fn has_page_turn_buttons(&self) -> bool {
+        if self.model == Model::KindleVoyage {
+            return kindle::VOYAGE.input.page_keys.is_some();
+        }
         matches!(self.model,
-                 Model::KindleVoyage | Model::Forma | Model::Forma32GB | Model::LibraH2O |
+                 Model::Forma | Model::Forma32GB | Model::LibraH2O |
                  Model::Sage | Model::Libra2 | Model::LibraColour)
     }
 
@@ -438,7 +443,7 @@ impl Device {
 lazy_static! {
     pub static ref CURRENT_DEVICE: Device = {
         let product = if cfg!(all(target_arch = "arm", target_env = "musl")) {
-            "kindle-voyage".to_string()
+            kindle::current().expect("Kindle identification must succeed before device initialization").product.to_string()
         } else {
             env::var("PRODUCT").unwrap_or_default()
         };

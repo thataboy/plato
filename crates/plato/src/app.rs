@@ -127,7 +127,7 @@ fn build_context(fb: Box<dyn Framebuffer>, stock_power: bool) -> Result<Context,
     let fonts = Fonts::load().context("can't load fonts")?;
 
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
-    let battery: Box<dyn Battery> = Box::new(crate::kindle::VoyageBattery);
+    let battery: Box<dyn Battery> = Box::new(crate::kindle::KindleBattery::new()?);
     #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
     let battery = Box::new(KoboBattery::new().context("can't create battery")?) as Box<dyn Battery>;
 
@@ -151,7 +151,7 @@ fn build_context(fb: Box<dyn Framebuffer>, stock_power: bool) -> Result<Context,
 
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
     let frontlight = if stock_power {
-            let frontlight: Box<dyn Frontlight> = Box::new(crate::kindle::VoyageFrontlight::read()?);
+            let frontlight: Box<dyn Frontlight> = Box::new(crate::kindle::KindleFrontlight::read()?);
             let levels = frontlight.levels();
             settings.frontlight = levels.intensity > 0.0;
             if settings.frontlight {
@@ -282,7 +282,7 @@ pub fn run() -> Result<(), Error> {
 
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
     let (mut fb, voyage_rotation) = {
-        let framebuffer = VoyageFramebuffer::open()?;
+        let framebuffer = VoyageFramebuffer::open(plato_core::device::kindle::current()?)?;
         let rotation = framebuffer.rotation_handle();
         (Box::new(framebuffer) as Box<dyn Framebuffer>, rotation)
     };
@@ -323,7 +323,7 @@ pub fn run() -> Result<(), Error> {
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
     let (raw_sender, touch_screen) = (
         None::<Sender<plato_core::input::InputEvent>>,
-        gesture_events(plato_core::input::voyage::events(voyage_buttons.clone(), voyage_rotation, !stock_power)?),
+        gesture_events(plato_core::input::voyage::events(plato_core::device::kindle::current()?, voyage_buttons.clone(), voyage_rotation, !stock_power)?),
     );
     #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
     let (raw_sender, touch_screen) = {
