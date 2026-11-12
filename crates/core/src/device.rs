@@ -5,6 +5,7 @@ use crate::input::TouchProto;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Model {
+    KindleVoyage,
     LibraColour,
     ClaraColour,
     ClaraBW,
@@ -44,6 +45,7 @@ pub enum Orientation {
 impl fmt::Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            Model::KindleVoyage  => write!(f, "Kindle Voyage"),
             Model::LibraColour   => write!(f, "Libra Colour"),
             Model::ClaraColour   => write!(f, "Clara Colour"),
             Model::ClaraBW       => write!(f, "Clara BW"),
@@ -94,6 +96,12 @@ pub enum FrontlightKind {
 impl Device {
     pub fn new(product: &str, model_number: &str) -> Device {
         match product {
+            "kindle-voyage" => Device {
+                model: Model::KindleVoyage,
+                proto: TouchProto::MultiC,
+                dims: (1072, 1448),
+                dpi: 300,
+            },
             "kraken" => Device {
                 model: Model::Glo,
                 proto: TouchProto::Single,
@@ -280,7 +288,7 @@ impl Device {
 
     pub fn has_page_turn_buttons(&self) -> bool {
         matches!(self.model,
-                 Model::Forma | Model::Forma32GB | Model::LibraH2O |
+                 Model::KindleVoyage | Model::Forma | Model::Forma32GB | Model::LibraH2O |
                  Model::Sage | Model::Libra2 | Model::LibraColour)
     }
 
@@ -311,6 +319,7 @@ impl Device {
 
     pub fn mark(&self) -> u8 {
         match self.model {
+            Model::KindleVoyage => 0,
             Model::LibraColour => 13,
             Model::ClaraBW |
             Model::ClaraColour => 12,
@@ -428,7 +437,11 @@ impl Device {
 
 lazy_static! {
     pub static ref CURRENT_DEVICE: Device = {
-        let product = env::var("PRODUCT").unwrap_or_default();
+        let product = if cfg!(all(target_arch = "arm", target_env = "musl")) {
+            "kindle-voyage".to_string()
+        } else {
+            env::var("PRODUCT").unwrap_or_default()
+        };
         let model_number = env::var("MODEL_NUMBER").unwrap_or_default();
 
         Device::new(&product, &model_number)

@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "name": "Plato Rendering Test",
+      "items": [
+        {
+          "name": "Render sample PDF and EPUB",
+          "action": "sh ./bin/run.sh",
+          "exitmenu": false,
+          "status": false,
+          "internal": "status Rendering fixtures. A report will be saved in plato-diagnostics"
+        }
+      ]
+    }
+  ]
+}

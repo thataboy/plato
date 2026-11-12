@@ -17,6 +17,9 @@ use crate::unit::mm_to_px;
 pub use self::preset::{LightPreset, guess_frontlight};
 
 pub const SETTINGS_PATH: &str = "Settings.toml";
+#[cfg(all(target_arch = "arm", target_env = "musl"))]
+pub const DEFAULT_FONT_PATH: &str = "fonts";
+#[cfg(not(all(target_arch = "arm", target_env = "musl")))]
 pub const DEFAULT_FONT_PATH: &str = "/mnt/onboard/fonts";
 pub const INTERNAL_CARD_ROOT: &str = "/mnt/onboard";
 pub const EXTERNAL_CARD_ROOT: &str = "/mnt/sd";
@@ -598,6 +601,13 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             selected_library: 0,
+            #[cfg(all(target_arch = "arm", target_env = "musl"))]
+            libraries: vec![LibrarySettings {
+                name: "Voyage test books".into(),
+                path: PathBuf::from("books"),
+                ..Default::default()
+            }],
+            #[cfg(not(all(target_arch = "arm", target_env = "musl")))]
             libraries: vec![
                 LibrarySettings {
                     name: "On Board".to_string(),

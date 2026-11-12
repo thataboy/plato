@@ -1,13 +1,14 @@
 # Rendering handoff
 
-Kobo work is on `master` in `/Users/luu/dev/plato`. Voyage work is on
-`codex/voyage-page-profiling` in `/Users/luu/dev/plato-kindle-voyage`.
-See `doc/KINDLE_VOYAGE_PORT.md` in the Voyage worktree for the port history,
-device setup, and build details. The line-height override is preserved on
-`codex/voyage-line-height-override`. The stash named “Voyage display
-experiments through 0.5.4” preserves that checkpoint.
+The combined Kobo/Voyage integration is on `codex/kindle-integration`.
+It merges master `9c5ef62` with `codex/voyage-page-profiling` at `c50e327`.
+Master remains the Libra 2 baseline until the combined build passes device
+smoke testing. See `doc/KINDLE_VOYAGE_PORT.md` for the Voyage history,
+device setup, and build details. The original Kindle branches, the
+`codex/voyage-line-height-override` branch, and the stash named “Voyage
+display experiments through 0.5.4” remain separate checkpoints.
 
-Both branches have a compile-time `page-profiling` feature, disabled by
+Both platforms use one shared profiler with a compile-time `page-profiling` feature, disabled by
 default. Add `--features page-profiling` to the existing Cargo build for
 the `plato` package. A default build omits profiling timestamps, trace
 events, logs, and diagnostic display waits. Kobo traces append to
@@ -39,3 +40,34 @@ The handoff builds use the default feature set. Voyage package version is
 `cargo build --offline --locked --release --target=arm-unknown-linux-gnueabihf -p plato`.
 The active device binaries live at `.adds/plato/plato` on Kobo and
 `extensions/plato-voyage/bin/plato` on Kindle.
+
+## Integration validation
+
+The merge retains master's Libra 2 launcher and Kobo framebuffer unchanged.
+The EPUB anchor cache and gesture implementation also match master. Shared
+profiling uses `tap_profile` and `ProfileTap`; platform labels remain Kobo
+and Voyage. Voyage retains its framebuffer submission fences and diagnostic
+page-completion waits. Default builds keep profiling disabled.
+
+Before advancing master, test the combined default build on Libra 2:
+open EPUB/PDF, turn pages in light and dark modes, drag/select, trigger a
+protected full refresh, sleep/wake, cancel USB, enter USB and eject, and
+quit/relaunch. Verify saved position, frontlight, and 8-bit startup behavior.
+Voyage smoke testing remains desirable; existing device evidence predates
+the integration. Compile checks alone do not establish hardware behavior.
+
+Future Kindle device profiles and Paperwhite backends belong in a separate
+follow-up branch, after integration. This merge supports only the existing
+Voyage configuration and does not introduce broader Kindle compatibility.
+
+Automated integration checks (2026-11-12): Kobo release builds with profiling
+both disabled and enabled passed; desktop workspace checks with both feature
+configurations passed. Static Kindle reader releases with profiling disabled and enabled passed;
+the default rendering-smoke binary also built successfully. Kindle diagnostic fixtures, shell syntax checks,
+and two shared-profiler lifecycle/thread-isolation tests passed. The Kindle
+reader ZIP passed integrity checks and contains no user settings or metadata.
+The Kobo runtime dependencies match the installed Libra 2 binary.
+
+Integration artifacts are staged under
+`/Users/luu/dev/plato/target/kindle-integration/`. Device installation and
+physical smoke testing are separate from the automated checks above.

@@ -532,7 +532,7 @@ impl Reader {
         #[cfg(feature = "page-profiling")]
         let _profile = crate::tap_profile::stage("reader pixmap lookup");
         #[cfg(feature = "page-profiling")]
-        eprintln!("Kobo profile pixmap location={location} cached={}", self.cache.contains_key(&location));
+        eprintln!("{} pixmap location={location} cached={}", crate::tap_profile::LABEL, self.cache.contains_key(&location));
         if self.cache.contains_key(&location) {
             return;
         }

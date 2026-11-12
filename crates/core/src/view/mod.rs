@@ -198,7 +198,9 @@ pub fn render(view: &dyn View, wait: bool, ids: &FxHashMap<Id, Vec<Rectangle>>, 
             if wait {
                 updating.retain(|update| {
                     let overlaps = render_rect.overlaps(&update.rect);
-                    if overlaps && !update.has_completed() {
+                    // Voyage draws into a shadow buffer and fences mapped-memory writes in update().
+                    if overlaps && !update.has_completed()
+                        && !cfg!(all(target_arch = "arm", target_env = "musl")) {
                         fb.wait(update.token)
                           .map_err(|e| eprintln!("render {}, {}: {:#}",
                                                  update.token, update.rect, e))
@@ -270,18 +272,27 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
             }
         }
 
+        #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+        let drawing = Instant::now();
         #[cfg(feature = "page-profiling")]
-        let drawing = crate::tap_profile::stage("view drawing");
+        let profile = crate::tap_profile::stage("view drawing");
         render(view, wait, &ids, &mut rects, &mut bgs,
                context.fb.as_mut(), &mut context.fonts, updating);
         #[cfg(feature = "page-profiling")]
-        drop(drawing);
+        drop(profile);
+        #[cfg(all(target_arch = "arm", target_env = "musl", feature = "page-profiling"))]
+        eprintln!("Voyage drawing: mode={mode:?} regions={} draw_ms={:.2}",
+                  rects.len(), drawing.elapsed().as_secs_f64() * 1000.0);
 
         for rect in rects {
             let normal_update = if mode == UpdateMode::Full
                                    && context.fb.inverted()
                                    && context.settings.frontlight
                                    && context.settings.suppress_screen_flash {
+                if let Err(error) = context.fb.wait_for_pending_updates() {
+                    eprintln!("Can't prepare protected full refresh: {error:#}.");
+                    continue;
+                }
                 context.set_frontlight(false);
                 false
             } else {
@@ -327,7 +338,7 @@ pub fn process_render_queue(view: &dyn View, rq: &mut RenderQueue, context: &mut
 #[inline]
 pub fn wait_for_all(updating: &mut Vec<UpdateData>, context: &mut Context) {
     for update in updating.drain(..) {
-        if update.has_completed() {
+        if update.has_completed() && !cfg!(all(target_arch = "arm", target_env = "musl")) {
             continue;
         }
         context.fb.wait(update.token)
@@ -414,6 +425,7 @@ pub enum Event {
     Suspend,
     Share,
     PrepareShare,
+    VoyageConnectUsb { reopen: bool },
     Validate,
     Cancel,
     Reseed,

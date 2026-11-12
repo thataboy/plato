@@ -37,6 +37,11 @@ pub trait Frontlight {
     fn set_intensity(&mut self, value: f32);
     fn set_warmth(&mut self, value: f32);
     fn levels(&self) -> LightLevels;
+
+    fn restore(&mut self) {
+        let levels = self.levels();
+        self.set_intensity(levels.intensity);
+    }
 }
 
 impl Frontlight for LightLevels {

@@ -1,3 +1,5 @@
+#[cfg(all(target_arch = "arm", target_env = "musl"))]
+pub mod voyage;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::slice;
@@ -211,6 +213,11 @@ pub enum DeviceEvent {
     CoverOff,
     NetUp,
     UserActivity,
+    VoyageSleep,
+    VoyageWake,
+    VoyageWakeSettled(u32),
+    VoyageMonitorLost,
+    VoyageWifi { enabled: bool, online: bool },
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
