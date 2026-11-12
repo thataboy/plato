@@ -1,9 +1,9 @@
 # Rendering handoff
 
-The combined Kobo/Voyage integration is on `codex/kindle-integration`.
-It merges master `9c5ef62` with `codex/voyage-page-profiling` at `c50e327`.
-Master remains the Libra 2 baseline until the combined build passes device
-smoke testing. See `doc/KINDLE_VOYAGE_PORT.md` for the Voyage history,
+Kobo and Voyage now share `master`. Integration merge `313835b` combines
+Kobo master `9c5ef62` with `codex/voyage-page-profiling` at `c50e327`.
+The combined default build passed the user’s Libra 2 smoke tests on
+2026-11-12, including Wi-Fi and rotation, with no reported regression. See `doc/KINDLE_VOYAGE_PORT.md` for the Voyage history,
 device setup, and build details. The original Kindle branches, the
 `codex/voyage-line-height-override` branch, and the stash named “Voyage
 display experiments through 0.5.4” remain separate checkpoints.
@@ -49,10 +49,11 @@ profiling uses `tap_profile` and `ProfileTap`; platform labels remain Kobo
 and Voyage. Voyage retains its framebuffer submission fences and diagnostic
 page-completion waits. Default builds keep profiling disabled.
 
-Before advancing master, test the combined default build on Libra 2:
-open EPUB/PDF, turn pages in light and dark modes, drag/select, trigger a
-protected full refresh, sleep/wake, cancel USB, enter USB and eject, and
-quit/relaunch. Verify saved position, frontlight, and 8-bit startup behavior.
+The user confirmed all requested Libra 2 checks passed: light/dark page
+turns, dragging, frontlight, sleep/wake, USB cancellation and connection,
+restart after eject, and saved position after quit/relaunch. Wi-Fi and
+rotation also passed with no reported regression. The tested default binary
+has SHA-256 `8258c587f604e82d1c65090629f0c86d447c41fdf0f605e27faed691229974c1`.
 Voyage smoke testing remains desirable; existing device evidence predates
 the integration. Compile checks alone do not establish hardware behavior.
 
@@ -69,5 +70,6 @@ reader ZIP passed integrity checks and contains no user settings or metadata.
 The Kobo runtime dependencies match the installed Libra 2 binary.
 
 Integration artifacts are staged under
-`/Users/luu/dev/plato/target/kindle-integration/`. Device installation and
-physical smoke testing are separate from the automated checks above.
+`/Users/luu/dev/plato/target/kindle-integration/`. The installed Libra 2 binary was checksum-verified before device testing.
+The pre-integration device binary and the previously untracked port planning
+document are preserved in that artifact directory.

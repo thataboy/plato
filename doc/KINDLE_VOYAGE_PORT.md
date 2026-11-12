@@ -478,3 +478,9 @@ backends and launchers, consolidating the overlapping profiling code into
 Voyage's diagnostic completion waits are preserved. The separate line-height
 experiment is not included. See `doc/RENDERING_HANDOFF.md` for the integration
 validation gate; the earlier branch instructions above describe port history.
+
+
+The integration passed the user’s Libra 2 smoke tests on 2026-11-12,
+including Wi-Fi and rotation, with no reported regression, clearing the
+master integration gate. Voyage has successful combined-source builds but
+has not had a fresh hardware smoke test after this merge.
