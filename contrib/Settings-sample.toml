@@ -26,6 +26,8 @@ auto-power-off = 3.0
 # Formats used for the clock and the clock's pop-up menu.
 # The available specifiers are described at:
 # https://docs.rs/chrono/latest/chrono/format/strftime/index.html
+# Open the last unfinished book at its saved position on launch.
+resume-reading = true
 time-format = "%H:%M"
 date-format = "%A, %B %-d, %Y"
 # Appends the tapped external URLs to this file.

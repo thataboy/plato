@@ -73,3 +73,15 @@ Integration artifacts are staged under
 `/Users/luu/dev/plato/target/kindle-integration/`. The installed Libra 2 binary was checksum-verified before device testing.
 The pre-integration device binary and the previously untracked port planning
 document are preserved in that artifact directory.
+
+## Device updates
+
+Before replacing an installed binary on Kobo or Kindle, save the previous
+binary on that device under a unique backup name and verify the backup.
+Stage and checksum the replacement before switching it into place. If the
+Kindle launcher changes, back it up and update it alongside the binary.
+Preserve the device's settings, books, and reading state.
+
+Both readers default to `resume-reading = true` in `Settings.toml`. A
+relaunch reopens the last unfinished book at its saved position when it is
+available. Set `resume-reading = false` to start at the library.

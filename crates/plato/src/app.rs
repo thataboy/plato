@@ -29,7 +29,7 @@ use plato_core::input::{usb_events, display_rotate_event, button_scheme_event};
 use plato_core::input::{raw_events, device_events};
 use plato_core::gesture::{GestureEvent, gesture_events};
 use plato_core::helpers::{load_toml, save_toml};
-use plato_core::settings::{ButtonScheme, Settings, SETTINGS_PATH, RotationLock, IntermKind};
+use plato_core::settings::{LastBook, ButtonScheme, Settings, SETTINGS_PATH, RotationLock, IntermKind};
 use plato_core::frontlight::{Frontlight, StandardFrontlight, NaturalFrontlight, PremixedFrontlight};
 use plato_core::lightsensor::{LightSensor, KoboLightSensor};
 use plato_core::battery::Battery;
@@ -123,6 +123,31 @@ fn build_context(fb: Box<dyn Framebuffer>, stock_power: bool) -> Result<Context,
 
     let library_settings = &settings.libraries[settings.selected_library];
     let library = Library::new(&library_settings.path, library_settings.mode)?;
+
+    let library = if let Some((index, last)) = settings.last_book.as_ref()
+        .filter(|_| settings.resume_reading)
+        .and_then(|last| settings.libraries.iter()
+            .position(|lib| lib.path == last.library)
+            .filter(|&index| index != settings.selected_library)
+            .map(|index| (index, last)))
+    {
+        let target = &settings.libraries[index];
+        // A removable library may be unavailable. Keep the selected library
+        // unless the previous book is still present and can be resumed.
+        if target.path.is_dir() {
+            match Library::new(&target.path, target.mode) {
+                Ok(previous) if previous.resume_book(&last.path).is_some() => {
+                    settings.selected_library = index;
+                    previous
+                }
+                _ => library,
+            }
+        } else {
+            library
+        }
+    } else {
+        library
+    };
 
     let fonts = Fonts::load().context("can't load fonts")?;
 
@@ -269,7 +294,7 @@ fn ask_voyage_usb(view: &mut dyn View, rq: &mut RenderQueue, context: &mut Conte
 #[derive(PartialEq)]
 enum ExitStatus {
     Quit,
-    VoyageUsbReconnect,
+    VoyageUsb { reenter: bool },
     Restart,
     Share,
     Reboot,
@@ -460,6 +485,18 @@ pub fn run() -> Result<(), Error> {
     schedule_task(TaskId::CheckBattery, Event::CheckBattery,
                   BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
     tx.send(Event::WakeUp).ok();
+    if context.settings.resume_reading {
+        let book = match &context.settings.last_book {
+            Some(last) if last.library == context.library.home => {
+                context.library.resume_book(&last.path)
+            }
+            Some(_) => None,
+            None => context.library.latest_unfinished_book(),
+        };
+        if let Some(info) = book {
+            tx.send(Event::Open(Box::new(info))).ok();
+        }
+    }
     if usb_result == "failed" {
         tx.send(Event::Notify("Could not start USB sharing. See info.log.".to_string())).ok();
     }
@@ -624,9 +661,7 @@ pub fn run() -> Result<(), Error> {
                             tx.send(Event::Notify("Connect the Kindle to your computer first.".into())).ok();
                             continue;
                         }
-                        if reopen {
-                            exit_status = ExitStatus::VoyageUsbReconnect;
-                        }
+                        exit_status = ExitStatus::VoyageUsb { reenter: reopen };
                         eprintln!("Voyage USB handoff confirmed.");
                     }
                     // Reader handles Back by persisting its reading position.
@@ -1005,6 +1040,10 @@ pub fn run() -> Result<(), Error> {
                 }
                 let path = info.file.path.clone();
                 if let Some(r) = Reader::new(context.fb.rect(), *info, &tx, &mut context) {
+                    context.settings.last_book = Some(LastBook {
+                        library: context.library.home.clone(),
+                        path: path.clone(),
+                    });
                     let mut next_view = Box::new(r) as Box<dyn View>;
                     transfer_notifications(view.as_mut(), next_view.as_mut(), &mut rq, &mut context);
                     history.push(HistoryItem {
@@ -1236,21 +1275,19 @@ pub fn run() -> Result<(), Error> {
             Event::Select(EntryId::ConnectUsb) if VOYAGE => {
                 ask_voyage_usb(view.as_mut(), &mut rq, &mut context, true);
             },
-            Event::Select(EntryId::Restart) if !VOYAGE => {
-                // Save readers even when another application is on top of
-                // them. Restart must persist their current reading position.
+            Event::Select(EntryId::Restart | EntryId::Quit) if !VOYAGE => {
+                // Save the current position even if another view covers the reader.
                 view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);
                 for item in &mut history {
                     item.view.handle_event(&evt, &tx, &mut VecDeque::new(), &mut RenderQueue::new(), &mut context);
                 }
-                exit_status = ExitStatus::Restart;
+                if matches!(evt, Event::Select(EntryId::Restart)) {
+                    exit_status = ExitStatus::Restart;
+                }
                 break;
             },
             Event::Select(EntryId::Reboot) => {
                 exit_status = ExitStatus::Reboot;
-                break;
-            },
-            Event::Select(EntryId::Quit) => {
                 break;
             },
             Event::MightSuspend if context.settings.auto_suspend > 0.0 => {
@@ -1306,10 +1343,11 @@ pub fn run() -> Result<(), Error> {
     save_toml(&context.settings, path).context("can't save settings")?;
 
     match exit_status {
-        ExitStatus::VoyageUsbReconnect => {
+        ExitStatus::VoyageUsb { reenter } => {
             let path = env::var_os("PLATO_VOYAGE_USB_REQUEST")
                 .context("Voyage launcher cannot request USB storage")?;
-            File::create(path).context("requesting stock USB storage")?;
+            std::fs::write(path, if reenter { "reenter" } else { "connect" })
+                .context("requesting stock USB storage")?;
         },
         ExitStatus::Share => {
             File::create("/tmp/plato_usb_share").context("can't request USB sharing")?;

@@ -123,6 +123,35 @@ impl Library {
         })
     }
 
+    /// Get the current metadata for a previously opened book.
+    pub fn resume_book(&self, path: &Path) -> Option<Info> {
+        use std::path::Component;
+        if !path.components().all(|part| matches!(part, Component::Normal(_)))
+            || !self.home.join(path).is_file()
+        {
+            return None;
+        }
+
+        let info = match self.mode {
+            LibraryMode::Database => self.paths.get(path)
+                .and_then(|fp| self.db.get(fp)).cloned(),
+            LibraryMode::Filesystem => {
+                let folder = self.home.join(path.parent()?);
+                self.list(folder, None, false).0.into_iter().find(|info| info.file.path == path)
+            }
+        }?;
+        info.reader.as_ref().filter(|reader| !reader.finished)?;
+        Some(info)
+    }
+
+    /// Existing settings have no explicit last book. Use recorded reading history once.
+    pub fn latest_unfinished_book(&self) -> Option<Info> {
+        self.list(&self.home, Some(&BookQuery::default()), false).0.into_iter()
+            .filter(|info| info.reader.as_ref().is_some_and(|reader| !reader.finished))
+            .filter(|info| self.home.join(&info.file.path).is_file())
+            .max_by(crate::metadata::sort_opened)
+    }
+
     pub fn list<P: AsRef<Path>>(&self, prefix: P, query: Option<&BookQuery>, skip_files: bool) -> (Vec<Info>, BTreeSet<PathBuf>) {
         let mut dirs = BTreeSet::new();
         let mut files = Vec::new();

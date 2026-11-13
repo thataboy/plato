@@ -102,8 +102,17 @@ impl Index<IntermKind> for Intermissions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastBook {
+    pub library: PathBuf,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Settings {
+    pub resume_reading: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_book: Option<LastBook>,
     pub selected_library: usize,
     pub keyboard_layout: String,
     pub frontlight: bool,
@@ -600,6 +609,8 @@ impl Default for BatterySettings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            resume_reading: true,
+            last_book: None,
             selected_library: 0,
             #[cfg(all(target_arch = "arm", target_env = "musl"))]
             libraries: vec![LibrarySettings {

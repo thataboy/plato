@@ -1,21 +1,93 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
 set -eu
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$HERE/.."
-export PLATO_VOYAGE_SESSION=1
-PLATO_VOYAGE_POWER=${1:-stock}
-case "$PLATO_VOYAGE_POWER" in stock|bounded) ;; *) exit 2 ;; esac
-export PLATO_VOYAGE_POWER
-OUT=${PLATO_DIAG_OUT:-/mnt/us/plato-diagnostics}
-mkdir -p "$OUT"
 umask 077
 LOCK=/var/tmp/plato-voyage-reader.lock
-if ! mkdir "$LOCK" 2>/dev/null; then
-    echo 'A Plato Voyage session is already running.' >&2
-    exit 1
+
+# Execute from internal storage so no launcher descriptor pins /mnt/us.
+if [ "$0" != "$LOCK/launcher" ]; then
+    HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    mode=${1:-stock}
+    case "$mode" in stock|bounded) ;; *) exit 2 ;; esac
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        echo 'A Plato Voyage session is already running.'
+        exit 1
+    fi
+    if ! cp "$HERE/start.sh" "$LOCK/launcher"; then
+        rm -f "$LOCK/launcher"
+        rmdir "$LOCK"
+        exit 1
+    fi
+    cd /
+    exec /bin/sh "$LOCK/launcher" "$HERE" "$mode"
 fi
+
+HERE=$1
+PLATO_VOYAGE_POWER=$2
+export PLATO_VOYAGE_POWER
+export PLATO_VOYAGE_SESSION=1
 export PLATO_VOYAGE_USB_REQUEST="$LOCK/connect-usb"
+
+mounted() {
+    awk -v path="$1" '$2 == path { found = 1 } END { exit !found }' /proc/mounts
+}
+
+storage_ready() {
+    mounted /mnt/us && { [ "$BASE_MOUNT" = 0 ] || mounted /mnt/base-us; }
+}
+
+# Some firmware keeps the public mount visible while removing the backing
+# mount. A populated mass-storage LUN also means stock still owns the volume.
+storage_exported() {
+    for lun in /sys/devices/platform/*/gadget/lun*/file \
+               /sys/class/android_usb/android0/f_mass_storage/lun*/file; do
+        [ -r "$lun" ] || continue
+        if read -r backing < "$lun" && [ -n "$backing" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+release_lock() {
+    rm -f "$LOCK/launcher"
+    rmdir "$LOCK"
+}
+
+if [ "${3:-}" = wait-usb ]; then
+    BASE_MOUNT=$4
+    trap 'release_lock' EXIT
+    trap 'exit 1' HUP INT TERM
+    # Require evidence of export before accepting a subsequent mount. This
+    # prevents restarting during the interval before stock unmounts storage.
+    attempts=0
+    while storage_ready && ! storage_exported; do
+        [ "$attempts" -lt 30 ] || exit 0
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    while ! storage_ready || storage_exported; do
+        sleep 1
+    done
+    # Let stock finish restoring the UI and wait for the active power state.
+    sleep 2
+    attempts=0
+    until storage_ready && ! storage_exported &&
+        [ "$(timeout 2 lipc-get-prop com.lab126.powerd state 2>/dev/null)" = active ]; do
+        [ "$attempts" -lt 30 ] || exit 0
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    trap - EXIT HUP INT TERM
+    exec /bin/sh "$LOCK/launcher" "$HERE" "$PLATO_VOYAGE_POWER"
+fi
+
+trap 'release_lock' EXIT
+cd "$HERE/.."
+OUT=${PLATO_DIAG_OUT:-/mnt/us/plato-diagnostics}
+mkdir -p "$OUT"
+BASE_MOUNT=0
+if mounted /mnt/base-us; then BASE_MOUNT=1; fi
 REPORT="$OUT/reader-$(date -u '+%Y%m%dT%H%M%SZ')-$$.txt"
 PART="$REPORT.partial"
 exec > "$PART" 2>&1
@@ -82,13 +154,12 @@ cleanup() {
             result=1
         fi
     fi
-    usb_reconnect=0
+    usb_request=
     if [ -f "$PLATO_VOYAGE_USB_REQUEST" ]; then
-        usb_reconnect=1
-        echo 'Manual stock USB reconnect requested.'
+        usb_request=$(cat "$PLATO_VOYAGE_USB_REQUEST")
+        echo "Stock USB handoff requested: $usb_request"
     fi
     rm -f "$LOCK/screen" "$LOCK/prevent" "$LOCK/state" "$PLATO_VOYAGE_USB_REQUEST" || result=1
-    rmdir "$LOCK" || result=1
     if [ -n "$VOLUMD" ]; then
         if ! run_for 8 sync; then
             echo 'Sync did not complete before handing storage back to stock.'
@@ -104,18 +175,26 @@ cleanup() {
     if [ -n "$VOLUMD" ]; then
         kill -CONT "$VOLUMD" || result=1
     fi
-    if [ "$usb_reconnect" = 1 ] && [ "$result" = 0 ] && [ -n "$VOLUMD" ]; then
+    if [ "$usb_request" = reenter ] && [ "$result" = 0 ] && [ -n "$VOLUMD" ]; then
         # Ask stock to re-enter USB storage after a host eject. All
         # reader files and report descriptors are already closed.
         for path in /sys/bus/platform/drivers/max77696-uic/*/vbvolt; do
             [ -r "$path" ] || continue
             if read -r vbus < "$path" && [ "$vbus" = 0 ]; then
-                exit 0
+                usb_request=
             fi
             break
         done
-        run_for 4 lipc-send-event com.lab126.hal usbPlugIn &&
-            run_for 4 lipc-send-event com.lab126.hal usbConfigured || result=1
+        if [ "$usb_request" = reenter ]; then
+            run_for 4 lipc-send-event com.lab126.hal usbPlugIn &&
+                run_for 4 lipc-send-event com.lab126.hal usbConfigured || result=1
+        fi
+    fi
+    if [ "$result" = 0 ] && [ -n "$VOLUMD" ] &&
+        { [ "$usb_request" = connect ] || [ "$usb_request" = reenter ]; }; then
+        /bin/sh "$LOCK/launcher" "$HERE" "$PLATO_VOYAGE_POWER" wait-usb "$BASE_MOUNT" </dev/null &
+    else
+        release_lock
     fi
     exit "$result"
 }
@@ -134,6 +213,22 @@ active_pid() {
 echo "Plato Voyage portrait reader alpha. Power mode: $PLATO_VOYAGE_POWER."
 # Validate hardware identity and firmware before pausing any stock service.
 run_for 10 "$HERE/plato" --check-device
+
+# Kindle firmware can supply either a TZif file or a POSIX timezone string.
+# Set it before launching the reader so every local-time display uses it.
+for tz_file in /var/local/system/tz /etc/localtime; do
+    [ -s "$tz_file" ] || continue
+    if [ "$(head -c 4 "$tz_file")" = TZif ]; then
+        TZ=":$tz_file"
+    else
+        zone=$(cat "$tz_file")
+        [ -n "$zone" ] || continue
+        TZ=$zone
+    fi
+    export TZ
+    break
+done
+echo "Timezone source: ${TZ:-system default}. Stock date: $(date +%Y-%m-%dT%H:%M:%S%z)"
 
 awesome=$(active_pid awesome) || { echo 'Could not identify an active Kindle window manager.'; exit 1; }
 volumd=$(active_pid volumd) || { echo 'Could not identify the active USB storage service.'; exit 1; }
