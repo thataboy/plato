@@ -11,6 +11,13 @@ pub struct WikiPage {
     pub extract: String,
 }
 
+// Wikimedia requires an identifying User-Agent with a contact URL.
+fn wiki_client() -> Result<Client, reqwest::Error> {
+    Client::builder()
+        .user_agent(concat!("Plato/", env!("CARGO_PKG_VERSION"), " (https://github.com/thataboy/plato)"))
+        .build()
+}
+
 fn wiki_url(lang: &str) -> String {
     format!("https://{}.wikipedia.org/w/api.php", lang)
 }
@@ -24,7 +31,7 @@ pub fn search(query: &str, lang: &str) -> Result<Vec<WikiPage>, Error> {
         ("srsearch", query),
     ];
     let url = wiki_url(lang);
-    let client = Client::new();
+    let client = wiki_client()?;
 
     let response = client.get(&url)
                          .query(&params)
@@ -104,7 +111,7 @@ pub fn fetch(pageid: &str, lang: &str) -> Result<String, Error> {
         ("pageids", pageid),
     ];
     let url = wiki_url(lang);
-    let client = Client::new();
+    let client = wiki_client()?;
 
     let response = client.get(&url)
                          .query(&params)
