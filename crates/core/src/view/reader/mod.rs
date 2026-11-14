@@ -3508,7 +3508,7 @@ impl Reader {
         let x = self.rect.min.x as i32 + margin;
         let y = self.rect.max.y as i32 - y_margin;
         let clock_width = font.x_heights.0 as i32 * self.time_format.chars().count() as i32;
-        let time = Local::now();
+        let time = super::wall_clock::now();
         let plan = font.plan(
             time.format(&self.time_format).to_string(),
             Some(clock_width + margin),

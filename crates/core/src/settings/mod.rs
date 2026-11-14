@@ -111,6 +111,7 @@ pub struct LastBook {
 #[serde(default, rename_all = "kebab-case")]
 pub struct Settings {
     pub resume_reading: bool,
+    pub resume_in_book: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_book: Option<LastBook>,
     pub selected_library: usize,
@@ -610,6 +611,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             resume_reading: true,
+            resume_in_book: false,
             last_book: None,
             selected_library: 0,
             #[cfg(all(target_arch = "arm", target_env = "musl"))]

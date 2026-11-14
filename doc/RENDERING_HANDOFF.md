@@ -83,5 +83,6 @@ Kindle launcher changes, back it up and update it alongside the binary.
 Preserve the device's settings, books, and reading state.
 
 Both readers default to `resume-reading = true` in `Settings.toml`. A
-relaunch reopens the last unfinished book at its saved position when it is
-available. Set `resume-reading = false` to start at the library.
+relaunch resumes the book at its saved position if it was open at exit and
+is still available. The library stays open if it was the last view. Set
+`resume-reading = false` to always start at the library.

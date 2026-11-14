@@ -9,6 +9,7 @@
 //! be written to the main event channel and will be sent to every leaf in one of the next loop
 //! iterations.
 
+mod wall_clock;
 pub mod common;
 pub mod filler;
 pub mod image;

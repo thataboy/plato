@@ -26,7 +26,7 @@ auto-power-off = 3.0
 # Formats used for the clock and the clock's pop-up menu.
 # The available specifiers are described at:
 # https://docs.rs/chrono/latest/chrono/format/strftime/index.html
-# Open the last unfinished book at its saved position on launch.
+# Reopen the book at its saved position if Plato closed while reading.
 resume-reading = true
 time-format = "%H:%M"
 date-format = "%A, %B %-d, %Y"

@@ -1,4 +1,4 @@
-use chrono::{Local, DateTime};
+use chrono::{DateTime, FixedOffset};
 use crate::device::CURRENT_DEVICE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
 use super::{View, ViewId, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData};
@@ -13,12 +13,12 @@ pub struct Clock {
     rect: Rectangle,
     children: Vec<Box<dyn View>>,
     format: String,
-    time: DateTime<Local>,
+    time: DateTime<FixedOffset>,
 }
 
 impl Clock {
     pub fn new(rect: &mut Rectangle, context: &mut Context) -> Clock {
-        let time = Local::now();
+        let time = super::wall_clock::now();
         let format = context.settings.time_format.clone();
         let font = font_from_style(&mut context.fonts, &NORMAL_STYLE, CURRENT_DEVICE.dpi);
         let width = font.plan(&time.format(&format).to_string(), None, None).width + font.em() as i32;
@@ -33,7 +33,7 @@ impl Clock {
     }
 
     pub fn update(&mut self, rq: &mut RenderQueue) {
-        self.time = Local::now();
+        self.time = super::wall_clock::now();
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
     }
 }

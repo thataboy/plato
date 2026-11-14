@@ -125,7 +125,7 @@ fn build_context(fb: Box<dyn Framebuffer>, stock_power: bool) -> Result<Context,
     let library = Library::new(&library_settings.path, library_settings.mode)?;
 
     let library = if let Some((index, last)) = settings.last_book.as_ref()
-        .filter(|_| settings.resume_reading)
+        .filter(|_| settings.resume_reading && settings.resume_in_book)
         .and_then(|last| settings.libraries.iter()
             .position(|lib| lib.path == last.library)
             .filter(|&index| index != settings.selected_library)
@@ -469,11 +469,31 @@ pub fn run() -> Result<(), Error> {
 
     let mut tasks: Vec<Task> = Vec::new();
     let mut history: Vec<HistoryItem> = Vec::new();
-    let mut rq = RenderQueue::new();
-    let mut view: Box<dyn View> = Box::new(Home::new(context.fb.rect(), &tx,
-                                                     &mut rq, &mut context)?);
+    let startup_book = if context.settings.resume_reading && context.settings.resume_in_book {
+        context.settings.last_book.as_ref()
+            .filter(|last| last.library == context.library.home)
+            .and_then(|last| context.library.resume_book(&last.path))
+    } else {
+        None
+    };
+    context.settings.resume_in_book = false;
 
+    let mut rq = RenderQueue::new();
     let mut updating = Vec::new();
+    if startup_book.is_some() {
+        let mut splash = plato_core::view::filler::Filler::new(context.fb.rect(), plato_core::color::WHITE);
+        splash.children_mut().push(Box::new(Notification::new(
+            "Resume reading...".to_string(), &tx, &mut rq, &mut context,
+        )));
+        process_render_queue(&splash, &mut rq, &mut context, &mut updating);
+        wait_for_all(&mut updating, &mut context);
+    }
+    let mut view: Box<dyn View> = Box::new(Home::new(context.fb.rect(), &tx, &mut rq, &mut context)?);
+    let mut resuming = startup_book.is_some();
+    if resuming {
+        // Keep the library as the Back destination without drawing it on startup.
+        rq.clear();
+    }
 
     println!("\n\n{} is running on {}.", APP_NAME,
                                             CURRENT_DEVICE.model);
@@ -485,18 +505,6 @@ pub fn run() -> Result<(), Error> {
     schedule_task(TaskId::CheckBattery, Event::CheckBattery,
                   BATTERY_REFRESH_INTERVAL, &tx, &mut tasks);
     tx.send(Event::WakeUp).ok();
-    if context.settings.resume_reading {
-        let book = match &context.settings.last_book {
-            Some(last) if last.library == context.library.home => {
-                context.library.resume_book(&last.path)
-            }
-            Some(_) => None,
-            None => context.library.latest_unfinished_book(),
-        };
-        if let Some(info) = book {
-            tx.send(Event::Open(Box::new(info))).ok();
-        }
-    }
     if usb_result == "failed" {
         tx.send(Event::Notify("Could not start USB sharing. See info.log.".to_string())).ok();
     }
@@ -507,7 +515,7 @@ pub fn run() -> Result<(), Error> {
     let mut last_stock_activity: Option<Instant> = None;
     #[cfg(all(target_arch = "arm", target_env = "musl"))]
     let mut stock_suspend_baseline = None;
-    let mut next_event = None;
+    let mut next_event = startup_book.map(|book| Event::Open(Box::new(book)));
     while let Some(mut evt) = next_event.take().or_else(|| rx.recv().ok()) {
         #[cfg(feature = "page-profiling")]
         let _tap = if let Event::ProfileTap(point, released) = evt {
@@ -1021,6 +1029,7 @@ pub fn run() -> Result<(), Error> {
                 view.handle_event(&Event::ToggleFrontlight, &tx, &mut bus, &mut rq, &mut context);
             },
             Event::Open(info) => {
+                let resume = std::mem::take(&mut resuming);
                 let rotation = context.display.rotation;
                 let dithered = context.fb.dithered();
                 if let Some(reader_info) = info.reader.as_ref() {
@@ -1040,6 +1049,7 @@ pub fn run() -> Result<(), Error> {
                 }
                 let path = info.file.path.clone();
                 if let Some(r) = Reader::new(context.fb.rect(), *info, &tx, &mut context) {
+                    context.settings.resume_in_book = true;
                     context.settings.last_book = Some(LastBook {
                         library: context.library.home.clone(),
                         path: path.clone(),
@@ -1062,6 +1072,9 @@ pub fn run() -> Result<(), Error> {
                         }
                     }
                     context.fb.set_dithered(dithered);
+                    if resume {
+                        rq.add(RenderData::new(view.id(), *view.rect(), UpdateMode::Full));
+                    }
                     handle_event(view.as_mut(), &Event::Invalid(path), &tx, &mut bus, &mut rq, &mut context);
                 }
             },
@@ -1137,6 +1150,9 @@ pub fn run() -> Result<(), Error> {
             Event::Back => {
                 if let Some(item) = history.pop() {
                     view = item.view;
+                    if view.is::<Home>() {
+                        context.settings.resume_in_book = false;
+                    }
                     if item.monochrome != context.fb.monochrome() {
                         context.fb.set_monochrome(item.monochrome);
                     }
