@@ -3,18 +3,33 @@
 set -eu
 umask 077
 LOCK=/var/tmp/plato-voyage-reader.lock
+USB_PENDING=/var/tmp/plato-voyage-usb-pending
 
 # Execute from internal storage so no launcher descriptor pins /mnt/us.
-if [ "$0" != "$LOCK/launcher" ]; then
+if [ "$0" != "$LOCK/launcher" ] && [ "${3:-}" != wait-usb ]; then
     HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
     mode=${1:-stock}
     case "$mode" in stock|bounded) ;; *) exit 2 ;; esac
     if ! mkdir "$LOCK" 2>/dev/null; then
-        echo 'A Plato Voyage session is already running.'
-        exit 1
+        # A previous USB worker may have been killed by KUAL. An active
+        # session always has a live owner. Leave recent locks alone while
+        # the owner file is being written.
+        owner=$(cat "$LOCK/owner" 2>/dev/null || :)
+        case "$owner" in
+            ''|*[!0-9]*)
+                stale=$(find "$LOCK" -maxdepth 0 -mmin +1 -print 2>/dev/null || :)
+                [ -n "$stale" ] || exit 1
+                ;;
+            *) if kill -0 "$owner" 2>/dev/null; then exit 1; fi ;;
+        esac
+        rm -f "$LOCK/launcher" "$LOCK/owner"
+        rmdir "$LOCK" 2>/dev/null || exit 1
+        mkdir "$LOCK" || exit 1
     fi
+    echo "$$" > "$LOCK/owner"
+    rm -f "$USB_PENDING"
     if ! cp "$HERE/start.sh" "$LOCK/launcher"; then
-        rm -f "$LOCK/launcher"
+        rm -f "$LOCK/launcher" "$LOCK/owner"
         rmdir "$LOCK"
         exit 1
     fi
@@ -50,23 +65,28 @@ storage_exported() {
 }
 
 release_lock() {
-    rm -f "$LOCK/launcher"
+    rm -f "$LOCK/launcher" "$LOCK/owner"
     rmdir "$LOCK"
 }
 
 if [ "${3:-}" = wait-usb ]; then
     BASE_MOUNT=$4
-    trap 'release_lock' EXIT
-    trap 'exit 1' HUP INT TERM
+    wait_dir=${0%/*}
+    trap 'rm -f "$wait_dir/launcher"; rmdir "$wait_dir"' EXIT
+    trap 'exit 1' INT TERM
+    still_pending() {
+        [ "$(cat "$USB_PENDING" 2>/dev/null)" = "$wait_dir" ]
+    }
     # Require evidence of export before accepting a subsequent mount. This
     # prevents restarting during the interval before stock unmounts storage.
     attempts=0
     while storage_ready && ! storage_exported; do
-        [ "$attempts" -lt 30 ] || exit 0
+        still_pending && [ "$attempts" -lt 30 ] || exit 0
         attempts=$((attempts + 1))
         sleep 1
     done
     while ! storage_ready || storage_exported; do
+        still_pending || exit 0
         sleep 1
     done
     # Let stock finish restoring the UI and wait for the active power state.
@@ -74,11 +94,26 @@ if [ "${3:-}" = wait-usb ]; then
     attempts=0
     until storage_ready && ! storage_exported &&
         [ "$(timeout 2 lipc-get-prop com.lab126.powerd state 2>/dev/null)" = active ]; do
-        [ "$attempts" -lt 30 ] || exit 0
+        still_pending && [ "$attempts" -lt 30 ] || exit 0
         attempts=$((attempts + 1))
         sleep 1
     done
-    trap - EXIT HUP INT TERM
+    still_pending || exit 0
+    mkdir "$LOCK" 2>/dev/null || exit 0
+    # The same lock arbitrates manual and automatic launches. Recheck the
+    # marker in case a manual session started and finished during the wait.
+    if ! still_pending; then
+        rmdir "$LOCK"
+        exit 0
+    fi
+    echo "$$" > "$LOCK/owner"
+    if ! mv "$wait_dir/launcher" "$LOCK/launcher"; then
+        release_lock
+        exit 1
+    fi
+    rm -f "$USB_PENDING"
+    rmdir "$wait_dir"
+    trap - EXIT INT TERM
     exec /bin/sh "$LOCK/launcher" "$HERE" "$PLATO_VOYAGE_POWER"
 fi
 
@@ -190,11 +225,27 @@ cleanup() {
                 run_for 4 lipc-send-event com.lab126.hal usbConfigured || result=1
         fi
     fi
+    wait_dir=
     if [ "$result" = 0 ] && [ -n "$VOLUMD" ] &&
         { [ "$usb_request" = connect ] || [ "$usb_request" = reenter ]; }; then
-        /bin/sh "$LOCK/launcher" "$HERE" "$PLATO_VOYAGE_POWER" wait-usb "$BASE_MOUNT" </dev/null &
-    else
-        release_lock
+        wait_dir=$(mktemp -d /var/tmp/plato-voyage-usb.XXXXXX) || wait_dir=
+        if [ -n "$wait_dir" ]; then
+            if cp "$LOCK/launcher" "$wait_dir/launcher" &&
+                printf '%s\n' "$wait_dir" > "$USB_PENDING"; then
+                :
+            else
+                rm -f "$wait_dir/launcher" "$USB_PENDING"
+                rmdir "$wait_dir"
+                wait_dir=
+            fi
+        fi
+    fi
+    release_lock
+    if [ -n "$wait_dir" ]; then
+        (
+            trap '' HUP
+            exec /bin/sh "$wait_dir/launcher" "$HERE" "$PLATO_VOYAGE_POWER" wait-usb "$BASE_MOUNT"
+        ) </dev/null &
     fi
     exit "$result"
 }
