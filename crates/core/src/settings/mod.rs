@@ -110,6 +110,7 @@ pub struct LastBook {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Settings {
+    pub cover_image_gamma: f32,
     pub resume_reading: bool,
     pub resume_in_book: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -610,6 +611,7 @@ impl Default for BatterySettings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            cover_image_gamma: 1.2,
             resume_reading: true,
             resume_in_book: false,
             last_book: None,

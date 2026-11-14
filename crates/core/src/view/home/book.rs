@@ -28,13 +28,15 @@ pub struct Book {
     index: usize,
     first_column: FirstColumn,
     cover_view: bool,
+    cover_image_gamma: f32,
     preview_path: Option<PathBuf>,
     active: bool,
 }
 
 impl Book {
     pub fn new(rect: Rectangle, info: Info, index: usize,
-               first_column: FirstColumn, cover_view: bool, preview_path: Option<PathBuf>) -> Book {
+               first_column: FirstColumn, cover_view: bool, preview_path: Option<PathBuf>,
+               cover_image_gamma: f32) -> Book {
         Book {
             id: ID_FEEDER.next(),
             rect,
@@ -43,6 +45,7 @@ impl Book {
             index,
             first_column,
             cover_view,
+            cover_image_gamma,
             preview_path,
             active: false,
         }
@@ -124,7 +127,7 @@ impl View for Book {
             if let Some(preview_path) = self.preview_path.as_ref() {
                 let cover_width = 3 * cover_height / 4;
                 if preview_path.exists() {
-                    if let Some((pixmap, _)) = PdfOpener::new().and_then(|opener| {
+                    if let Some((mut pixmap, _)) = PdfOpener::new().and_then(|opener| {
                         opener.open(preview_path)
                     }).and_then(|mut doc| {
                         doc.dims(0).and_then(|dims| {
@@ -136,6 +139,15 @@ impl View for Book {
                         let dy = (cover_height - pixmap.height as i32) / 2;
                         let pt = pt!(self.rect.min.x + dx,
                                      self.rect.min.y + dy + x_height / 2);
+                        let gamma = self.cover_image_gamma;
+                        if gamma.is_finite() && gamma > 0.0 && gamma != 1.0 {
+                            let tones: [u8; 256] = std::array::from_fn(|value| {
+                                (255.0 * (value as f32 / 255.0).powf(gamma)).round() as u8
+                            });
+                            for sample in pixmap.data_mut() {
+                                *sample = tones[*sample as usize];
+                            }
+                        }
                         fb.draw_pixmap(&pixmap, pt);
                         if fb.inverted() {
                             let rect = pixmap.rect() + pt;

@@ -146,7 +146,8 @@ impl Shelf {
                                      index,
                                      self.first_column,
                                      true,
-                                     preview_path);
+                                     preview_path,
+                                     context.settings.cover_image_gamma);
                 self.children.push(Box::new(book) as Box<dyn View>);
             }
         } else {
@@ -165,7 +166,8 @@ impl Shelf {
                                      index,
                                      self.first_column,
                                      false,
-                                     preview_path);
+                                     preview_path,
+                                     1.0);
                 self.children.push(Box::new(book) as Box<dyn View>);
 
                 y_pos += book_heights[index];

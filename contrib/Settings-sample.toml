@@ -28,6 +28,8 @@ auto-power-off = 3.0
 # https://docs.rs/chrono/latest/chrono/format/strftime/index.html
 # Reopen the book at its saved position if Plato closed while reading.
 resume-reading = true
+# Gamma in cover view. 1.0 is neutral. Higher values darken midtones.
+cover-image-gamma = 1.2
 time-format = "%H:%M"
 date-format = "%A, %B %-d, %Y"
 # Appends the tapped external URLs to this file.
