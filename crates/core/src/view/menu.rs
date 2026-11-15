@@ -39,8 +39,79 @@ pub enum MenuKind {
 //     B         ───
 //     C     BOTTOM MENU
 
+struct MenuColumn {
+    entries: Vec<EntryKind>,
+    count: usize,
+    width: i32,
+}
+
+fn menu_columns(text_widths: &[i32], entries: &[EntryKind], max_rows: usize,
+                max_width: i32, padding: i32, border: i32, divider: i32,
+                more_width: i32) -> Vec<MenuColumn> {
+    let mut columns = Vec::new();
+    let mut start = 0;
+    let mut used_width = 2 * border;
+    while start < entries.len() {
+        // A separator on a column boundary would draw against the border.
+        while entries.get(start).is_some_and(EntryKind::is_separator) {
+            start += 1;
+        }
+        if start == entries.len() {
+            break;
+        }
+        let gap = if columns.is_empty() { 0 } else { divider };
+        let remaining = max_width - used_width - gap;
+        if !columns.is_empty() && remaining < padding + more_width {
+            append_overflow(&mut columns, &entries[start..]);
+            break;
+        }
+
+        let mut count = 0;
+        let mut end = start;
+        let mut text_width = 0;
+        while end < entries.len() {
+            if !entries[end].is_separator() {
+                if count == max_rows {
+                    break;
+                }
+                let next_width = text_width.max(text_widths[end]);
+                if !columns.is_empty() && padding + next_width > remaining {
+                    break;
+                }
+                count += 1;
+                text_width = next_width;
+            }
+            end += 1;
+        }
+
+        if count == 0 {
+            append_overflow(&mut columns, &entries[start..]);
+            break;
+        }
+        let mut column_entries = entries[start..end].to_vec();
+        while column_entries.last().is_some_and(EntryKind::is_separator) {
+            column_entries.pop();
+        }
+        let width = (padding + text_width.max(more_width)).min(remaining);
+        columns.push(MenuColumn { entries: column_entries, count, width });
+        used_width += gap + width;
+        start = end;
+    }
+    columns
+}
+
+fn append_overflow(columns: &mut [MenuColumn], remaining: &[EntryKind]) {
+    let last = columns.last_mut().unwrap();
+    let mut overflow = vec![last.entries.pop().unwrap()];
+    overflow.extend_from_slice(remaining);
+    while last.entries.last().is_some_and(EntryKind::is_separator) {
+        last.entries.pop();
+    }
+    last.entries.push(EntryKind::More(overflow));
+}
+
 impl Menu {
-    pub fn new(target: Rectangle, view_id: ViewId, kind: MenuKind, mut entries: Vec<EntryKind>, context: &mut Context) -> Menu {
+    pub fn new(target: Rectangle, view_id: ViewId, kind: MenuKind, entries: Vec<EntryKind>, context: &mut Context) -> Menu {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -89,41 +160,45 @@ impl Menu {
             2 * border_thickness
         };
 
-        let max_entries = 1 + ((usable_space - border_space) / entry_height) as usize;
-        let total_entries = entries.iter().filter(|e| !e.is_separator()).count();
+        let rows_available = ((usable_space - border_space) / entry_height).max(0) as usize;
+        let total_entries = entries.iter().filter(|entry| !entry.is_separator()).count();
 
-        if total_entries > max_entries {
-            let mut kind_counts = [0, 0];
-            for e in &entries {
-                kind_counts[e.is_separator() as usize] += 1;
-                if kind_counts[0] >= max_entries {
-                    break;
-                }
+        // A More submenu must have room for an item and another More row,
+        // even when the anchor is near the middle of a short display.
+        let max_rows = rows_available.max(2);
+        let menu_height = total_entries.clamp(1, max_rows) as i32 * entry_height + border_space;
+        let y_start = if rows_available < 2 {
+            if dir.is_positive() {
+                y_start.min(height as i32 - menu_height).max(0)
+            } else {
+                y_start.max(menu_height).min(height as i32)
             }
-            let index = kind_counts[0] + kind_counts[1] - 1;
-            let more = entries.drain(index..).collect::<Vec<EntryKind>>();
-            entries.push(EntryKind::More(more));
-        }
-
-        let mut y_pos = y_start + dir * (border_space - border_thickness);
+        } else {
+            y_start
+        };
 
         let max_width = 9 * width as i32 / 10;
-        let free_width = padding + 2 * border_thickness +
-                         entries.iter().map(|e| font.plan(e.text(), None, None).width)
-                                .max().unwrap();
+        let divider = thickness;
+        let more_width = font.plan("More", None, None).width;
+        let widths: Vec<_> = entries.iter()
+            .map(|entry| font.plan(entry.text(), None, None).width)
+            .collect();
+        let columns = menu_columns(&widths, &entries, max_rows, max_width, padding,
+                                border_thickness, divider, more_width);
 
-        let entry_width = free_width.min(max_width);
-
+        let menu_width = (columns.iter().map(|column| column.width).sum::<i32>()
+            + divider * columns.len().saturating_sub(1) as i32 + 2 * border_thickness)
+            .max((padding + more_width + 2 * border_thickness).min(max_width));
         let (mut x_min, mut x_max) = if kind == MenuKind::SubMenu {
             let west_space = target.min.x;
             let east_space = width as i32 - target.max.x;
             if west_space > east_space {
-                (target.min.x - entry_width, target.min.x)
+                (target.min.x - menu_width, target.min.x)
             } else {
-                (target.max.x, target.max.x + entry_width)
+                (target.max.x, target.max.x + menu_width)
             }
         } else {
-            (center.x - small_half(entry_width), center.x + big_half(entry_width))
+            (center.x - small_half(menu_width), center.x + big_half(menu_width))
         };
 
         if x_min < 0 {
@@ -136,76 +211,81 @@ impl Menu {
             x_max = width as i32;
         }
 
-        let entries_count = entries.len();
-
-        for i in 0..entries_count {
-            if entries[i].is_separator() {
-                let rect = rect![x_min + border_thickness, y_pos - small_half(thickness),
-                                 x_max - border_thickness, y_pos + big_half(thickness)];
-                let separator = Filler::new(rect, sep_color);
-                children.push(Box::new(separator) as Box<dyn View>);
-            } else {
-                let (y_min, y_max) = if dir.is_positive() {
-                    (y_pos, y_pos + entry_height)
-                } else {
-                    (y_pos - entry_height, y_pos)
-                };
-
-                let mut rect = rect![x_min + border_thickness, y_min,
-                                     x_max - border_thickness, y_max];
-
-                let anchor = rect;
-
-                if i > 0 && entries[i - 1].is_separator() {
-                    if dir.is_positive() {
-                        rect.min.y += big_half(thickness);
-                    } else {
-                        rect.max.y -= small_half(thickness);
-                    }
-                }
-
-                if i < entries_count - 1 && entries[i + 1].is_separator() {
-                    if dir.is_positive() {
-                        rect.max.y -= small_half(thickness);
-                    } else {
-                        rect.min.y += big_half(thickness);
-                    }
-                }
-
-                let corner_spec = if kind != MenuKind::DropDown && entries_count == 1 {
-                    Some(CornerSpec::Uniform(border_radius))
-                } else if i == entries_count - 1 {
-                    if dir.is_positive() {
-                        Some(CornerSpec::South(border_radius))
-                    } else {
-                        Some(CornerSpec::North(border_radius))
-                    }
-                } else if kind != MenuKind::DropDown && i == 0 {
-                    if dir.is_positive() {
-                        Some(CornerSpec::North(border_radius))
-                    } else {
-                        Some(CornerSpec::South(border_radius))
-                    }
-                } else {
-                    None
-                };
-
-                let menu_entry = MenuEntry::new(rect, entries[i].clone(), anchor, corner_spec);
-
-                children.push(Box::new(menu_entry) as Box<dyn View>);
-
-                y_pos += dir * entry_height;
-            }
-        }
-
         let triangle_space = if kind == MenuKind::Contextual {
             font.x_heights.1 as i32
         } else {
             0
         };
 
-        let total_entries = entries.iter().filter(|e| !e.is_separator()).count();
-        let menu_height = total_entries as i32 * entry_height + border_space;
+        let menu_rows = columns.iter().map(|column| column.count).max().unwrap_or(0);
+        let menu_height = menu_rows as i32 * entry_height + border_space;
+        let mut left = x_min + border_thickness;
+        for (column_index, column) in columns.iter().enumerate() {
+            let right = left + column.width;
+            let mut y_pos = y_start + dir * (border_space - border_thickness);
+            let mut row_number = 0;
+
+            for (i, entry) in column.entries.iter().enumerate() {
+                if entry.is_separator() {
+                    let rect = rect![left, y_pos - small_half(thickness),
+                                     right, y_pos + big_half(thickness)];
+                    children.push(Box::new(Filler::new(rect, sep_color)) as Box<dyn View>);
+                    continue;
+                }
+
+                let (y_min, y_max) = if dir.is_positive() {
+                    (y_pos, y_pos + entry_height)
+                } else {
+                    (y_pos - entry_height, y_pos)
+                };
+                let anchor = rect![left, y_min, right, y_max];
+                let mut rect = anchor;
+
+                if i > 0 && column.entries[i - 1].is_separator() {
+                    if dir.is_positive() {
+                        rect.min.y += big_half(thickness);
+                    } else {
+                        rect.max.y -= small_half(thickness);
+                    }
+                }
+                if column.entries.get(i + 1).is_some_and(EntryKind::is_separator) {
+                    if dir.is_positive() {
+                        rect.max.y -= small_half(thickness);
+                    } else {
+                        rect.min.y += big_half(thickness);
+                    }
+                }
+
+                let near_edge = row_number == 0 && kind != MenuKind::DropDown;
+                let far_edge = row_number + 1 == menu_rows;
+                let (top, bottom) = if dir.is_positive() {
+                    (near_edge, far_edge)
+                } else {
+                    (far_edge, near_edge)
+                };
+                let west = column_index == 0;
+                let east = column_index + 1 == columns.len();
+                let radius = |rounded| if rounded { border_radius } else { 0 };
+                let corner_spec = ((west || east) && (top || bottom)).then(|| CornerSpec::Detailed {
+                    north_west: radius(top && west),
+                    north_east: radius(top && east),
+                    south_east: radius(bottom && east),
+                    south_west: radius(bottom && west),
+                });
+
+                children.push(Box::new(MenuEntry::new(rect, entry.clone(), anchor, corner_spec)) as Box<dyn View>);
+                row_number += 1;
+                y_pos += dir * entry_height;
+            }
+
+            if column_index + 1 < columns.len() {
+                let near = y_start + dir * (border_space - border_thickness);
+                let far = near + dir * menu_rows as i32 * entry_height;
+                let rect = rect![right, near.min(far), right + divider, near.max(far)];
+                children.push(Box::new(Filler::new(rect, sep_color)) as Box<dyn View>);
+            }
+            left = right + divider;
+        }
 
         let (y_min, y_max) = if dir.is_positive() {
             (y_start - triangle_space, y_start + menu_height)
