@@ -461,8 +461,8 @@ the same Kindle cross toolchain and native library paths. Profiling waits
 for the page marker on tapped page turns, which affects rapid paging.
 Tap-to-submit and driver completion are distinct measurements.
 
-The active Voyage work is on `codex/voyage-page-profiling`. The earlier
-stable branch is `codex/kindle-voyage`. The stash named “Voyage display
+The profiling checkpoint was `codex/voyage-page-profiling`. The earlier
+stable checkpoint was `codex/kindle-voyage`. The stash named “Voyage display
 experiments through 0.5.4” and the separate line-height override branch
 preserve the earlier experiments. The current dark partial path requests
 GL16_INV with hardware inversion, and the tested firmware reports GC16.
@@ -471,13 +471,13 @@ Protected full refreshes finish before the frontlight comes back on.
 
 ## Integration with Kobo master
 
-The `codex/kindle-integration` branch combines the 0.5.8 Voyage source at
+Integration commit `313835b` combines the 0.5.8 Voyage source at
 `c50e327` with Kobo master `9c5ef62`. It retains the platform-specific
 backends and launchers, consolidating the overlapping profiling code into
 `tap_profile` with one `ProfileTap` event. Profiling remains optional and
 Voyage's diagnostic completion waits are preserved. The separate line-height
 experiment is not included. See `doc/RENDERING_HANDOFF.md` for the integration
-validation gate; the earlier branch instructions above describe port history.
+validation history. Current Kobo and Voyage builds both use `master`.
 
 
 The integration passed the user’s Libra 2 smoke tests on 2026-11-12,

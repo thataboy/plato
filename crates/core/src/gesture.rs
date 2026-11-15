@@ -14,7 +14,8 @@ use crate::geom::{Point, Vec2, Dir, DiagDir, Axis, nearest_segment_point, elbow}
 pub const TAP_JITTER_MM: f32 = 6.0;
 pub const HOLD_JITTER_MM: f32 = 1.5;
 pub const HOLD_DELAY_SHORT: Duration = Duration::from_millis(666);
-pub const HOLD_DELAY_LONG: Duration = Duration::from_millis(1333);
+const HOLD_FINGER_DELAY_LONG: Duration = Duration::from_millis(2333);
+const HOLD_BUTTON_DELAY_LONG: Duration = Duration::from_millis(1333);
 
 #[derive(Debug, Copy, Clone)]
 pub enum GestureEvent {
@@ -157,7 +158,7 @@ pub fn parse_gesture_events(rx: &Receiver<DeviceEvent>, ty: &Sender<Event>) {
                             return;
                         }
                     }
-                    thread::sleep(HOLD_DELAY_LONG - HOLD_DELAY_SHORT);
+                    thread::sleep(HOLD_FINGER_DELAY_LONG - HOLD_DELAY_SHORT);
                     {
                         let mut ct = contacts.lock().unwrap();
                         let sg = segments.lock().unwrap();
@@ -317,7 +318,7 @@ pub fn parse_gesture_events(rx: &Receiver<DeviceEvent>, ty: &Sender<Event>) {
                             }
                         }
                     }
-                    thread::sleep(HOLD_DELAY_LONG - HOLD_DELAY_SHORT);
+                    thread::sleep(HOLD_BUTTON_DELAY_LONG - HOLD_DELAY_SHORT);
                     {
                         let bt = buttons.lock().unwrap();
                         if let Some(&initial_time) = bt.get(&code) {

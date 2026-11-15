@@ -1,6 +1,6 @@
 # Rendering handoff
 
-Kobo and Voyage now share `master`. Integration merge `313835b` combines
+Build both Kobo and Voyage from `master`. Integration merge `313835b` combines
 Kobo master `9c5ef62` with `codex/voyage-page-profiling` at `c50e327`.
 The combined default build passed the user’s Libra 2 smoke tests on
 2026-11-12, including Wi-Fi and rotation, with no reported regression. See `doc/KINDLE_VOYAGE_PORT.md` for the Voyage history,
@@ -57,9 +57,8 @@ has SHA-256 `8258c587f604e82d1c65090629f0c86d447c41fdf0f605e27faed691229974c1`.
 Voyage smoke testing remains desirable; existing device evidence predates
 the integration. Compile checks alone do not establish hardware behavior.
 
-Future Kindle device profiles and Paperwhite backends belong in a separate
-follow-up branch, after integration. This merge supports only the existing
-Voyage configuration and does not introduce broader Kindle compatibility.
+The Kindle device profile is now on `master` and covers the existing
+Voyage configuration. Paperwhite support still needs its own hardware backend.
 
 Automated integration checks (2026-11-12): Kobo release builds with profiling
 both disabled and enabled passed; desktop workspace checks with both feature
