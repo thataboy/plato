@@ -1010,10 +1010,10 @@ pub fn run() -> Result<(), Error> {
                                                     context.settings.reader.strip_width,
                                                     context.settings.reader.corner_width);
                         match (r1, r2) {
-                            (Region::Corner(DiagDir::SouthWest), Region::Corner(DiagDir::NorthEast)) => {
+                            (Region::Corner(DiagDir::NorthWest), Region::Corner(DiagDir::SouthEast)) => {
                                 rq.add(RenderData::new(view.id(), context.fb.rect(), UpdateMode::Full));
                             },
-                            (Region::Corner(DiagDir::NorthWest), Region::Corner(DiagDir::SouthEast)) => {
+                            (Region::Corner(DiagDir::SouthWest), Region::Corner(DiagDir::NorthEast)) => {
                                 tx.send(Event::Select(EntryId::TakeScreenshot)).ok();
                             },
                             _ => (),
