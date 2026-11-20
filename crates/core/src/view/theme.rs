@@ -17,7 +17,7 @@ use lazy_static::lazy_static;
 const LABEL_SAVE: &str = "Save";
 const WIDGET_OFFSET: usize = 2;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ThemeProp {
     FontFamily = 0,
     FontSize,
@@ -59,6 +59,33 @@ lazy_static! {
     ];
 }
 
+/// Choose fields to save, using presence for an overwrite and effective values for a new theme.
+pub fn initial_selection(theme: Option<&crate::settings::Theme>, reader: Option<&crate::metadata::ReaderInfo>, defaults: &crate::settings::ReaderSettings) -> Vec<ThemeProp> {
+    if let Some(theme) = theme {
+        return THEME_PROPS.iter().filter(|prop| match prop {
+            ThemeProp::FontFamily => theme.font_family.is_some(),
+            ThemeProp::FontSize => theme.font_size.is_some() && !(theme.font_size_relative.unwrap_or(false) || theme.font_size.unwrap_or(0.0) < 0.0),
+            ThemeProp::RelativeFontSize => theme.font_size.is_some() && (theme.font_size_relative.unwrap_or(false) || theme.font_size.unwrap_or(0.0) < 0.0),
+            ThemeProp::FontWeight => theme.font_weight.is_some(),
+            ThemeProp::MarginWidth => theme.margin_width.is_some(),
+            ThemeProp::LineSpacing => theme.line_height.is_some(),
+            ThemeProp::TextAlign => theme.text_align.is_some(),
+            ThemeProp::FrontLight => theme.frontlight.is_some() || theme.frontlight_levels.is_some(),
+            ThemeProp::InvertedMode => theme.inverted.is_some(),
+        }).cloned().collect();
+    }
+    let Some(reader) = reader else { return Vec::new(); };
+    THEME_PROPS.iter().filter(|prop| match prop {
+        ThemeProp::FontFamily => reader.font_family.as_ref().is_some_and(|v| *v != defaults.font_family),
+        ThemeProp::FontSize => reader.font_size.is_some_and(|v| (v - defaults.font_size).abs() > f32::EPSILON),
+        ThemeProp::FontWeight => reader.font_weight.is_some_and(|v| (v - defaults.font_weight).abs() > f32::EPSILON),
+        ThemeProp::MarginWidth => reader.margin_width.is_some_and(|v| v != defaults.margin_width),
+        ThemeProp::LineSpacing => reader.line_height.is_some_and(|v| (v - defaults.line_height).abs() > f32::EPSILON),
+        ThemeProp::TextAlign => reader.text_align.is_some_and(|v| v != defaults.text_align),
+        _ => false,
+    }).cloned().collect()
+}
+
 pub struct ThemeDialog {
     id: Id,
     rect: Rectangle,
@@ -66,7 +93,7 @@ pub struct ThemeDialog {
 }
 
 impl ThemeDialog {
-    pub fn new(has_relative_fs: bool, theme_idx: Option<usize>, context: &mut Context) -> ThemeDialog {
+    pub fn new(has_relative_fs: bool, theme_idx: Option<usize>, selected: &[ThemeProp], context: &mut Context) -> ThemeDialog {
         let id = ID_FEEDER.next();
         let fonts = &mut context.fonts;
         let mut children = Vec::new();
@@ -138,8 +165,8 @@ impl ThemeDialog {
                                                y + toggle_height],
                                           Event::Validate,
                                           label.to_string())
-                            .disabled(idx == ThemeProp::RelativeFontSize as usize && !has_relative_fs)
-                            .toggle(false);
+                            .disabled(idx == ThemeProp::RelativeFontSize as usize && !has_relative_fs && !selected.contains(&THEME_PROPS[idx]))
+                            .toggle(selected.contains(&THEME_PROPS[idx]));
                 children.push(Box::new(toggle) as Box<dyn View>);
                 y += toggle_height + padding / 2;
                 idx += 1;
@@ -159,7 +186,7 @@ impl ThemeDialog {
                                             y + small_height],
                                       evt,
                                       LABEL_SAVE.to_string())
-                            .disabled(true);
+                            .disabled(selected.is_empty());
         children.push(Box::new(button_save) as Box<dyn View>);
 
         ThemeDialog {

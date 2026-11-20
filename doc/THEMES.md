@@ -17,7 +17,7 @@ To create a theme:
 - tap middle of the screen to bring up the menu
 - click the theme icon (to the left of the location seek bar)
 - select `New theme...`
-- select setting(s) you want to include in your theme
+- review the preselected settings and select any others you want to include in your theme
 - click Save
 
 ## Notes
@@ -38,3 +38,5 @@ If you want to have a theme automatically applied whenever you turn *on* (*off*)
 
 
 Font weight saves an absolute stroke adjustment from -3.0 to +3.0 in 0.5 steps. Negative values lighten text; positive values thicken it. Themes without font weight leave the book’s current weight unchanged. Existing manually configured `dismiss = false` themes remain supported, although this option is no longer offered in the save dialog.
+
+When creating a theme, reader settings that differ from the global defaults are preselected. Front light and inverted mode start unselected. Font size starts as an absolute value; relative font size remains available as a manual choice. When overwriting a theme, its existing fields are preselected, including front light or inverted mode when present. The Save button is enabled immediately when any field is selected.

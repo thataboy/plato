@@ -60,3 +60,32 @@ fn book_and_theme_weight_round_trip() {
     let restored: Theme = toml::from_str(&toml::to_string(&theme).unwrap()).unwrap();
     assert_eq!(restored.font_weight, Some(2.5));
 }
+
+#[test]
+fn overwrite_theme_selects_present_fields_even_when_false_or_zero() {
+    use plato_core::settings::{ReaderSettings, Theme};
+    use plato_core::view::theme::{initial_selection, ThemeProp};
+    let theme: Theme = toml::from_str("name = 'Adele'\nfont-family = 'Adele'\nfont-size = 18.365675\nfont-weight = 1.0\ninverted = true").unwrap();
+    assert_eq!(initial_selection(Some(&theme), None, &ReaderSettings::default()), vec![ThemeProp::FontFamily, ThemeProp::FontSize, ThemeProp::FontWeight, ThemeProp::InvertedMode]);
+    let theme: Theme = toml::from_str("name = 'Neutral'\nfont-weight = 0.0\ninverted = false\nfrontlight = false").unwrap();
+    assert_eq!(initial_selection(Some(&theme), None, &ReaderSettings::default()), vec![ThemeProp::FontWeight, ThemeProp::FrontLight, ThemeProp::InvertedMode]);
+    let theme: Theme = toml::from_str("name = 'Relative'\nfont-size = 2.0\nfont-size-relative = true").unwrap();
+    assert_eq!(initial_selection(Some(&theme), None, &ReaderSettings::default()), vec![ThemeProp::RelativeFontSize]);
+}
+
+#[test]
+fn new_theme_selects_only_reader_values_differing_from_defaults() {
+    use plato_core::settings::ReaderSettings;
+    use plato_core::metadata::ReaderInfo;
+    use plato_core::view::theme::{initial_selection, ThemeProp};
+    let defaults = ReaderSettings::default();
+    assert!(initial_selection(None, None, &defaults).is_empty());
+    let mut reader = ReaderInfo::default();
+    reader.font_family = Some(defaults.font_family.clone());
+    reader.font_size = Some(defaults.font_size);
+    reader.font_weight = Some(defaults.font_weight);
+    assert!(initial_selection(None, Some(&reader), &defaults).is_empty());
+    reader.font_size = Some(defaults.font_size + 1.0);
+    reader.font_weight = Some(-0.5);
+    assert_eq!(initial_selection(None, Some(&reader), &defaults), vec![ThemeProp::FontSize, ThemeProp::FontWeight]);
+}

@@ -2375,7 +2375,8 @@ impl Reader {
             let font_size = self.info.reader.as_ref().and_then(|r| r.font_size)
                                 .unwrap_or(context.settings.reader.font_size);
             let has_relative_fs = (font_size - context.settings.reader.font_size).abs() > f32::EPSILON;
-            let thd = ThemeDialog::new(has_relative_fs, idx, context);
+            let selected = crate::view::theme::initial_selection(idx.and_then(|i| context.settings.themes.get(i)), self.info.reader.as_ref(), &context.settings.reader);
+            let thd = ThemeDialog::new(has_relative_fs, idx, &selected, context);
             rq.add(RenderData::new(thd.id(), *thd.rect(), UpdateMode::Gui));
             self.children.push(Box::new(thd) as Box<dyn View>);
         }
