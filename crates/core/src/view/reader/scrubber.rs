@@ -2,7 +2,7 @@ use crate::color::WHITE;
 use crate::device::CURRENT_DEVICE;
 use crate::document::BYTES_PER_PAGE;
 use crate::framebuffer::{Framebuffer, UpdateMode};
-use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, SliderId, THICKNESS_MEDIUM, Align};
+use crate::view::{View, Event, Hub, Bus, Id, ID_FEEDER, RenderQueue, RenderData, SliderId, ViewId, THICKNESS_MEDIUM, Align};
 use crate::view::filler::Filler;
 use crate::view::slider::Slider;
 use crate::view::icon::Icon;
@@ -29,7 +29,7 @@ pub struct Scrubber {
 }
 
 impl Scrubber {
-    pub fn new(rect: Rectangle, current_loc: usize, pages_count: usize, synthetic: bool) -> Scrubber {
+    pub fn new(rect: Rectangle, current_loc: usize, pages_count: usize, synthetic: bool, context: &Context) -> Scrubber {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -42,10 +42,12 @@ impl Scrubber {
         children.push(Box::new(separator) as Box<dyn View>);
 
         let label_width = 3 * side / 2;
-        let label = Label::new(rect![rect.min.x, y,
-                                     rect.min.x + label_width, rect.max.y],
-                               "".to_string(), Align::Center);
-        children.push(Box::new(label) as Box<dyn View>);
+        let left_rect = rect![rect.min.x, y, rect.min.x + label_width, rect.max.y];
+        let event = if synthetic {
+            if context.settings.themes.is_empty() { Event::Show(ViewId::ThemeDialog) }
+            else { Event::ToggleNear(ViewId::ThemeMenu, left_rect) }
+        } else { Event::Show(ViewId::TableOfContents) };
+        children.push(Box::new(Icon::new(if synthetic { "themes" } else { "toc" }, left_rect, event)) as Box<dyn View>);
 
         let current_loc = if synthetic { current_loc } else { current_loc + 1 };
         let (current_page, pcount, min) =
@@ -74,7 +76,7 @@ impl Scrubber {
 
         let back_rect = rect![pt!(rect.max.x - side, y),
                               pt!(rect.max.x, rect.max.y)];
-        let back_icon = Filler::new(back_rect, WHITE);
+        let back_icon = Icon::new("search", back_rect, Event::Show(ViewId::SearchBar));
         children.push(Box::new(back_icon) as Box<dyn View>);
 
         Scrubber {
@@ -90,12 +92,27 @@ impl Scrubber {
         }
     }
 
+    pub fn activate(&mut self, rq: &mut RenderQueue) {
+        if self.child(1).downcast_ref::<Label>().is_none() {
+            let rect = *self.child(1).rect();
+            self.children[1] = Box::new(Label::new(rect, String::new(), Align::Center));
+            let rect = *self.child(3).rect();
+            self.children[3] = Box::new(Filler::new(rect, WHITE));
+            rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
+        }
+    }
+
     pub fn set_value(&mut self, loc: usize, rq: &mut RenderQueue) {
         let page = if self.synthetic {
                        loc as f32 / BYTES_PER_PAGE as f32
                    } else {
                        loc as f32 + 1.0
                    };
+        if self.child(1).downcast_ref::<Label>().is_none() {
+            self.child_mut(2).downcast_mut::<Slider>().unwrap().update(page, rq);
+            self.current_page = page;
+            return;
+        }
         self.update_value(page, rq);
         let slider = self.child_mut(2).downcast_mut::<Slider>().unwrap();
         slider.update(page, rq);

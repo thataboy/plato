@@ -25,7 +25,7 @@ pub struct ToolBar {
 }
 
 impl ToolBar {
-    pub fn new(rect: Rectangle, reflowable: bool, synthetic: bool, reader_info: Option<&ReaderInfo>, context: &Context) -> ToolBar {
+    pub fn new(rect: Rectangle, reflowable: bool, _synthetic: bool, reader_info: Option<&ReaderInfo>, context: &Context) -> ToolBar {
         let id = ID_FEEDER.next();
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
@@ -109,6 +109,11 @@ impl ToolBar {
                                      reader_settings.min_font_size,
                                      reader_settings.max_font_size);
             children.push(Box::new(slider) as Box<dyn View>);
+            let weight = reader_info.and_then(|r| r.font_weight).unwrap_or(reader_settings.font_weight);
+            let weight_rect = rect![rect.max.x - 2 * side, rect.max.y - side, rect.max.x, rect.max.y];
+            children.push(Box::new(LabeledIcon::new("font_weight", weight_rect,
+                Event::Show(ViewId::FontWeightMenu), format!("{:+.1}", weight))
+                .hold(Event::SetDefault(ThemeProp::FontWeight))) as Box<dyn View>);
         } else {
             let remaining_width = rect.width() as i32 - 2 * side;
             let slider_width = remaining_width / 2;
@@ -201,32 +206,9 @@ impl ToolBar {
 
         }
 
-        // End of second row.
-
-        let search_icon = Icon::new("search",
-                                    rect![rect.max.x - 2 * side, rect.max.y - side,
-                                          rect.max.x - side, rect.max.y],
-                                    Event::Show(ViewId::SearchBar));
-        children.push(Box::new(search_icon) as Box<dyn View>);
-
-        let last_rect = rect![rect.max.x - side, rect.max.y - side,
-                              rect.max.x, rect.max.y];
-        if synthetic {
-            let evt = if context.settings.themes
-                                .iter()
-                                // .filter(|x| !x.name.trim_start().starts_with("__"))
-                                .count() > 0 {
-                Event::ToggleNear(ViewId::ThemeMenu, last_rect)
-            } else {
-                Event::Show(ViewId::ThemeDialog)
-            };
-            let theme_icon = Icon::new("themes", last_rect, evt);
-            children.push(Box::new(theme_icon) as Box<dyn View>);
-        } else {
-            let toc_icon = Icon::new("toc",
-                                     last_rect,
-                                     Event::Show(ViewId::TableOfContents));
-            children.push(Box::new(toc_icon) as Box<dyn View>);
+        if !reflowable {
+            children.push(Box::new(Filler::new(rect![rect.max.x - 2 * side, rect.max.y - side, rect.max.x - side, rect.max.y], WHITE)) as Box<dyn View>);
+            children.push(Box::new(Icon::new("toc", rect![rect.max.x - side, rect.max.y - side, rect.max.x, rect.max.y], Event::Show(ViewId::TableOfContents))) as Box<dyn View>);
         }
 
         ToolBar {
@@ -247,6 +229,12 @@ impl ToolBar {
     pub fn update_font_family(&mut self, font_family: String, rq: &mut RenderQueue) {
         if let Some(labeled_icon) = self.children[1].downcast_mut::<LabeledIcon>() {
             labeled_icon.update(&font_family, rq);
+        }
+    }
+
+    pub fn update_font_weight(&mut self, weight: f32, rq: &mut RenderQueue) {
+        if let Some(icon) = self.children[7].downcast_mut::<LabeledIcon>() {
+            icon.update(&format!("{:+.1}", weight), rq);
         }
     }
 
@@ -349,6 +337,7 @@ impl View for ToolBar {
             self.children[index].resize(rect![rect.min.x + 2 * side, rect.max.y - side,
                                               rect.max.x - 2 * side, rect.max.y],
                                         hub, rq, context);
+            self.children[7].resize(rect![rect.max.x - 2 * side, rect.max.y - side, rect.max.x, rect.max.y], hub, rq, context);
         } else {
             let remaining_width = rect.width() as i32 - 2 * side;
             let slider_width = remaining_width / 2;
@@ -420,9 +409,8 @@ impl View for ToolBar {
                                         hub, rq, context);
         }
 
+        if !self.reflowable {
         index += 1;
-
-        // End of second row.
 
         self.children[index].resize(rect![rect.max.x - 2 * side, rect.max.y - side,
                                           rect.max.x - side, rect.max.y],
@@ -432,6 +420,7 @@ impl View for ToolBar {
         self.children[index].resize(rect![rect.max.x - side, rect.max.y - side,
                                          rect.max.x, rect.max.y],
                                     hub, rq, context);
+        }
         self.rect = rect;
     }
 

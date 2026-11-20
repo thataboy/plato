@@ -223,6 +223,8 @@ pub struct ReaderInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text_align: Option<TextAlign>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_height: Option<f32>,
@@ -289,6 +291,7 @@ impl Default for ReaderInfo {
             show_progress_bar: None,
             font_family: None,
             font_size: None,
+            font_weight: None,
             text_align: None,
             line_height: None,
             contrast_exponent: None,

@@ -930,6 +930,10 @@ impl Document for EpubDocument {
         self.cache.clear();
     }
 
+    fn set_font_weight(&mut self, weight: f32) {
+        self.engine.set_font_weight(weight);
+    }
+
     fn set_font_family(&mut self, family_name: &str, search_path: &str) {
         self.engine.set_font_family(family_name, search_path);
         self.cache.clear();

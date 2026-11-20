@@ -21,6 +21,7 @@ const WIDGET_OFFSET: usize = 2;
 pub enum ThemeProp {
     FontFamily = 0,
     FontSize,
+    FontWeight,
     RelativeFontSize,
     MarginWidth,
     // IgnoreDocumentCss,
@@ -28,7 +29,6 @@ pub enum ThemeProp {
     TextAlign,
     FrontLight,
     InvertedMode,
-    KeepMenuOnScreen,
 }
 
 impl fmt::Display for ThemeProp {
@@ -48,6 +48,7 @@ lazy_static! {
     static ref THEME_PROPS: Vec<ThemeProp> = vec![
         ThemeProp::FontFamily,
         ThemeProp::FontSize,
+        ThemeProp::FontWeight,
         ThemeProp::RelativeFontSize,
         ThemeProp::MarginWidth,
         // ThemeProp::IgnoreDocumentCss,
@@ -55,7 +56,6 @@ lazy_static! {
         ThemeProp::TextAlign,
         ThemeProp::FrontLight,
         ThemeProp::InvertedMode,
-        ThemeProp::KeepMenuOnScreen,
     ];
 }
 

@@ -1608,6 +1608,12 @@ impl Font {
     }
 
     pub fn render(&mut self, fb: &mut dyn Framebuffer, color: Color, render_plan: &RenderPlan, origin: Point) {
+        self.render_with_weight(fb, color, render_plan, origin, 0.0);
+    }
+
+    /// Adjust outline thickness in output pixels without changing shaped advances.
+    pub fn render_with_weight(&mut self, fb: &mut dyn Framebuffer, color: Color, render_plan: &RenderPlan, origin: Point, weight: f32) {
+        let strength = (weight * 64.0).round() as FtPos;
         unsafe {
             let mut pos = origin;
             let mut fallback_faces = FxHashMap::default();
@@ -1626,9 +1632,25 @@ impl Font {
                     self.face
                 };
 
-                FT_Load_Glyph(face, glyph.codepoint, FT_LOAD_RENDER | FT_LOAD_NO_HINTING);
+                let flags = if strength == 0 { FT_LOAD_RENDER | FT_LOAD_NO_HINTING } else { FT_LOAD_NO_HINTING };
+                if FT_Load_Glyph(face, glyph.codepoint, flags) != FT_ERR_OK {
+                    pos += glyph.advance;
+                    continue;
+                }
 
                 let glyph_slot = (*face).glyph;
+                if strength != 0 {
+                    if (*glyph_slot).format == FT_GLYPH_FORMAT_OUTLINE {
+                        let outline = &mut (*glyph_slot).outline;
+                        if FT_Outline_EmboldenXY(outline, strength, strength) == FT_ERR_OK {
+                            FT_Outline_Translate(outline, -strength / 2, -strength / 2);
+                        }
+                    }
+                    if FT_Render_Glyph(glyph_slot, FT_RENDER_MODE_NORMAL) != FT_ERR_OK {
+                        pos += glyph.advance;
+                        continue;
+                    }
+                }
                 let top_left = pos + glyph.offset + pt!((*glyph_slot).bitmap_left, -(*glyph_slot).bitmap_top);
                 let bitmap = &(*glyph_slot).bitmap;
 

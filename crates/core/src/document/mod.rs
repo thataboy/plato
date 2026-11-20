@@ -104,6 +104,7 @@ pub trait Document: Send+Sync {
     fn pixmap(&mut self, loc: Location, scale: f32, samples: usize) -> Option<(Pixmap, usize)>;
     fn layout(&mut self, width: u32, height: u32, font_size: f32, dpi: u16);
     fn set_font_family(&mut self, family_name: &str, search_path: &str);
+    fn set_font_weight(&mut self, _weight: f32) {}
     fn set_margin_width(&mut self, width: i32, with_progress_bar: bool);
     fn set_text_align(&mut self, text_align: TextAlign);
     fn set_line_height(&mut self, line_height: f32);

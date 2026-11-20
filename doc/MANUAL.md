@@ -170,7 +170,7 @@ To select text, tap and hold the first or last word of the selection. Wait for t
 
 ## Changing settings and defaults
 
-When you change the margin width / font family / font size / line height / text align setting via the user interface, the change only applies to the book you are reading; the default setting is unchanged. This is by design and it's usually the behavior you want. To save a setting as the default, tap and hold on the corresponding icon. The new default will apply to subsequent books you open.
+When you change the margin width / font family / font size / font weight / line height / text align setting via the user interface, the change only applies to the book you are reading; the default setting is unchanged. This is by design and it's usually the behavior you want. To save a setting as the default, tap and hold on the corresponding icon. The new default will apply to subsequent books you open.
 
 Conversely, you can set all the above settings to use default values via the book menu.
 
@@ -299,3 +299,11 @@ Tap and hold inside an input field to bring up the input history menu.
 	S '   Ś       O :   Ö       ' 1   ′       t m   ™
 	C '   Ć       U :   Ü       ' 2   ″       
 	N '   Ń       Y :   Ÿ       [ [   ⟦       
+
+### Font weight
+
+For EPUB and HTML books, tap the stacked WT weight icon and signed value to the right of the font size slider. Choose -3.0 through +3.0 in 0.5 steps; negative lightens, positive boldens, and zero restores the font’s original strokes. Changes are saved per book and preserve text layout. Hold the weight icon to make the current value the global default. Resetting reader settings restores that default. Font weight can also be saved in themes.
+
+The `[reader]` `font-weight` setting supplies the default for books without an override. Its units are pixels at 300 DPI, scaled for the device. Both manual configuration and the UI support -3.0 to +3.0.
+
+Themes is centered in the space left of the location seek bar; Search is on its right. Starting a seek hides both icons and shows the seek offset and return control instead. Reopening the reader bars restores the icons.

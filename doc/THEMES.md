@@ -4,18 +4,18 @@ Themes provide a quick way to save and re-apply several reader settings at once.
 
 - `Font family`
 - `Font size`
+- `Font weight`
 - `Relative font size`
 - `Margin width`
 - `Line spacing`
 - `Text align`
 - `Front light`
 - `Inverted mode`
-- `Keep menu on screen`
 
 To create a theme:
 
 - tap middle of the screen to bring up the menu
-- click the theme icon (next to the search icon in the tool bar)
+- click the theme icon (to the left of the location seek bar)
 - select `New theme...`
 - select setting(s) you want to include in your theme
 - click Save
@@ -25,7 +25,6 @@ To create a theme:
 - You can rename or delete an existing theme by tapping the 3 dot menu next to the theme's name.
 - Creating a new theme with the same name as an existing theme will replace it. Out of the box, there are some example themes which you are free to use, overwrite, or delete.
 - `Relative font size` saves the difference between the current font size and the default font size (the option is disabled if both are the same). This is useful for having a theme which increases or decreases the font size by some amount (e.g., +/- 3pt) rather than setting a fixed size (e.g., 15pt).
-- Select `Keep menu on screen` if you do **not** want the app to dismiss on screen menus after applying the theme. This is useful in cases where you know you'll want to make other selections.
 
 ## Special theme names
 
@@ -37,3 +36,5 @@ There are two special theme names:
 If you want to have a theme automatically applied whenever you turn *on* (*off*) inverted mode, name it
 `__inverted` (`__uninverted`). Other special theme names beginning with two undescores `__` may be added later.
 
+
+Font weight saves an absolute stroke adjustment from -3.0 to +3.0 in 0.5 steps. Negative values lighten text; positive values thicken it. Themes without font weight leave the book’s current weight unchanged. Existing manually configured `dismiss = false` themes remain supported, although this option is no longer offered in the save dialog.

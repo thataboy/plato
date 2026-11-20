@@ -292,6 +292,7 @@ impl Reader {
             let (width, height) = context.display.dims;
 
             doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
+            doc.set_font_weight(info.reader.as_ref().and_then(|r| r.font_weight).unwrap_or(settings.reader.font_weight));
 
             let synthetic = doc.has_synthetic_page_numbers();
             let reflowable = doc.is_reflowable();
@@ -468,6 +469,7 @@ impl Reader {
         let (width, height) = context.display.dims;
         let font_size = context.settings.reader.font_size;
         doc.layout(width, height, font_size, CURRENT_DEVICE.dpi);
+        doc.set_font_weight(context.settings.reader.font_weight);
         let margin_width = context.settings.reader.margin_width.max(4);
         doc.set_margin_width(margin_width, false);
         let pages_count = doc.pages_count();
@@ -1108,6 +1110,7 @@ impl Reader {
                                     .and_then(|r| r.font_size)
                                     .unwrap_or(settings.reader.font_size);
                 tool_bar.update_font_size_slider(font_size, rq);
+                tool_bar.update_font_weight(self.info.reader.as_ref().and_then(|r| r.font_weight).unwrap_or(settings.reader.font_weight), rq);
                 let text_align = self.info.reader.as_ref()
                                     .and_then(|r| r.text_align)
                                     .unwrap_or(settings.reader.text_align);
@@ -1735,7 +1738,7 @@ impl Reader {
                                                   y_top,
                                                   self.rect.max.x,
                                                   y_top + med_height as i32],
-                                             self.current_page, self.pages_count, self.synthetic);
+                                             self.current_page, self.pages_count, self.synthetic, context);
                 self.children.insert(index, Box::new(scrubber) as Box<dyn View>);
                 index += 1;
 
@@ -2081,6 +2084,7 @@ impl Reader {
                 if self.info.reader.as_ref().map_or(false,
                                                     |r| r.font_family.is_some()
                                                     || r.font_size.is_some()
+                                                    || r.font_weight.is_some()
                                                     || r.margin_width.is_some()
                                                     || r.text_align.is_some()
                                                     || r.line_height.is_some()) {
@@ -2220,6 +2224,30 @@ impl Reader {
             let text_align_menu = Menu::new(rect, ViewId::TextAlignMenu, MenuKind::Contextual, entries, context);
             rq.add(RenderData::new(text_align_menu.id(), *text_align_menu.rect(), UpdateMode::Gui));
             self.children.push(Box::new(text_align_menu) as Box<dyn View>);
+        }
+    }
+
+    fn toggle_font_weight_menu(&mut self, rect: Rectangle, rq: &mut RenderQueue, context: &mut Context) {
+        if let Some(index) = locate_by_id(self, ViewId::FontWeightMenu) {
+            rq.add(RenderData::expose(*self.child(index).rect(), UpdateMode::Gui));
+            self.children.remove(index);
+        } else {
+            let weight = self.info.reader.as_ref().and_then(|r| r.font_weight).unwrap_or(context.settings.reader.font_weight);
+            let entries = (-6..=6).map(|v| EntryKind::RadioButton(format!("{:+.1}", v as f32 / 2.0), EntryId::SetFontWeight(v), (weight - v as f32 / 2.0).abs() < 0.01)).collect();
+            let menu = Menu::new(rect, ViewId::FontWeightMenu, MenuKind::DropDown, entries, context);
+            rq.add(RenderData::new(menu.id(), *menu.rect(), UpdateMode::Gui));
+            self.children.push(Box::new(menu));
+        }
+    }
+
+    fn set_font_weight(&mut self, weight: f32, redraw: bool, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
+        let weight = (weight.clamp(-3.0, 3.0) * 2.0).round() / 2.0;
+        if let Some(ref mut r) = self.info.reader { r.font_weight = Some(weight); }
+        self.doc.lock().unwrap().set_font_weight(weight);
+        self.cache.clear();
+        if redraw {
+            self.update(Some(UpdateMode::Partial), hub, rq, context);
+            self.update_tool_bar(rq, context);
         }
     }
 
@@ -2423,8 +2451,8 @@ impl Reader {
                 // if thd.is_on(ThemeProp::IgnoreDocumentCss) {
                 //     theme.ignore_document_css = Some(true);
                 // }
-                if thd.is_on(ThemeProp::KeepMenuOnScreen) {
-                    theme.dismiss = Some(false);
+                if thd.is_on(ThemeProp::FontWeight) {
+                    theme.font_weight = Some(self.info.reader.as_ref().and_then(|r| r.font_weight).unwrap_or(context.settings.reader.font_weight));
                 }
                 self.theme = Some(ThemeStash::New(theme));
             }
@@ -2627,6 +2655,12 @@ impl Reader {
                         changed = true;
                     }
                 },
+                ThemeProp::FontWeight => if let Some(weight) = r.font_weight {
+                    if defaults.font_weight != weight {
+                        defaults.font_weight = weight;
+                        changed = true;
+                    }
+                },
                 ThemeProp::FontSize => if let Some(font_size) = r.font_size {
                     if defaults.font_size != font_size {
                         defaults.font_size = font_size;
@@ -2667,6 +2701,7 @@ impl Reader {
         let defaults = &context.settings.reader.clone();
         if let Some(ref r) = r {
             if self.reflowable {
+                self.set_font_weight(defaults.font_weight, false, hub, rq, context);
                 if let Some(ref font) = r.font_family {
                     if &defaults.font_family[..] != font {
                         self.set_font_family(&defaults.font_family[..], false, hub, rq, context);
@@ -2697,6 +2732,7 @@ impl Reader {
         if let Some(ref mut r) = self.info.reader {
             r.font_family = None;
             r.font_size = None;
+            r.font_weight = None;
             r.margin_width = None;
             r.text_align = None;
             r.line_height = None;
@@ -2752,6 +2788,10 @@ impl Reader {
                 let max_margin_width = context.settings.reader.max_margin_width;
                 let mw = v.clamp(min_margin_width, max_margin_width);
                 self.set_margin_width(mw, false, hub, rq, context);
+                dirty = true;
+            }
+            if let Some(v) = theme.font_weight {
+                self.set_font_weight(v, false, hub, rq, context);
                 dirty = true;
             }
             if let Some(v) = theme.line_height {
@@ -4363,6 +4403,9 @@ impl View for Reader {
                 true
             },
             Event::Slider(SliderId::Scrubber, _page, FingerStatus::Down) => {
+                if let Some(index) = locate::<Scrubber>(self) {
+                    self.children[index].downcast_mut::<Scrubber>().unwrap().activate(rq);
+                }
                 self.remove_tool_bar(rq);
                 true
             },
@@ -4417,6 +4460,10 @@ impl View for Reader {
             },
             Event::ToggleNear(ViewId::MarginWidthMenu, rect) => {
                 self.toggle_margin_width_menu(rect, None, rq, context);
+                true
+            },
+            Event::ToggleNear(ViewId::FontWeightMenu, rect) => {
+                self.toggle_font_weight_menu(rect, rq, context);
                 true
             },
             Event::ToggleNear(ViewId::LineHeightMenu, rect) => {
@@ -4950,6 +4997,10 @@ impl View for Reader {
             },
             Event::Select(EntryId::SetTextAlign(text_align)) => {
                 self.set_text_align(text_align, true, hub, rq, context);
+                true
+            },
+            Event::Select(EntryId::SetFontWeight(v)) => {
+                self.set_font_weight(v as f32 / 2.0, true, hub, rq, context);
                 true
             },
             Event::Select(EntryId::SetFontSize(v)) => {

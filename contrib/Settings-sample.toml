@@ -138,6 +138,10 @@ corner-width = 0.4
 font-path = "/mnt/onboard/fonts"
 # The default serif font.
 font-family = "Libertinus Serif"
+# EPUB/HTML text thickness: negative lightens, positive boldens, zero is original.
+# Pixels at 300 DPI, scaled for the device. Testing range: -3.0 to 3.0 (clamped).
+# Exit Plato before editing Settings.toml, then restart to apply.
+font-weight = 0.0
 # The default, minimum and maximum font sizes, in points.
 font-size = 11.0
 min-font-size = 5.5

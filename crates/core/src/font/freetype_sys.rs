@@ -8,6 +8,8 @@ pub const FT_LOAD_DEFAULT: i32 = 0;
 pub const FT_LOAD_NO_SCALE: i32 = 0x1 << 0;
 pub const FT_LOAD_NO_HINTING: i32 = 0x1 << 1;
 pub const FT_LOAD_RENDER: i32 = 0x1 << 2;
+pub const FT_RENDER_MODE_NORMAL: libc::c_uint = 0;
+pub const FT_GLYPH_FORMAT_OUTLINE: FtGlyphFormat = 0x6f75746c;
 
 pub const TT_PLATFORM_MICROSOFT: libc::c_ushort = 3;
 pub const TT_MS_ID_UNICODE_CS: libc::c_ushort = 1;
@@ -45,6 +47,9 @@ extern "C" {
     pub fn FT_Set_Char_Size(face: *mut FtFace, sx: FtF26Dot6, sy: FtF26Dot6, rx: libc::c_uint, ry: libc::c_uint) -> FtError;
     pub fn FT_Set_Pixel_Sizes(face: *mut FtFace, sx: libc::c_uint, sy: libc::c_uint) -> FtError;
     pub fn FT_Load_Glyph(face: *const FtFace, idx: libc::c_uint, flags: i32) -> FtError;
+    pub fn FT_Render_Glyph(slot: *mut FtGlyphSlot, mode: libc::c_uint) -> FtError;
+    pub fn FT_Outline_EmboldenXY(outline: *mut FtOutline, xstrength: FtPos, ystrength: FtPos) -> FtError;
+    pub fn FT_Outline_Translate(outline: *mut FtOutline, xoffset: FtPos, yoffset: FtPos);
     pub fn FT_Load_Char(face: *const FtFace, code: libc::c_ulong, flags: i32) -> FtError;
     pub fn FT_Get_Char_Index(face: *const FtFace, code: libc::c_ulong) -> libc::c_uint;
     pub fn FT_Get_MM_Var(face: *const FtFace, varia: *mut *mut FtMmVar) -> FtError;
@@ -214,13 +219,13 @@ pub struct FtGlyphSlot {
     linear_vert_advance: FtFixed,
     advance: FtVector,
 
-    format: FtGlyphFormat,
+    pub format: FtGlyphFormat,
 
     pub bitmap: FtBitmap,
     pub bitmap_left: libc::c_int,
     pub bitmap_top: libc::c_int,
 
-    outline: FtOutline,
+    pub outline: FtOutline,
 
     num_subglyphs: libc::c_uint,
     subglyphs: *mut libc::c_void,

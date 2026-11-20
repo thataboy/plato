@@ -201,6 +201,8 @@ pub struct Theme {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size_relative: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_align: Option<TextAlign>,
@@ -226,6 +228,7 @@ impl Default for Theme {
             name: "Unnamed".to_string(),
             font_family: None,
             font_size: None,
+            font_weight: None,
             font_size_relative: None,
             text_align: None,
             margin_width: None,
@@ -438,6 +441,8 @@ pub struct ReaderSettings {
     pub font_path: String,
     pub font_family: String,
     pub font_size: f32,
+    /// Signed outline strength in pixels at 300 DPI.
+    pub font_weight: f32,
     pub min_font_size: f32,
     pub max_font_size: f32,
     pub text_align: TextAlign,
@@ -568,6 +573,7 @@ impl Default for ReaderSettings {
             font_path: DEFAULT_FONT_PATH.to_string(),
             font_family: DEFAULT_FONT_FAMILY.to_string(),
             font_size: DEFAULT_FONT_SIZE,
+            font_weight: 0.0,
             min_font_size: DEFAULT_FONT_SIZE / 2.0,
             max_font_size: 3.0 * DEFAULT_FONT_SIZE / 2.0,
             text_align: DEFAULT_TEXT_ALIGN,

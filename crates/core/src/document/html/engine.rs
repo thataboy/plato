@@ -56,6 +56,8 @@ pub struct Engine {
     pub margin: Edge,
     // Font size in points.
     pub font_size: f32,
+    // Signed outline strength in pixels at 300 DPI; independent of layout.
+    font_weight: f32,
     // Text alignment.
     pub text_align: TextAlign,
     // Line height in ems.
@@ -77,6 +79,7 @@ impl Engine {
             stretch_tolerance: STRETCH_TOLERANCE,
             margin,
             font_size: DEFAULT_FONT_SIZE,
+            font_weight: 0.0,
             text_align: DEFAULT_TEXT_ALIGN,
             line_height,
             dims: (DEFAULT_WIDTH, DEFAULT_HEIGHT),
@@ -101,6 +104,10 @@ impl Engine {
 
     pub fn set_margin(&mut self, margin: &Edge) {
         self.margin = *margin;
+    }
+
+    pub fn set_font_weight(&mut self, weight: f32) {
+        self.font_weight = if weight.is_finite() { weight.clamp(-3.0, 3.0) } else { 0.0 };
     }
 
     pub fn set_font_size(&mut self, font_size: f32) {
@@ -2186,7 +2193,8 @@ impl Engine {
                     let position = Point::from(scale_factor * Vec2::from(*position));
                     let plan = plan.scale(scale_factor);
                     font.set_size(font_size, self.dpi);
-                    font.render(&mut fb, *color, &plan, position);
+                    let weight = self.font_weight * self.dpi as f32 / 300.0 * scale_factor;
+                    font.render_with_weight(&mut fb, *color, &plan, position, weight);
                 },
                 DrawCommand::Background(BackgroundCommand { position, rect, color, .. }) => {
                     let min = Point::from(scale_factor * Vec2::from(*position));
