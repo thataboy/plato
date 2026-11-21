@@ -85,3 +85,14 @@ Both readers default to `resume-reading = true` in `Settings.toml`. A
 relaunch resumes the book at its saved position if it was open at exit and
 is still available. The library stays open if it was the last view. Set
 `resume-reading = false` to always start at the library.
+
+## Voyage mixed refresh polarity (2026-11-20)
+
+Reader setting changes can queue a partial page repaint followed by GUI menu
+and toolbar updates. In inverted mode, GL16_INV reads normal-polarity bytes
+while GC16_FAST GUI updates read software-inverted bytes. Voyage now drains
+pending updates before switching the mapped buffer’s byte polarity, including
+before the software fallback for a rejected hardware-inverted refresh. Same
+polarity updates retain the submission fence used for page-turn performance.
+This targets the wrong-polarity rectangles seen after weight, margin, and font
+selection; confirmation on the Voyage panel is still required.

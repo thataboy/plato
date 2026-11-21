@@ -65,6 +65,8 @@ pub struct VoyageFramebuffer {
     rotation: Arc<AtomicI8>,
     serial: u32,
     pending: RefCell<Vec<u32>>,
+    // Polarity of bytes last copied into the shared panel buffer.
+    panel_inverted: bool,
     monochrome: bool,
     inverted: bool,
     dithered: bool,
@@ -112,6 +114,7 @@ impl VoyageFramebuffer {
             rotation: Arc::new(AtomicI8::new(display.rotation)),
             serial: 0,
             pending: RefCell::new(Vec::new()),
+            panel_inverted: false,
             monochrome: false,
             inverted: false,
             dithered: false,
@@ -228,7 +231,9 @@ impl VoyageFramebuffer {
                 return Err(error).context("submitting Voyage refresh");
             }
             if hardware_inversion {
+                self.wait_for_pending_updates()?;
                 self.copy_to_panel(rect, true);
+                self.panel_inverted = true;
                 update.flags = 0;
                 update.hist_bw_waveform = DU;
                 update.hist_gray_waveform = GC16_FAST;
@@ -343,7 +348,13 @@ impl Framebuffer for VoyageFramebuffer {
         let profile = crate::tap_profile::stage("framebuffer fence and copy");
         #[cfg(feature = "page-profiling")]
         let fence = Instant::now();
-        if mode == UpdateMode::Full {
+        let hardware_inversion = mode == UpdateMode::Partial
+            && self.inverted && !self.monochrome && !self.dithered;
+        let panel_inverted = self.inverted && !hardware_inversion;
+        // GL16_INV consumes normal-polarity bytes, while inverted GUI updates
+        // consume software-inverted bytes. Do not let overlapping updates with
+        // different encodings coexist: submission alone is not a completion fence.
+        if mode == UpdateMode::Full || panel_inverted != self.panel_inverted {
             self.wait_for_pending_updates()?;
         } else {
             let pending = self.pending.borrow().clone();
@@ -364,9 +375,8 @@ impl Framebuffer for VoyageFramebuffer {
         #[cfg(feature = "page-profiling")]
         let copy = Instant::now();
         let rect = panel_rect(rect, self.display, self.rotation());
-        let hardware_inversion = mode == UpdateMode::Partial
-            && self.inverted && !self.monochrome && !self.dithered;
-        self.copy_to_panel(&rect, self.inverted && !hardware_inversion);
+        self.copy_to_panel(&rect, panel_inverted);
+        self.panel_inverted = panel_inverted;
         #[cfg(feature = "page-profiling")]
         eprintln!("Voyage framebuffer: fence_ms={fence_ms:.2} copy_ms={:.2}", copy.elapsed().as_secs_f64() * 1000.0);
         #[cfg(feature = "page-profiling")]
