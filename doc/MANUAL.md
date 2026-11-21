@@ -307,3 +307,5 @@ For EPUB and HTML books, tap the stacked WT weight icon and signed value to the 
 The `[reader]` `font-weight` setting supplies the default for books without an override. Its units are pixels at 300 DPI, scaled for the device. Both manual configuration and the UI support -3.0 to +3.0.
 
 Themes is centered in the space left of the location seek bar; Search is on its right. Starting a seek hides both icons and shows the seek offset and return control instead. Reopening the reader bars restores the icons.
+
+Menus use the available space above or below their anchor, with a small screen-edge clearance. Additional columns and a “More” submenu appear only when entries exceed the available height and width.

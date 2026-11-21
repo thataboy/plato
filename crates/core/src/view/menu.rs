@@ -11,7 +11,7 @@ use super::menu_entry::MenuEntry;
 use super::common::locate_by_id;
 use super::{View, Event, Hub, Bus, RenderQueue, RenderData};
 use super::{EntryKind, ViewId, Id, ID_FEEDER, CLOSE_IGNITION_DELAY};
-use super::{MENU_HEIGHT, THICKNESS_MEDIUM, THICKNESS_LARGE, BORDER_RADIUS_MEDIUM};
+use super::{THICKNESS_MEDIUM, THICKNESS_LARGE, BORDER_RADIUS_MEDIUM};
 use crate::context::Context;
 
 pub struct Menu {
@@ -100,6 +100,16 @@ fn menu_columns(text_widths: &[i32], entries: &[EntryKind], max_rows: usize,
     columns
 }
 
+fn available_rows(anchor: i32, dir: i32, screen_height: i32, edge_padding: i32,
+                  border_space: i32, entry_height: i32) -> usize {
+    let space = if dir.is_positive() {
+        screen_height - edge_padding - anchor
+    } else {
+        anchor - edge_padding
+    };
+    ((space - border_space) / entry_height).max(0) as usize
+}
+
 fn append_overflow(columns: &mut [MenuColumn], remaining: &[EntryKind]) {
     let last = columns.last_mut().unwrap();
     let mut overflow = vec![last.entries.pop().unwrap()];
@@ -116,7 +126,6 @@ impl Menu {
         let mut children = Vec::new();
         let dpi = CURRENT_DEVICE.dpi;
         let (width, height) = context.display.dims;
-        let small_height = scale_by_dpi(MENU_HEIGHT, dpi) as i32;
 
         let thickness = scale_by_dpi(THICKNESS_MEDIUM, dpi) as i32;
         let border_thickness = scale_by_dpi(THICKNESS_LARGE, dpi) as i32;
@@ -145,14 +154,9 @@ impl Menu {
             }
         };
 
-        let top_min = small_height + big_half(thickness);
-        let bottom_max = height as i32 - small_height - small_half(thickness);
-
-        let usable_space = if dir.is_positive() {
-            bottom_max - y_start
-        } else {
-            y_start - top_min
-        };
+        // Menus can use the full display, leaving only their rounded-corner
+        // clearance at either edge. Reserving a menu bar here hides usable rows.
+        let edge_padding = border_radius + border_thickness;
 
         let border_space = if kind == MenuKind::DropDown {
             border_thickness
@@ -160,7 +164,7 @@ impl Menu {
             2 * border_thickness
         };
 
-        let rows_available = ((usable_space - border_space) / entry_height).max(0) as usize;
+        let rows_available = available_rows(y_start, dir, height as i32, edge_padding, border_space, entry_height);
         let total_entries = entries.iter().filter(|entry| !entry.is_separator()).count();
 
         // A More submenu must have room for an item and another More row,
@@ -457,5 +461,37 @@ impl View for Menu {
 
     fn view_id(&self) -> Option<ViewId> {
         Some(self.view_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_capacity_uses_space_at_both_screen_edges() {
+        // The reported 1072 x 1448 screenshot: five rows fit below y=745.
+        assert_eq!(available_rows(745, 1, 1448, 8, 4, 120), 5);
+        // Mirror the anchor to check an upward-opening menu near the top.
+        assert_eq!(available_rows(703, -1, 1448, 8, 4, 120), 5);
+        for dir in [-1, 1] {
+            let anchor = if dir > 0 { 836 } else { 612 };
+            assert_eq!(available_rows(anchor, dir, 1448, 8, 4, 120), 5);
+            assert_eq!(available_rows(anchor + dir, dir, 1448, 8, 4, 120), 4);
+        }
+        assert_eq!(available_rows(720, 1, 800, 8, 4, 120), 0);
+        assert_eq!(available_rows(80, -1, 800, 8, 4, 120), 0);
+    }
+
+    #[test]
+    fn extra_row_avoids_more_only_when_entries_fit() {
+        let entries = vec![EntryKind::Command("Item".into(), super::super::EntryId::SaveTheme); 10];
+        let widths = vec![250; entries.len()];
+        let columns = menu_columns(&widths, &entries, 5, 900, 150, 2, 2, 90);
+        assert_eq!(columns.len(), 2);
+        assert!(columns.iter().all(|c| c.count == 5));
+        assert!(!columns.iter().flat_map(|c| &c.entries).any(|e| matches!(e, EntryKind::More(_))));
+        let columns = menu_columns(&widths, &entries, 4, 900, 150, 2, 2, 90);
+        assert!(columns.iter().flat_map(|c| &c.entries).any(|e| matches!(e, EntryKind::More(_))));
     }
 }
