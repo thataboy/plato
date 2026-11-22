@@ -63,4 +63,4 @@ cd mupdf_wrapper
 ./build-kobo.sh
 cd ..
 
-cargo build --release --target=arm-unknown-linux-gnueabihf -p plato
+cargo build --release --target=arm-unknown-linux-gnueabihf -p plato --bin plato

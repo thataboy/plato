@@ -1,7 +1,7 @@
 # Static Kindle build and rendering test
 
 This build targets 32-bit ARMv7 Linux with musl on the Kindle Voyage. It builds
-Plato and a separate rendering test. The KUAL reader integrates the tested
+only the Plato reader by default; the rendering test is an explicit opt-in. The KUAL reader integrates the tested
 Voyage framebuffer, touch/PagePress, stock sleep, Wi-Fi, and USB handoff.
 Support remains limited to the verified Voyage configuration on firmware
 5.10.3; other Kindles require additional backend work.
@@ -13,6 +13,7 @@ Install Rust with the `armv7-unknown-linux-musleabihf` target and provide Zig
 
 ```sh
 ZIG=/absolute/path/to/zig sh tools/kindle-build/build.sh
+PLATO_KINDLE_BIN=plato-render-smoke ZIG=/absolute/path/to/zig sh tools/kindle-build/build.sh
 sh tools/kindle-build/package-smoke.sh
 ```
 

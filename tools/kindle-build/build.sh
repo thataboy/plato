@@ -142,5 +142,5 @@ export CC_armv7_unknown_linux_musleabihf="$cc" AR_armv7_unknown_linux_musleabihf
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=rust-lld
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS='-C target-feature=+crt-static -C relocation-model=static'
 cd "$repo"
-cargo build --locked --profile release-lto --target "$target" -p plato --bins "$@"
+cargo build --locked --profile release-lto --target "$target" -p plato --bin "${PLATO_KINDLE_BIN:-plato}" "$@"
 printf '%s\n' "$CARGO_TARGET_DIR/$target/release-lto"
