@@ -1,3 +1,5 @@
+pub mod search_results;
+use self::search_results::{Hit, SearchResults};
 mod tool_bar;
 mod scrubber;
 mod bottom_bar;
@@ -187,6 +189,10 @@ struct RenderChunk {
 
 #[derive(Debug)]
 struct Search {
+    generation: Id,
+    delivery_ready: Arc<AtomicBool>,
+    hits: Vec<Hit>,
+    list_page: usize,
     query: String,
     highlights: BTreeMap<usize, Vec<Vec<Boundary>>>,
     running: Arc<AtomicBool>,
@@ -197,6 +203,10 @@ struct Search {
 impl Default for Search {
     fn default() -> Self {
         Search {
+            generation: ID_FEEDER.next(),
+            delivery_ready: Arc::new(AtomicBool::new(true)),
+            hits: Vec::new(),
+            list_page: 0,
             query: String::new(),
             highlights: BTreeMap::new(),
             running: Arc::new(AtomicBool::new(true)),
@@ -1135,13 +1145,13 @@ impl Reader {
         if self.search.is_none() {
             return;
         }
-        let (count, current_page, pages_count) = {
+        let (count, current_page, pages_count, completed) = {
             let s = self.search.as_ref().unwrap();
-            (s.results_count, s.current_page, s.highlights.len())
+            (s.results_count, s.current_page, s.highlights.len(), !s.running.load(AtomicOrdering::Relaxed))
         };
         if let Some(index) = locate::<ResultsBar>(self) {
             let results_bar = self.child_mut(index).downcast_mut::<ResultsBar>().unwrap();
-            results_bar.update_results_label(count, rq);
+            results_bar.update_results_label(count, completed, rq);
             results_bar.update_page_label(current_page, pages_count, rq);
             results_bar.update_icons(current_page, pages_count, rq);
         }
@@ -1335,7 +1345,8 @@ impl Reader {
         }
     }
 
-    fn search(&mut self, text: &str, query: Regex, hub: &Hub, rq: &mut RenderQueue) {
+    fn search(&mut self, text: &str, query: Regex, hub: &Hub, rq: &mut RenderQueue, context: &Context) {
+        if let Some(ref old) = self.search { old.running.store(false, AtomicOrdering::Relaxed); }
         let s = Search {
             query: text.to_string(),
             .. Default::default()
@@ -1345,12 +1356,39 @@ impl Reader {
         hub.send(Event::Update(UpdateMode::Gui)).ok();
 
         let hub2 = hub.clone();
+        let path = context.library.home.join(&self.info.file.path);
+        let settings = context.settings.clone();
+        let reader = self.info.reader.clone().unwrap_or_default();
+        let dims = context.display.dims;
+        let font_size = self.font_size;
+        let show_progress = self.progress_bar.enabled;
         let doc2 = Arc::clone(&self.doc);
         let running = Arc::clone(&s.running);
         let search_direction = self.search_direction;
         let pages_count = self.pages_count;
+        let generation = s.generation;
+        let delivery_ready = Arc::clone(&s.delivery_ready);
+        let synthetic = self.synthetic;
 
         thread::spawn(move || {
+            // File searches own their layout engine: scanning must never hold the
+            // document mutex used by interactive navigation and page rendering.
+            let independent = open(&path).map(|mut doc| {
+                let defaults = &settings.reader;
+                doc.layout(dims.0, dims.1, font_size, CURRENT_DEVICE.dpi);
+                doc.set_margin_width(reader.margin_width.unwrap_or(defaults.margin_width), synthetic && show_progress);
+                let family = reader.font_family.as_deref().unwrap_or(&defaults.font_family);
+                if family != DEFAULT_FONT_FAMILY { doc.set_font_family(family, &defaults.font_path); }
+                doc.set_line_height(reader.line_height.unwrap_or(defaults.line_height));
+                doc.set_text_align(reader.text_align.unwrap_or(defaults.text_align));
+                doc.set_hyphen_penalty(defaults.paragraph_breaker.hyphen_penalty);
+                doc.set_stretch_tolerance(defaults.paragraph_breaker.stretch_tolerance);
+                doc.set_ignore_document_css(defaults.ignore_document_css);
+                if let Some(ref css) = reader.extra_css { set_extra_css!(doc, css, &settings); }
+                Arc::new(Mutex::new(doc))
+            });
+            let doc2 = independent.unwrap_or(doc2);
+            let toc = doc2.lock().unwrap().toc().unwrap_or_default();
             let mut results_count = 0;
             let mut loc = match search_direction {
                 LinearDir::Forward => Location::Exact(0),
@@ -1402,7 +1440,16 @@ impl Reader {
                                     match_rects.push(*rect);
                                 }
                                 results_count += 1;
-                                hub2.send(Event::SearchResult(location, match_rects)).ok();
+                                let chapter = doc.chapter(location, &toc).map(|(c, _, _)| c.title.clone()).unwrap_or_else(|| "Book".into());
+                                let before: String = text[..m.start()].chars().rev().take(55).collect::<String>().chars().rev().collect();
+                                let after: String = text[m.end()..].chars().take(70).collect();
+                                let position = if synthetic { format!("p. {:.1}", location as f32 / BYTES_PER_PAGE as f32) } else { format!("p. {}", location+1) };
+                                while !delivery_ready.load(AtomicOrdering::Acquire) && running.load(AtomicOrdering::Relaxed) {
+                                    thread::sleep(std::time::Duration::from_millis(10));
+                                }
+                                if !running.load(AtomicOrdering::Relaxed) { break; }
+                                delivery_ready.store(false, AtomicOrdering::Release);
+                                if hub2.send(Event::SearchHit(generation, Hit { location, chapter, position, before, matched: m.as_str().to_string(), after }, match_rects)).is_err() { break; }
                                 if results_count >= MAX_SEARCH_RESULTS && running.load(AtomicOrdering::Relaxed) {
                                     hub2.send(Event::Notify(format!("Maximum {MAX_SEARCH_RESULTS} results reached. Search stopped."))).ok();
                                     running.store(false, AtomicOrdering::Relaxed);
@@ -1418,10 +1465,13 @@ impl Reader {
                 } else {
                     break;
                 }
+                drop(doc);
+                // Give interactive navigation a chance to acquire the document.
+                thread::sleep(std::time::Duration::from_millis(15));
             }
 
             running.store(false, AtomicOrdering::Relaxed);
-            hub2.send(Event::EndOfSearch).ok();
+            hub2.send(Event::SearchFinished(generation)).ok();
         });
 
         if self.search.is_some() {
@@ -1429,6 +1479,7 @@ impl Reader {
         }
 
         self.search = Some(s);
+        hub.send(Event::ShowSearchResults).ok();
     }
 
     /// stop search or exit search mode if search already stopped or only 1 page of results
@@ -1644,7 +1695,7 @@ impl Reader {
     }
 
     fn toggle_bars(&mut self, enable: Option<bool>, hub: &Hub, rq: &mut RenderQueue, context: &mut Context) {
-        if let Some(top_index) = locate::<TopBar>(self) {
+        if let Some(top_index) = locate::<TopBar>(self).or_else(|| if self.search.is_some() && locate::<BottomBar>(self).is_some() { Some(0) } else { None }) {
             if let Some(true) = enable {
                 return;
             }
@@ -1674,6 +1725,7 @@ impl Reader {
             let mut doc = self.doc.lock().unwrap();
             let mut index = 0;
 
+            if self.search.is_none() {
             let top_bar = TopBar::new(rect![self.rect.min.x,
                                             self.rect.min.y,
                                             self.rect.max.x,
@@ -1692,6 +1744,8 @@ impl Reader {
                                         BLACK);
             self.children.insert(index, Box::new(separator) as Box<dyn View>);
             index += 1;
+
+            }
 
             if let Some(ref s) = self.search {
                 if let Some(sindex) = rlocate::<SearchBar>(self) {
@@ -1791,7 +1845,7 @@ impl Reader {
                                title,
                                remain,
                                &neighbors,
-                               self.synthetic)
+                               self.synthetic).search_mode(self.search.is_some())
             };
             self.children.insert(index, Box::new(bottom_bar) as Box<dyn View>);
 
@@ -4079,8 +4133,8 @@ impl View for Reader {
                             DiagDir::NorthWest => self.go_to_last_page(hub, rq, context),
                             DiagDir::NorthEast =>
                                 if self.search.is_some() {
-                                    self.stop_search(rq);
-                                    self.update(Some(UpdateMode::Partial), hub, rq, context);
+                                    let running = self.search.as_ref().is_some_and(|s| s.running.load(AtomicOrdering::Relaxed));
+                                    hub.send(if running { Event::StopListSearch } else { Event::CloseListSearch }).ok();
                                 } else if self.ephemeral {
                                     self.quit(context);
                                     hub.send(Event::Back).ok();
@@ -4336,7 +4390,7 @@ impl View for Reader {
             Event::Submit(ViewId::ReaderSearchInput, ref text) => {
                 match make_query(text) {
                     Some(query) => {
-                        self.search(text, query, hub, rq);
+                        self.search(text, query, hub, rq, context);
                         self.toggle_keyboard(false, None, hub, rq, context);
                         self.toggle_results_bar(true, rq, context);
                     },
@@ -4654,6 +4708,72 @@ impl View for Reader {
                 self.toggle_margin_cropper(false, hub, rq, context);
                 true
             },
+            Event::ShowSearchResults => {
+                if let Some(i) = locate::<SearchResults>(self) { self.children.remove(i); }
+                self.toggle_keyboard(false, None, hub, rq, context);
+                self.toggle_bars(Some(false), hub, rq, context);
+                if let Some(ref s) = self.search {
+                    let list = SearchResults::new(self.rect, s.query.clone(), s.hits.clone(), !s.running.load(AtomicOrdering::Relaxed), s.list_page);
+                    list.refresh(rq);
+                    self.children.push(Box::new(list));
+                }
+                true
+            },
+            Event::StopListSearch => {
+                if let Some(ref s) = self.search { s.running.store(false, AtomicOrdering::Relaxed); }
+                if let Some(i) = locate::<SearchResults>(self) {
+                    let list=self.children[i].downcast_mut::<SearchResults>().unwrap(); list.complete=true; list.refresh(rq);
+                } else {
+                    self.update_results_bar(rq);
+                    self.update(Some(UpdateMode::Gui), hub, rq, context);
+                }
+                true
+            },
+            Event::CloseListSearch => {
+                self.toggle_bars(Some(false), hub, rq, context);
+                if let Some(i) = locate::<SearchResults>(self) { self.children.remove(i); }
+                if let Some(s) = self.search.take() { s.running.store(false, AtomicOrdering::Relaxed); }
+                self.toggle_search_bar(false, hub, rq, context);
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
+                true
+            },
+            Event::HideSearchResults | Event::OpenSearchHit(_) => {
+                if let Some(i) = locate::<SearchResults>(self) {
+                    if let Some(ref mut s) = self.search { s.list_page = self.children[i].downcast_ref::<SearchResults>().unwrap().page; }
+                    self.children.remove(i);
+                }
+                if let Event::OpenSearchHit(index) = *evt {
+                    if let Some(hit) = self.search.as_ref().and_then(|s| s.hits.get(index)).cloned() { self.go_to_page(hit.location, true, hub, rq, context); }
+                }
+                self.update(Some(UpdateMode::Partial), hub, rq, context);
+                self.toggle_bars(Some(true), hub, rq, context);
+                self.toggle_results_bar(true, rq, context);
+                true
+            },
+            Event::SearchHit(generation, ref hit, ref rects) => {
+                if self.search.as_ref().map(|s| s.generation) != Some(generation) { return true; }
+                if let Some(ref mut s) = self.search {
+                    if s.generation != generation { return true; }
+                    s.delivery_ready.store(true, AtomicOrdering::Release);
+                    s.highlights.entry(hit.location).or_default().push(rects.clone());
+                    s.hits.push(hit.clone()); s.results_count += 1;
+                }
+                if let Some(i) = locate::<SearchResults>(self) {
+                    let list=self.children[i].downcast_mut::<SearchResults>().unwrap();
+                    list.append(hit.clone(), rq);
+                } else { self.update_results_bar(rq); }
+                true
+            },
+            Event::SearchFinished(generation) => {
+                if self.search.as_ref().map(|s| s.generation) != Some(generation) { return true; }
+                if let Some(i) = locate::<SearchResults>(self) {
+                    let list=self.children[i].downcast_mut::<SearchResults>().unwrap(); list.complete=true; list.refresh(rq);
+                } else {
+                    self.update_results_bar(rq);
+                    self.update(Some(UpdateMode::Gui), hub, rq, context);
+                }
+                true
+            },
             Event::SearchResult(location, ref rects) => {
                 if let Some(ref mut s) = self.search {
                     let pages_count = s.highlights.len();
@@ -4885,7 +5005,7 @@ impl View for Reader {
                     let text = &trim_non_alphanumeric(&first_n_words(&text, 5));
                     match make_query(text) {
                         Some(query) => {
-                            self.search(text, query, hub, rq);
+                            self.search(text, query, hub, rq, context);
                         },
                         None => {
                             let notif = Notification::new("Invalid search query.".to_string(),
@@ -5220,7 +5340,7 @@ impl View for Reader {
         }
 
         // stop / close button
-        if self.ephemeral || self.search.is_some() && locate::<SearchBar>(self).is_none() {
+        if self.ephemeral || self.search.is_some() {
             let dpi = CURRENT_DEVICE.dpi;
             let margin = scale_by_dpi(30.0, dpi) as i32;
             let icon = if let Some(ref s) = self.search {

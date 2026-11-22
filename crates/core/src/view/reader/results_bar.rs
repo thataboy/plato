@@ -51,7 +51,7 @@ impl ResultsBar {
                                               pt!(rect.max.x - side, rect.max.y)],
                                         current_page,
                                         pages_count,
-                                        false);
+                                        false).without_percent();
         children.push(Box::new(page_label) as Box<dyn View>);
 
         let next_rect = rect![rect.max - side, rect.max];
@@ -75,9 +75,9 @@ impl ResultsBar {
         }
     }
 
-    pub fn update_results_label(&mut self, count: usize, rq: &mut RenderQueue) {
+    pub fn update_results_label(&mut self, count: usize, completed: bool, rq: &mut RenderQueue) {
         let results_label = self.children[1].as_mut().downcast_mut::<ResultsLabel>().unwrap();
-        results_label.update(count, rq);
+        results_label.update(count, completed, rq);
     }
 
     pub fn update_page_label(&mut self, current_page: usize, pages_count: usize, rq: &mut RenderQueue) {

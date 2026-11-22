@@ -15,6 +15,7 @@ pub struct PageLabel {
     current_page: usize,
     pages_count: usize,
     synthetic: bool,
+    show_percent: bool,
 }
 
 impl PageLabel {
@@ -26,8 +27,12 @@ impl PageLabel {
             current_page,
             pages_count,
             synthetic,
+            show_percent: true,
         }
     }
+
+    pub fn hide_percent(&mut self) { self.show_percent = false; }
+    pub fn without_percent(mut self) -> Self { self.hide_percent(); self }
 
     pub fn update(&mut self, current_page: usize, pages_count: usize, rq: &mut RenderQueue) {
         let mut render = false;
@@ -55,6 +60,10 @@ impl PageLabel {
             (self.current_page as f64 + 1.0,
              self.pages_count as f64, 0)
         };
+        if !self.show_percent {
+            return if size == 0 { format!("page {1:.0$} of {2:.0}", precision, current_page, pages_count) }
+                else { format!("{1:.0$}/{2:.0}", precision, current_page, pages_count) };
+        }
         let percent = 100.0 * self.current_page as f32 / self.pages_count as f32;
         // luu
         let percent = if (percent < 1.0 || percent > 99.0) && percent != 0.0 && percent != 100.0 {

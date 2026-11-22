@@ -400,6 +400,13 @@ pub enum Event {
     CloseSub(ViewId),
     Search(String),
     SearchResult(usize, Vec<Boundary>),
+    SearchHit(Id, crate::view::reader::search_results::Hit, Vec<Boundary>),
+    SearchFinished(Id),
+    ShowSearchResults,
+    HideSearchResults,
+    StopListSearch,
+    CloseListSearch,
+    OpenSearchHit(usize),
     FetcherAddDocument(u32, Box<Info>),
     FetcherRemoveDocument(u32, PathBuf),
     FetcherSearch {

@@ -25,34 +25,27 @@ impl ResultsLabel {
         }
     }
 
-    pub fn update(&mut self, count: usize, rq: &mut RenderQueue) {
+    pub fn update(&mut self, count: usize, completed: bool, rq: &mut RenderQueue) {
         self.count = count;
+        self.completed = completed;
         rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
     }
 
     fn text(&self) -> String {
-        let qualifier = if self.count != 1 {
-            "results"
-        } else {
-            "result"
-        };
-
-        if self.count == 0 {
-            if self.completed {
-                format!("No {}", qualifier)
-            } else {
-                "Searching...".to_string()
-            }
-        } else {
-            format!("{} {}", self.count, qualifier)
-        }
+        if self.completed { format!("« {} results", self.count) }
+        else { format!("« {} found...", self.count) }
     }
+
 }
 
 
 impl View for ResultsLabel {
     fn handle_event(&mut self, evt: &Event, _hub: &Hub, _bus: &mut Bus, rq: &mut RenderQueue, _context: &mut Context) -> bool {
         match *evt {
+            Event::Gesture(crate::gesture::GestureEvent::Tap(p)) if self.rect.includes(p) => {
+                _bus.push_back(Event::ShowSearchResults);
+                true
+            },
             Event::EndOfSearch => {
                 self.completed = true;
                 rq.add(RenderData::new(self.id, self.rect, UpdateMode::Gui));
@@ -72,12 +65,7 @@ impl View for ResultsLabel {
         let dy = (self.rect.height() as i32 - font.x_heights.0 as i32) / 2;
         let pt = pt!(self.rect.min.x + dx, self.rect.max.y - dy);
         fb.draw_rectangle(&self.rect, TEXT_NORMAL[0]);
-        let color = if self.completed {
-            TEXT_NORMAL[1]
-        } else {
-            TEXT_NORMAL[2]
-        };
-        font.render(fb, color, &plan, pt);
+        font.render(fb, TEXT_NORMAL[1], &plan, pt);
     }
 
     fn rect(&self) -> &Rectangle {
@@ -98,5 +86,20 @@ impl View for ResultsLabel {
 
     fn id(&self) -> Id {
         self.id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn count_text_tracks_search_completion() {
+        let mut label=ResultsLabel::new(rect![0,0,400,80],0,false);
+        assert_eq!(label.text(),"« 0 found...");
+        let mut rq=RenderQueue::new();
+        label.update(12,false,&mut rq);
+        assert_eq!(label.text(),"« 12 found...");
+        label.update(12,true,&mut rq);
+        assert_eq!(label.text(),"« 12 results");
     }
 }

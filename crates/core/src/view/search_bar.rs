@@ -61,7 +61,7 @@ impl SearchBar {
 
         children.push(Box::new(separator) as Box<dyn View>);
 
-        let close_icon = Icon::new("close",
+        let close_icon = Icon::new("close-small",
                                    rect![pt!(rect.max.x - side, rect.min.y),
                                          pt!(rect.max.x, rect.max.y)],
                                    Event::Close(ViewId::SearchBar))

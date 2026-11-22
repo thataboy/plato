@@ -309,3 +309,27 @@ The `[reader]` `font-weight` setting supplies the default for books without an o
 Themes is centered in the space left of the location seek bar; Search is on its right. Starting a seek hides both icons and shows the seek offset and return control instead. Reopening the reader bars restores the icons.
 
 Menus use the available space above or below their anchor, with a small screen-edge clearance. Additional columns and a “More” submenu appear only when entries exceed the available height and width.
+
+### Search results list
+
+Book search opens a results list immediately and adds matches as they are found.
+Results are grouped by chapter when chapter information is available. Each result
+shows a bold page location and a context snippet with the matching text highlighted
+inline. The search term appears at the upper left. Libra displays six results per
+page, with whitespace between chapter groups.
+
+Use Prev/Next, swipe, or the hardware page buttons to browse the list. Tap a result
+to open its book page. The right-aligned **Book »** footer control opens the book
+without selecting a different result. Tap the **« nn found...** or **« nn results**
+link in the book's results bar to return to the same list page.
+
+Before the first result arrives, the list displays **Searching: <term>**. The
+upper-right Stop button stops scanning and preserves the results. After scanning
+stops or finishes, it becomes Close; tapping Close exits search mode and returns
+to the book. Search results remain interactive while scanning continues.
+
+In book search mode, the top status bar and ordinary page arrows are hidden.
+The results bar shows **nn found...** while scanning and **nn results** when
+stopped or complete. Page labels use lowercase **page** and omit percentages.
+Stop/Close appears immediately at the upper right. The search input bar retains
+its original smaller X.

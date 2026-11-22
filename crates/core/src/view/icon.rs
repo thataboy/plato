@@ -24,14 +24,14 @@ lazy_static! {
                      "angle-left", "angle-right", "angle-left-small", "angle-right-small",
                      "return", "shift", "combine", "alternate", "delete-backward", "delete-forward",
                      "move-backward", "move-backward-short", "move-forward", "move-forward-short",
-                     "close",  "check_mark-small", "check_mark", "check_mark-large", "bullet",
+                     "close", "close-small", "check_mark-small", "check_mark", "check_mark-large", "bullet",
                      "arrow-left", "arrow-right", "angle-down", "angle-up", "crop", "toc", "font_family",
                      "font_size", "font_weight", "line_height", "align-justify", "align-left", "align-right",
                      "double_angle-left", "double_angle-right", "download", "read", "themes", "stop", "close2", "exit", "vertical-dots",
                      "align-center", "margin", "plug", "cover", "enclosed_menu", "contrast", "gray"].iter().cloned() {
-            let path = dir.join(&format!("{}.svg", name));
+            let path = dir.join(&format!("{}.svg", if name == "close-small" { "close" } else { name }));
             let doc = PdfOpener::new().and_then(|o| o.open(path)).unwrap();
-            let pixmap = doc.page(0).and_then(|p| p.pixmap(scale, 1)).unwrap();
+            let pixmap = doc.page(0).and_then(|p| p.pixmap(if matches!(name, "close" | "close2" | "stop") { scale * 1.5 } else { scale }, 1)).unwrap();
             m.insert(name, pixmap);
         }
         m

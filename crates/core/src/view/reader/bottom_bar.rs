@@ -17,6 +17,7 @@ pub struct BottomBar {
     id: Id,
     rect: Rectangle,
     children: Vec<Box<dyn View>>,
+    search_mode: bool,
     is_prev_disabled: bool,
     is_next_disabled: bool,
 }
@@ -77,9 +78,22 @@ impl BottomBar {
             id,
             rect,
             children,
+            search_mode: false,
             is_prev_disabled,
             is_next_disabled,
         }
+    }
+
+    pub fn search_mode(mut self, enable: bool) -> Self {
+        self.search_mode = enable;
+        if enable {
+            self.children[2].downcast_mut::<PageLabel>().unwrap().hide_percent();
+            for index in [0, 3] {
+                let rect = *self.children[index].rect();
+                self.children[index] = Box::new(Filler::new(rect, WHITE));
+            }
+        }
+        self
     }
 
     pub fn update_chapter_label(&mut self, title: String, progress: f32, rq: &mut RenderQueue) {
@@ -93,6 +107,7 @@ impl BottomBar {
     }
 
     pub fn update_icons(&mut self, neighbors: &Neighbors, rq: &mut RenderQueue) {
+        if self.search_mode { return; }
         let is_prev_disabled = neighbors.previous_page.is_none();
 
         if self.is_prev_disabled != is_prev_disabled {
