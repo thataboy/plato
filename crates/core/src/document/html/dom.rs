@@ -168,10 +168,14 @@ impl XmlTree {
     }
 
     pub fn wrap_lost_inlines(&mut self) {
+        self.wrap_lost_inlines_with(|node| node.is_block());
+    }
+
+    pub fn wrap_lost_inlines_with(&mut self, is_block: impl Fn(NodeRef) -> bool) {
         let mut ids = Vec::new();
         let mut known_ids = FxHashSet::default();
 
-        for n in self.root().descendants().filter(|n| n.is_inline()) {
+        for n in self.root().descendants().filter(|n| n.is_inline() && !is_block(*n)) {
             if known_ids.contains(&n.id) {
                 continue;
             }
@@ -180,7 +184,7 @@ impl XmlTree {
             let mut last_id = None;
 
             for s in n.previous_siblings() {
-                if s.is_block() {
+                if is_block(s) {
                     first_id = Some(s.next_sibling().unwrap().id);
                     break;
                 } else {
@@ -189,7 +193,7 @@ impl XmlTree {
             }
 
             for s in n.next_siblings() {
-                if s.is_block() {
+                if is_block(s) {
                     last_id = Some(s.previous_sibling().unwrap().id);
                     break;
                 } else {

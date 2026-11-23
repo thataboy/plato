@@ -236,7 +236,9 @@ impl HtmlDocument {
 
         pages.push(Vec::new());
 
-        self.engine.build_display_list(self.content.root(), &style, &loop_context, &stylesheet, &root_data, &mut self.parent, &mut draw_state, &mut pages);
+        let mut content = self.content.clone();
+        content.wrap_lost_inlines_with(|node| engine::is_block_for_layout(node, &stylesheet));
+        self.engine.build_display_list(content.root(), &style, &loop_context, &stylesheet, &root_data, &mut self.parent, &mut draw_state, &mut pages);
 
         pages.retain(|page| !page.is_empty());
 

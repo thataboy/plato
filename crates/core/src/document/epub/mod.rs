@@ -14,7 +14,7 @@ use crate::unit::pt_to_px;
 use crate::geom::{Rectangle, Boundary, Edge, CycleDir};
 use super::pdf::PdfOpener;
 use super::html::dom::{XmlTree, NodeRef};
-use super::html::engine::{Page, Engine, ResourceFetcher};
+use super::html::engine::{Page, Engine, ResourceFetcher, is_block_for_layout};
 use super::html::layout::{StyleData, LoopContext};
 use super::html::layout::{RootData, DrawState, DrawCommand, TextCommand, ImageCommand};
 use super::html::layout::TextAlign;
@@ -349,7 +349,6 @@ impl EpubDocument {
         }
 
         let mut root = XmlParser::new(&text).parse();
-        root.wrap_lost_inlines();
 
         let mut stylesheet = StyleSheet::new();
 
@@ -396,6 +395,7 @@ impl EpubDocument {
             stylesheet.append(&mut css, true);
         }
 
+        root.wrap_lost_inlines_with(|node| is_block_for_layout(node, &stylesheet));
         let mut display_list = Vec::new();
 
         if let Some(body) = root.root().find("body") {

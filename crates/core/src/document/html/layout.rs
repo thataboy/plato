@@ -400,6 +400,8 @@ pub struct TextElement {
     pub font_style: FontStyle,
     pub font_weight: FontWeight,
     pub font_size: u32,
+    pub ascender: i32,
+    pub descender: i32,
     pub letter_spacing: i32,
     pub vertical_align: i32,
     pub color: Color,

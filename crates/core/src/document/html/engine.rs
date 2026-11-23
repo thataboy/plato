@@ -38,6 +38,13 @@ const DEFAULT_DPI: u16 = 300;
 const DEFAULT_WIDTH: u32 = 1404;
 const DEFAULT_HEIGHT: u32 = 1872;
 
+// Promote explicitly block-styled inline elements into the block layout path.
+// Anonymous wrappers retain mixed inline runs around those blocks.
+pub fn is_block_for_layout(node: NodeRef, stylesheet: &StyleSheet) -> bool {
+    node.is_block() || (node.is_element() && !matches!(node.tag_name(), Some("img" | "svg" | "image")) && specified_values(node, stylesheet)
+        .get("display").map(String::as_str) == Some("block"))
+}
+
 pub type Page = Vec<DrawCommand>;
 
 pub trait ResourceFetcher {
@@ -381,7 +388,7 @@ impl Engine {
             draw_state.position.y = root_data.rect.min.y;
         }
 
-        let has_blocks = node.children().any(|n| n.is_block());
+        let has_blocks = node.children().any(|n| is_block_for_layout(n, stylesheet));
         let box_top = draw_state.position.y + style.margin.top;
         if has_blocks && (style.padding.top > 0 || node.tag_name() == Some("table")) {
             draw_state.position.y += style.margin.top;
@@ -1181,13 +1188,13 @@ impl Engine {
                                 if j > 0 {
                                     let buf = &text[start_index..start_index+j];
                                     let local_offset = offset + start_index;
-                                    let mut plan = {
+                                    let (mut plan, ascender, descender) = {
                                         let font = self.fonts.as_mut().unwrap()
                                                        .get_mut(style.font_kind,
                                                                 style.font_style,
                                                                 style.font_weight);
                                         font.set_size(font_size, self.dpi);
-                                        font.plan(buf, None, style.font_features.as_deref())
+                                        (font.plan(buf, None, style.font_features.as_deref()), font.ascender(), font.descender())
                                     };
                                     plan.space_out(style.letter_spacing);
 
@@ -1205,6 +1212,8 @@ impl Engine {
                                             vertical_align: style.vertical_align,
                                             letter_spacing: style.letter_spacing,
                                             font_size,
+                                            ascender,
+                                            descender,
                                             color: style.color,
                                             background: style.background,
                                             float: style.float,
@@ -1663,34 +1672,6 @@ impl Engine {
         let mut last_x_position = 0;
         let mut is_first_line = true;
 
-        if let Some(prefix) = draw_state.prefix.as_ref() {
-            let font_size = (style.font_size * 64.0) as u32;
-            let prefix_plan = {
-                let font = self.fonts.as_mut().unwrap()
-                               .get_mut(style.font_kind, style.font_style, style.font_weight);
-                font.set_size(font_size, self.dpi);
-                font.plan(prefix, None, style.font_features.as_deref())
-            };
-            let (start_x, _) = para_shape[0];
-            let pt = pt!(start_x - prefix_plan.width, position.y);
-            let rect = rect![pt + pt!(0, -ascender), pt + pt!(prefix_plan.width, -descender)];
-            if let Some(first_offset) = inlines.iter().filter_map(|elt| elt.offset()).next() {
-                page.push(DrawCommand::ExtraText(TextCommand {
-                    offset: root_data.start_offset + first_offset,
-                    position: pt,
-                    rect,
-                    text: prefix.to_string(),
-                    plan: prefix_plan,
-                    uri: None,
-                    font_kind: style.font_kind,
-                    font_style: style.font_style,
-                    font_weight: style.font_weight,
-                    font_size,
-                    color: style.color,
-                }));
-            }
-        }
-
         for (j, bp) in bps.into_iter().enumerate() {
             let drift = if glue_drifts.is_empty() {
                 0.0
@@ -1717,6 +1698,55 @@ impl Engine {
                 last_index += 1;
             }
 
+            // Oversized inline text (raised caps, large chapter numbers) must
+            // contribute to the line box instead of protruding above the page.
+            let mut line_ascent = ascender;
+            let mut line_descent = -descender;
+            for item in &items[last_index..index] {
+                if let ParagraphItem::Box { data: ParagraphElement::Text(text), .. } = item {
+                    line_ascent = line_ascent.max(text.ascender + text.vertical_align);
+                    line_descent = line_descent.max(-text.descender - text.vertical_align);
+                }
+            }
+            let extra_top = line_ascent - ascender;
+            let extra_bottom = line_descent + descender;
+            position.y += extra_top;
+            if position.y + space_bottom + extra_bottom > root_data.rect.max.y {
+                rects.push(page_rect.take());
+                display_list.push(page);
+                page = Vec::new();
+                position.y = root_data.rect.min.y + space_top + extra_top;
+            }
+            position.y = position.y.max(root_data.rect.min.y + line_ascent);
+            if is_first_line {
+                if let Some(prefix) = draw_state.prefix.as_ref() {
+                    let font_size = (style.font_size * 64.0) as u32;
+                    let prefix_plan = {
+                        let font = self.fonts.as_mut().unwrap()
+                                       .get_mut(style.font_kind, style.font_style, style.font_weight);
+                        font.set_size(font_size, self.dpi);
+                        font.plan(prefix, None, style.font_features.as_deref())
+                    };
+                    let (start_x, _) = para_shape[0];
+                    let pt = pt!(start_x - prefix_plan.width, position.y);
+                    let rect = rect![pt + pt!(0, -ascender), pt + pt!(prefix_plan.width, -descender)];
+                    if let Some(first_offset) = inlines.iter().filter_map(|elt| elt.offset()).next() {
+                        page.push(DrawCommand::ExtraText(TextCommand {
+                            offset: root_data.start_offset + first_offset,
+                            position: pt,
+                            rect,
+                            text: prefix.to_string(),
+                            plan: prefix_plan,
+                            uri: None,
+                            font_kind: style.font_kind,
+                            font_style: style.font_style,
+                            font_weight: style.font_weight,
+                            font_size,
+                            color: style.color,
+                        }));
+                    }
+                }
+            }
             let start_command_index = page.len();
 
             for i in last_index..index {
@@ -1725,7 +1755,7 @@ impl Engine {
                         match data {
                             ParagraphElement::Text(element) => {
                                 let pt = pt!(position.x, position.y - element.vertical_align);
-                                let rect = rect![pt + pt!(0, -ascender), pt + pt!(element.plan.width, -descender)];
+                                let rect = rect![pt + pt!(0, -element.ascender), pt + pt!(element.plan.width, -element.descender)];
                                 if let Some(pr) = page_rect.as_mut() {
                                     pr.absorb(&rect);
                                 } else {
@@ -1926,6 +1956,7 @@ impl Engine {
                 }
             }
 
+            position.y += extra_bottom;
             last_index = index;
             is_first_line = false;
 
@@ -1985,6 +2016,8 @@ impl Engine {
                 font_style: element.font_style,
                 font_weight: element.font_weight,
                 font_size: element.font_size,
+                ascender: element.ascender,
+                descender: element.descender,
                 vertical_align: element.vertical_align,
                 letter_spacing: element.letter_spacing,
                 color: element.color,
@@ -2354,9 +2387,9 @@ mod tests {
         engine.layout(240, height as u32, 12.0, 72);
         engine.fonts = Some(default_fonts(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts")).unwrap());
         let mut tree = XmlParser::new(markup).parse();
-        tree.wrap_lost_inlines();
         let mut stylesheet = CssParser::new(css).parse();
         stylesheet.sort();
+        tree.wrap_lost_inlines_with(|node| is_block_for_layout(node, &stylesheet));
         let root = RootData { start_offset: 1000, spine_dir: PathBuf::new(), rect: rect![0, 0, 240, height] };
         let style = StyleData {
             font_size: 12.0, line_height: 16, start_x: 0, end_x: 240, width: 240,
@@ -2776,6 +2809,40 @@ mod tests {
         assert_eq!(words[0].position.x, 39);
         assert_eq!(words[3].position.x, 0);
         assert!(pages[0].iter().any(|c| matches!(c, DrawCommand::Image(..))));
+    }
+
+    #[test]
+    fn block_spans_keep_chapter_spacing_and_separate_lines() {
+        let (_, pages) = layout("<h1><span class='number'>3</span><span class='title'>Riverlands</span></h1><p>Body</p>",
+            "h1 {font-size:100%; margin:0; display:inline;} .number {display:block; font-size:3em; line-height:1.2; margin-top:2em; margin-bottom:16px;} .title {display:block; margin-bottom:32px;}", 400, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), vec!["3", "Riverlands", "Body"]);
+        assert!(words[0].rect.min.y >= 72);
+        assert!(words[1].rect.min.y >= words[0].rect.max.y);
+        assert!(words[2].rect.min.y > words[1].rect.max.y);
+    }
+
+    #[test]
+    fn block_spans_preserve_surrounding_inline_text() {
+        let (_, pages) = layout("<p>Before<span class='block'>Middle</span>After</p>",
+            ".block {display:block;}", 200, 0);
+        let words = texts(&pages);
+        assert_eq!(words.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), vec!["Before", "Middle", "After"]);
+        assert!(words[0].position.y < words[1].position.y);
+        assert!(words[1].position.y < words[2].position.y);
+    }
+
+    #[test]
+    fn raised_caps_fit_at_page_top_and_after_page_break() {
+        for y in [0, 65] {
+            let (_, pages) = layout("<p><i><span class='raised'>Freddy</span> Pelu</i></p><p>Following</p>",
+                ".raised {font-size:2em;}", 80, y);
+            let words = texts(&pages);
+            assert_eq!(words[0].text, "Freddy");
+            assert!(words.iter().all(|word| word.rect.min.y >= 0 && word.rect.max.y <= 80));
+            assert_eq!(words[0].position.y, words[1].position.y);
+            assert!(words[0].rect.height() > words[1].rect.height());
+        }
     }
 
 }
